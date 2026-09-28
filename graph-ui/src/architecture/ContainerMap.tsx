@@ -5,10 +5,11 @@ import { ArchitectureScene } from './ArchitectureScene';
 import { layoutContainers } from './container-layout';
 import { loadContainerInventory, loadContainerTopology, type ContainerReading, type ContainerSelection } from './container-source';
 import type { ServiceEvidence } from './container-topology';
+import { useSelectionEvidence, type SelectionEvidenceListener } from '../galaxy/selection-evidence';
 import './spatial-architecture.css';
 import './container-map.css';
 
-interface Props { project: string; generation?: string; active: boolean; filter: string; onNavigate: (path: string, line?: number) => void; onClearSelection?: () => void }
+interface Props { project: string; generation?: string; active: boolean; filter: string; onNavigate: (path: string, line?: number) => void; onClearSelection?: () => void; onSelectionEvidence?: SelectionEvidenceListener }
 class ContainerSceneBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
     state = { failed: false };
     static getDerivedStateFromError() { return { failed: true }; }
@@ -20,7 +21,7 @@ const relativeSource = (absolute: string, selection: ContainerSelection) => {
     return absolute.startsWith(prefix) ? absolute.slice(prefix.length) : undefined;
 };
 
-export default function ContainerMap({ project, generation, active, filter, onNavigate, onClearSelection }: Props) {
+export default function ContainerMap({ project, generation, active, filter, onNavigate, onClearSelection, onSelectionEvidence }: Props) {
     const [available, setAvailable] = useState<ProjectEntry[]>([]);
     const [selections, setSelections] = useState<ContainerSelection[]>([]);
     const [discovery, setDiscovery] = useState('Finding indexed Compose definitions…');
@@ -113,6 +114,18 @@ export default function ContainerMap({ project, generation, active, filter, onNa
         {evidence.summary}<small>{evidence.project} / {evidence.path}:{evidence.line}</small></button>;
     const incident = selectedService ? shownEdges.filter(edge => edge.source === selectedService.id || edge.target === selectedService.id) : [];
     const warnings = [...new Set([...(topology?.warnings ?? []), ...(result?.warnings ?? [])])];
+    useSelectionEvidence(onSelectionEvidence, selectedService || selectedEdge ? {
+        project, generation, view: 'architecture-services', source: 'selected indexed Compose manifests and bounded source inspection',
+        label: selectedService?.name ?? `${servicesById.get(selectedEdge!.source)?.name} → ${servicesById.get(selectedEdge!.target)?.name}`,
+        selected: { service: selectedService, connection: selectedEdge,
+            ...(selectedEdge ? { sourceService: servicesById.get(selectedEdge.source), targetService: servicesById.get(selectedEdge.target) } : {}),
+            currentSource: source?.key === key ? { location: source.evidence, text: source.text, error: source.error,
+                provenance: 'Current local source; may differ from the indexed snapshot.' } : undefined },
+        relationships: selectedService ? { count: incident.length, items: incident } : undefined,
+        scope: { manifests: selections.map(item => ({ project: item.inventory.project, manifest: item.manifest })), startupDependencies: startup, configuredDestinations: configured },
+        limitations: { warnings, unresolvedDestinations: topology?.unresolved.length, omittedNodes: graph?.omittedNodes, omittedEdges: graph?.omittedEdges,
+            interpretation: 'Static declarations, not live containers. Startup dependencies are not calls. Configured destinations do not prove execution; source ownership is inferred from build inputs.' },
+    } : undefined, active);
     return <section className="spatial-architecture container-map" aria-label="Container service map">
         <header className="spatial-heading"><div><span className="spatial-eyebrow">Routes / Services</span><h2>How the services connect</h2>
             <p>One square per declared service. Follow a connection to see the configuration and code behind it.</p></div>
@@ -154,14 +167,16 @@ export default function ContainerMap({ project, generation, active, filter, onNa
                     : selectedEdge ? <><span className="spatial-eyebrow">{evidenceLabel(selectedEdge.kind)}</span><h3>{servicesById.get(selectedEdge.source)?.name} → {servicesById.get(selectedEdge.target)?.name}</h3><p>{selectedEdge.protocol}</p>
                         <p className="spatial-muted">{selectedEdge.kind === 'startup' ? 'The deployment declares a startup dependency. This does not establish a network call.' : selectedEdge.kind === 'configuration' ? 'Configuration names this destination. An executed call has not been established.' : 'Static source identifies this destination. The arrow shows the caller, not the direction of every payload.'}</p>
                         <div className="spatial-members">{selectedEdge.evidence.map(evidenceButton)}</div></>
-                        : <><span className="spatial-eyebrow">Read the map</span><h3>Services, with evidence.</h3><p>Blue squares have candidate source files. Warm squares have an image declaration or unresolved source ownership.</p><p className="spatial-muted">Compare another indexed project to find connections over explicitly shared networks. Unresolved hosts remain findings, not guessed arrows.</p></>}
+                        : <><span className="spatial-eyebrow">Service map</span><h3>{topology.services.length} declared services</h3><p>Select a service or connection to inspect its source. Double-click a service to focus its neighbors.</p></>}
                 {source?.key === key && <div className="container-source"><h4>{source.evidence.project} / {source.evidence.path}:{source.evidence.line}</h4><button onClick={() => setSource(undefined)}>Close source</button><pre>{source.error ?? source.text ?? 'Reading source…'}</pre></div>}
             </aside></div>
-            <div className="spatial-bottom"><span>{graph.nodes.length} / {topology.services.length} services · {graph.edges.length} connections shown</span><span>{result?.filesRead} source files inspected · {topology.unresolved.length} unresolved findings</span></div>
+            <div className="spatial-bottom"><span>{graph.nodes.length} / {topology.services.length} services · {graph.edges.length} connections shown</span>{!!topology.unresolved.length && <span>{topology.unresolved.length} unresolved destinations</span>}</div>
+            <details className="spatial-map-details"><summary>Browse services and connection evidence</summary>
             <div className="container-service-list" aria-label="All declared services">{topology.services.map(service => <button key={service.id} aria-pressed={selectedService?.id === service.id} onClick={() => selectService(service.id)} onDoubleClick={() => { selectService(service.id); setFocus(service.id); }}>{service.name}<small>{service.project}{service.profiles?.length ? ' · optional' : ''}</small></button>)}</div>
             {!!layout?.cycles.length && <details className="spatial-coverage"><summary>Dependency cycles · {layout.cycles.length}</summary>{layout.cycles.map(cycle => <p key={cycle.join('|')}>{cycle.map(id => servicesById.get(id)?.name).join(' ↔ ')} · mutually reachable through detected calls or configured destinations</p>)}</details>}
             <details className="spatial-relationship-list"><summary>All connections · {shownEdges.length}</summary><div>{shownEdges.map(edge => <button key={edge.id} onClick={() => setSelected({ key, edge: edge.id })}>{servicesById.get(edge.source)?.name} → {servicesById.get(edge.target)?.name}<small>{evidenceLabel(edge.kind)} · {edge.protocol}</small></button>)}</div></details>
             {!!topology.unresolved.length && <details className="spatial-coverage"><summary>Unresolved destinations · {topology.unresolved.length}</summary><div className="spatial-members">{topology.unresolved.map(evidenceButton)}</div></details>}
+            </details>
         </>}
         <details className="spatial-coverage"><summary>Coverage and interpretation{warnings.length ? ` · ${warnings.length} notes` : ''}</summary><p>One selected Compose file per project. Overrides, includes, host environment values, and running-container state are not evaluated. Source grouping is inferred from build inputs, not guaranteed exclusive ownership.</p>
             {warnings.map(warning => <p key={warning}>{warning}</p>)}</details>

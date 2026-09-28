@@ -111,22 +111,14 @@ describe('System workspace', () => {
         expect(container.querySelector('.system-log')?.textContent).not.toContain('project A');
         expect(container.querySelector('.system-log')?.textContent).not.toContain('wrong daemon-wide');
     });
-    it('debounces text search and requires a confirmed full-history query', async () => {
+    it('loads retained history without a separate text-search input or query', async () => {
         const api = source();
-        api.logs = vi.fn().mockImplementation(async (_limit, _level, _project, filters) => ({
-            lines: filters?.query ? ['archived src/broken.ts failure'] : ['latest info'], total: 1,
-            persistent: true, query: filters?.query ?? '',
-        }));
+        api.logs = vi.fn().mockResolvedValue({ lines: ['latest retained event'], total: 1, persistent: true });
         await render(api); await click('Logs');
-        const input = container.querySelector<HTMLInputElement>('input[type="search"]')!;
-        await act(async () => {
-            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'src/broken.ts');
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-        });
+        expect(container.querySelector('input[type="search"]')).toBeNull();
         expect(api.logs).toHaveBeenLastCalledWith(200, undefined, undefined, {});
-        await act(async () => { await vi.advanceTimersByTimeAsync(250); });
-        expect(api.logs).toHaveBeenLastCalledWith(200, undefined, undefined, { query: 'src/broken.ts' });
-        expect(container.querySelector('.system-log')?.textContent).toContain('archived src/broken.ts failure');
+        expect(container.querySelector('.system-log')?.textContent).toContain('latest retained event');
+        expect(container.querySelector('select[aria-label="Log severity"]')).not.toBeNull();
     });
     it('retains the last successful reading and shows refresh failure', async () => {
         const api = source();

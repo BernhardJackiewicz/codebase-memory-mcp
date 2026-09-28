@@ -10,6 +10,14 @@
 .atlas-tools-menu { position: relative; margin-left: auto; }
 .atlas-browser-ai-action { margin-left: 0; flex-shrink: 0; border: 1px solid var(--atlas-line); background: transparent; border-radius: 2px; color: var(--atlas-cyan); padding: 7px 10px; font: inherit; cursor: pointer; }
 .atlas-browser-ai-action + .atlas-tools-menu { margin-left: 0; }
+.atlas-browser-ai-action { display: inline-flex; align-items: center; gap: 7px; color: var(--atlas-dim); }
+.atlas-browser-ai-action > span { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: var(--atlas-dim); }
+.atlas-browser-ai-action[data-state=active] > span { background: var(--atlas-phosphor); }
+.atlas-browser-ai-action:is([data-state=loading], [data-state=busy]) > span { background: var(--atlas-cyan); }
+.atlas-browser-ai-action[data-state=error] > span { background: var(--atlas-alarm); }
+.atlas-workspace-content { position: relative; }
+.atlas-agent-reopen { position: absolute; z-index: 8; right: 0; top: 8px; border: 1px solid var(--atlas-line); border-right: 0; border-radius: 6px 0 0 6px; padding: 7px 9px; color: var(--atlas-dim); background: var(--atlas-panel-raised); font: inherit; cursor: pointer; }
+.atlas-agent-reopen:hover, .atlas-agent-reopen:focus-visible { color: var(--atlas-cyan); }
 .atlas-tools-menu > summary { list-style: none; }
 .atlas-tools-menu > summary::after { content: ' ▾'; }
 .atlas-tools-menu .atlas-menu { position: absolute; right: 0; top: calc(100% + 8px); width: 310px; padding: 12px; background: var(--atlas-panel-raised); border: 1px solid var(--atlas-phosphor-mute); border-radius: 2px; box-shadow: 0 16px 48px #0008; }
@@ -248,3 +256,7 @@
 .atlas-command-palette > .atlas-menu { padding: 12px 18px; margin: 0; border-top: 1px solid var(--atlas-line); }
 .diagnostics-inventory { margin: 18px 0; }
 .diagnostics-inventory > summary { cursor: pointer; color: var(--atlas-cyan); }
+
+.atlas-flow-direction-pulse { fill: #9cafbe; opacity: .32; pointer-events: none; }
+.atlas-flow-error-pulse { fill: #b095a4; }
+@media (prefers-reduced-motion: reduce) { .atlas-flow-direction-pulse { display: none; } }

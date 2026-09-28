@@ -33,6 +33,7 @@ beforeEach(async () => {
     vi.resetModules(); vi.clearAllMocks(); fake.count = 23;
     fake.env.useWasmCache = true; // Transformers.js 4 default in browsers with Cache Storage.
     fake.env.remotePathTemplate = '{model}/resolve/{revision}/';
+    delete (fake.env.backends.onnx as { webgpu?: unknown }).webgpu;
     fake.template.mockImplementation(() => ({ input_ids: { dims: [1, fake.count], data: new BigInt64Array(fake.count) }, attention_mask: { dims: [1, fake.count] } }));
     fake.tokenizerLoad.mockResolvedValue({ apply_chat_template: fake.template });
     fake.modelLoad.mockResolvedValue({ generate: fake.generate });
@@ -49,6 +50,56 @@ beforeEach(async () => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('browser generation worker', () => {
+    it('marks GPU generation errors fatal and invalidates the model before any later request', async () => {
+        await send({ id: 1, kind: 'prepare' });
+        const detail = 'OrtRun failed: GPUBuffer mapAsync rejected because the buffer is invalid';
+        fake.generate.mockRejectedValueOnce(new Error(detail));
+        await send({ id: 2, kind: 'chat', messages: [{ role: 'user', content: 'Explain' }] });
+        expect(replies().at(-1)).toMatchObject({ id: 2, kind: 'error', error: detail, fatal: true });
+        await send({ id: 3, kind: 'chat', messages: [{ role: 'user', content: 'Retry' }] });
+        expect(fake.generate).toHaveBeenCalledOnce();
+        expect(replies().at(-1)).toMatchObject({ id: 3, kind: 'error', fatal: true });
+        await send({ id: 4, kind: 'prepare' });
+        expect(fake.modelLoad).toHaveBeenCalledOnce();
+        expect(replies().at(-1)).toMatchObject({ id: 4, kind: 'error', fatal: true });
+    });
+
+    it('reports loss of the actual inference device while idle and rejects future preparation', async () => {
+        let lose!: (reason: { reason: string; message: string }) => void;
+        const lost = new Promise<{ reason: string; message: string }>(resolve => { lose = resolve; });
+        Object.assign(fake.env.backends.onnx, { webgpu: { device: Promise.resolve({ lost }) } });
+        await send({ id: 1, kind: 'prepare' });
+        lose({ reason: 'unknown', message: 'GPU device disconnected' });
+        await Promise.resolve(); await Promise.resolve();
+        expect(replies().at(-1)).toMatchObject({ kind: 'error', fatal: true });
+        expect(replies().at(-1)?.error).toContain('GPU device disconnected');
+        await send({ id: 2, kind: 'prepare' });
+        expect(fake.modelLoad).toHaveBeenCalledOnce();
+        expect(replies().at(-1)).toMatchObject({ id: 2, kind: 'error', fatal: true });
+    });
+
+    it('invalidates a raw non-Error failure from the GPU inference call without losing its detail', async () => {
+        await send({ id: 1, kind: 'prepare' });
+        fake.generate.mockRejectedValueOnce('mapAsync: invalid GPUBuffer');
+        await send({ id: 2, kind: 'chat', messages: [{ role: 'user', content: 'Explain' }] });
+        expect(replies().at(-1)).toMatchObject({ id: 2, kind: 'error', error: 'mapAsync: invalid GPUBuffer', fatal: true });
+    });
+
+    it('uses a validated smaller output reserve for automatic explanations and rejects invalid limits', async () => {
+        await send({ id: 1, kind: 'prepare' });
+        fake.count = 7800;
+        const messages = [{ role: 'user' as const, content: 'Explain' }];
+        await send({ id: 2, kind: 'chat', messages, ...{ maxOutputTokens: 192 } });
+        expect(fake.generate).toHaveBeenCalledWith(expect.objectContaining({ max_new_tokens: 192 }));
+        expect(replies().at(-1)).toMatchObject({ id: 2, kind: 'answer' });
+        fake.generate.mockClear();
+        for (const maxOutputTokens of [0, -1, 513, 1.5, Number.NaN]) {
+            await send({ id: 3, kind: 'chat', messages, ...{ maxOutputTokens } });
+            expect(replies().at(-1)?.error).toContain('output token limit');
+        }
+        expect(fake.generate).not.toHaveBeenCalled();
+    });
+
     it('pins the real upstream tokenizer metadata probe even when it drops the revision option', async () => {
         const selected = BROWSER_MODELS[0];
         const allowed = browserModelBaseUrl(selected) + 'tokenizer_config.json';

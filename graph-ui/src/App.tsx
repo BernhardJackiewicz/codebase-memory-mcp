@@ -122,8 +122,7 @@ import { AtlasTreeIndexDetails } from './app/AtlasTree';
 import ArchitecturePanel from './architecture/ArchitecturePanel';
 import AdrWorkspace from './adr/AdrWorkspace';
 import SelectionContextPanel from './why/SelectionContext';
-import ChangeAnalysisWorkspace from './impact/ChangeAnalysisWorkspace';
-import type { SelectionImpactTarget } from './impact/selection-impact';
+import FileImpactSummary from './impact/FileImpactSummary';
 import SourceEvidenceDrawer, { fileQualifiedName, type SourceEvidenceTarget } from './architecture/SourceEvidenceDrawer';
 import { setUiLogProject } from './app/ui-log-install';
 import DiagnosticsPanel from './diagnostics/DiagnosticsPanel';
@@ -135,7 +134,7 @@ import type { BrowserChatAttachment } from './browser-ai/BrowserChatDock';
 import { browserGraphContext } from './browser-ai/graph-context';
 import { readerChatContext, type ReaderSourceOrigin } from './browser-ai/reader-chat-context';
 import type { BrowserChatContext } from './browser-ai/chat-model';
-import { selectedGraphContext } from './galaxy/selected-node';
+import { selectionEvidenceContext } from './galaxy/selection-evidence';
 import SystemWorkspace from './system/SystemWorkspace';
 import type { Workspace, Guidance } from './app/workspace-strings';
 import { allowedWorkspace, initialWorkspace, workspaceStrings as workspaceText } from './app/workspace-strings';
@@ -145,7 +144,6 @@ import { AtlasApi, TREE_ROUTE } from './app/atlas-api';
 import { ATLAS_BUILD_SUFFIX, ATLAS_VERSION } from './app/build-info';
 import { messages } from './i18n/messages';
 import {
-    commandLineIntent,
     KEY_LISTENER_OPTIONS,
     menuShortcutFor,
     tourKeyForEvent,
@@ -269,7 +267,6 @@ import type { BugWizardStatus } from './traces/BugWizard';
 import { bugPaths, resolveHop } from './traces/bug-paths';
 import type { BugPathNode, BugPathsDto } from './traces/bug-paths';
 import { BUG_WIZARD_MENU_LABEL } from './traces/bug-wizard-strings';
-import { IMPACT_MENU_LABEL } from './impact/impact-strings';
 import { SIDECAR_ORIGIN } from './llm/sidecar';
 import type { CacheModel, SidecarReading, SidecarState } from './llm/sidecar';
 import AtlasChatPanel from './chat/AtlasChatPanel';
@@ -307,6 +304,7 @@ import type { PolicyReading } from './llm/policy';
 import { resolveLlmState } from './llm/llm-state';
 import { llmChipValue } from './llm/strings';
 import SettingsPanel from './settings/SettingsPanel';
+import ConfigPanel from './settings/ConfigPanel';
 import type { SettingsMeasurement } from './settings/SettingsPanel';
 import AddProjectIndexDialog from './projects/AddProjectIndexDialog';
 import ProjectSwitcher from './projects/ProjectSwitcher';
@@ -757,6 +755,9 @@ export default function App(): JSX.Element {
     });
     const changeWorkspace = (value: Workspace): void => {
         value = allowedWorkspace(value);
+        if (value !== workspace) {
+            setProactiveSelection(undefined); setChatGraphSelection(undefined); setChatAttachment(undefined);
+        }
         setWorkspace(value);
         const url = new URL(window.location.href);
         url.searchParams.set('workspace', value);
@@ -767,12 +768,23 @@ export default function App(): JSX.Element {
         try { return localStorage.getItem('cbm.workspace.setup') !== 'done'; } catch { return false; }
     });
     const [browserAiOpen, setBrowserAiOpen] = useState(false);
+    const [localAgentState, setLocalAgentState] = useState<'off' | 'loading' | 'active' | 'busy' | 'error'>('off');
+    const [agentSettingsRequest, setAgentSettingsRequest] = useState(0);
+    const agentHasOpened = useRef(false);
+    const onAgentStateChange = useCallback((state: 'off' | 'loading' | 'active' | 'busy' | 'error') => {
+        setLocalAgentState(state);
+        if ((state === 'active' || state === 'busy') && !agentHasOpened.current) {
+            agentHasOpened.current = true; setBrowserAiOpen(true);
+        }
+    }, []);
+    const openAgentSettings = () => { setAgentSettingsRequest(value => value + 1); setBrowserAiOpen(true); };
     const [codeDetailsOpen, setCodeDetailsOpen] = useState(false);
     const [readerSelection, setReaderSelection] = useState<ReaderSelection>();
     const [pinnedCode, setPinnedCode] = useState<SelectedCodeSnapshot>();
     const [fileSymbols, setFileSymbols] = useState<FileSymbolResult & { project: string; path: string; status: 'loading' | 'ready' | 'error' }>({ project: '', path: '', symbols: [], message: '', status: 'ready' });
     const [chatAttachment, setChatAttachment] = useState<BrowserChatAttachment>();
     const [chatGraphSelection, setChatGraphSelection] = useState<BrowserChatContext>();
+    const [proactiveSelection, setProactiveSelection] = useState<{ scope: string; context: BrowserChatContext }>();
     const [galaxySelection, setGalaxySelection] = useState<GraphNode>();
     const [galaxySelectionProject, setGalaxySelectionProject] = useState('');
     const finishSetup = (): void => {
@@ -813,6 +825,13 @@ export default function App(): JSX.Element {
     }, []);
 
     const [project, setProject] = useState('');
+    const selectionScope = `${project}:${workspace}`;
+    const onSelectionEvidence = useCallback((context: BrowserChatContext | undefined) => {
+        setProactiveSelection(previous => context
+            ? previous?.scope === selectionScope && previous.context.text === context.text ? previous : { scope: selectionScope, context }
+            : undefined);
+    }, [selectionScope]);
+    useEffect(() => { setProactiveSelection(undefined); setChatGraphSelection(undefined); setChatAttachment(undefined); }, [project]);
     const [projectDetail, setProjectDetail] = useState('resolving project ...');
     const [serverOk, setServerOk] = useState<boolean | undefined>(undefined);
     const [counts, setCounts] = useState<{ nodes?: number; edges?: number }>({});
@@ -944,6 +963,7 @@ export default function App(): JSX.Element {
      * die Hilfe: eine Flaeche ueber dem Editor geht nicht ungefragt auf.
      */
     const [settingsOpen, setSettingsOpen] = useState(false);
+    const [configOpen, setConfigOpen] = useState(false);
     const [projectsOpen, setProjectsOpen] = useState(false);
     const [indexActivity, setIndexActivity] = useState<{ name: string; status: 'indexing' | 'done' | 'error' }>();
     /*
@@ -1109,7 +1129,6 @@ export default function App(): JSX.Element {
 
     const [galaxyOn, setGalaxyOn] = useState(true);
     const [layout, setLayout] = useState<GraphData | undefined>(undefined);
-    const [analysisSelection, setAnalysisSelection] = useState<{ project: string; target?: SelectionImpactTarget }>();
     const [sourceEvidence, setSourceEvidence] = useState<{ project: string; target: SourceEvidenceTarget }>();
     const [hits, setHits] = useState<RankedHit[]>(noHits);
     const [selectedHit, setSelectedHit] = useState(0);
@@ -1387,7 +1406,6 @@ export default function App(): JSX.Element {
     const [bugMessage, setBugMessage] = useState('');
     const bugTicket = useRef(0);
 
-    const impactOpen = explainOpen && explainTab === 'change';
     // ------------------------------------------ Das lokale Modell (W5a) ----
 
     /*
@@ -2635,7 +2653,6 @@ export default function App(): JSX.Element {
         tour === undefined
         && !entryOpen
         && !bugOpen
-        && !impactOpen
         && project.length > 0
         && !whyDismissed
         && (whyReopened || (!whyAnswer.asked && activePath.length === 0));
@@ -2665,7 +2682,7 @@ export default function App(): JSX.Element {
          * eigenes Eingabefeld. Ohne diesen Eintrag fielen Buchstaben, die
          * jemand vor dem offenen Panel tippt, in die Kommandozeile dahinter.
          */
-        overlayOpen: helpOpen || entryOpen || settingsOpen || projectsOpen,
+        overlayOpen: helpOpen || entryOpen || settingsOpen || configOpen || projectsOpen,
         walkRunning: tour !== undefined,
     };
 
@@ -2745,7 +2762,7 @@ export default function App(): JSX.Element {
             } else if (intent === 'bug') {
                 openExplain('bug');
             } else if (intent === 'change') {
-                openExplain('change');
+                changeWorkspace('explore');
             }
         },
         [openExplain, project, changeWorkspace, store],
@@ -3258,7 +3275,7 @@ export default function App(): JSX.Element {
                 context: {
                     focusName: twinSymbol?.name,
                     focusQualifiedName: twinSymbol?.qualifiedName,
-                    mode: bugOpen ? 'bug' : impactOpen ? 'change' : entryOpen ? 'entry'
+                    mode: bugOpen ? 'bug' : entryOpen ? 'entry'
                         : tour !== undefined ? 'tour' : 'none',
                 },
                 ...(twinSymbol === undefined ? {} : { focus: twinSymbol }),
@@ -3276,7 +3293,7 @@ export default function App(): JSX.Element {
             }, id).then(put);
         },
         [
-            bugOpen, chatDepth, entryOpen, impactOpen, llmFacts, llmMode, llmModel, llmState,
+            bugOpen, chatDepth, entryOpen, llmFacts, llmMode, llmModel, llmState,
             observedInto, project, provider, tour, twinSymbol,
         ],
     );
@@ -3667,17 +3684,6 @@ export default function App(): JSX.Element {
             }
             if (guard.walkRunning && playerIntent(event.key) !== 'none') {
                 return;
-            }
-            const intent = commandLineIntent(event, target);
-            if (intent === undefined) {
-                return;
-            }
-            // Abbestellt, damit das Zeichen nicht zweimal ankommt: einmal von
-            // hier und einmal von der Vorgabe, sobald das Feld den Fokus hat.
-            event.preventDefault();
-            window.dispatchEvent(new Event(OPEN_COMMAND_SEARCH_EVENT));
-            if (intent.kind === 'type') {
-                setCommand((current) => current + intent.text);
             }
         };
         window.addEventListener('keydown', onKeyDown, KEY_LISTENER_OPTIONS);
@@ -4256,17 +4262,6 @@ export default function App(): JSX.Element {
                 openExplain('bug');
             },
         },
-        {
-            key: 'impact',
-            shortcut: 'c',
-            label: IMPACT_MENU_LABEL,
-            title: messages.menu.impact,
-            onSelect: () => {
-                setEntryOpen(false);
-                setWhyReopened(false);
-                openExplain('change');
-            },
-        },
         /*
          * Der Weg zurueck aus AC3, als Menuepunkt.
          *
@@ -4489,8 +4484,6 @@ export default function App(): JSX.Element {
         : node.file_path === inspector.filePath && (node.label === 'File' || node.label === 'Module'));
     const exploreEvidence = ({ filePath, line, name }: SourceEvidenceTarget): void => {
         setSourceEvidence(undefined);
-        setAnalysisSelection(undefined);
-        if (impactOpen) collapseExplain();
         changeWorkspace('explore');
         setPinnedCode(undefined);
         const target = twinTargetOf({ filePath, startLine: line, name: name ?? filePath, kind: 'unknown' });
@@ -4508,23 +4501,18 @@ export default function App(): JSX.Element {
         setGalaxySelection(undefined);
         setGalaxySelectionProject('');
         setChatGraphSelection(undefined);
+        setProactiveSelection(undefined);
     };
-    const inspectorImpactTarget = inspector.filePath ? { filePath: inspector.filePath,
-        qualifiedName: inspector.symbol?.qualifiedName, id: inspector.symbol ? inspectorNode?.id : undefined,
-        name: inspector.symbol?.name, line: inspectorNode?.start_line } : undefined;
-    const mapImpactTarget = activeGalaxySelection?.file_path ? { filePath: activeGalaxySelection.file_path,
-        qualifiedName: ['File', 'Module'].includes(activeGalaxySelection.label) ? undefined : activeGalaxySelection.qualified_name,
-        id: ['File', 'Module'].includes(activeGalaxySelection.label) ? undefined : activeGalaxySelection.id,
-        name: activeGalaxySelection.name, line: activeGalaxySelection.start_line } : undefined;
-    const openSelectionImpact = (target?: SelectionImpactTarget) => setAnalysisSelection({ project, target });
+    const readerImpactTarget = activePath ? { filePath: activePath,
+        qualifiedName: markedGraphRange ? readerFocusSymbol?.qualifiedName : undefined,
+        name: markedGraphRange ? readerFocusSymbol?.name : undefined } : undefined;
     const selectMapNode = (node: GraphNode): void => {
         setGalaxySelection(node);
         setGalaxySelectionProject(project);
     };
     const mapSelectionPanel = selectionUnavailable ? <p role="status" className="repo-map-note">{selectionUnavailableText}</p> : activeGalaxySelection && (workspace === 'architecture' || workspace === 'galaxy') && <>
         <SelectionContextPanel graph={evidenceGraph} selected={activeGalaxySelection}
-            path={activeGalaxySelection.file_path ?? ''} agents={experimentalAgentsEnabled ? agents.state : undefined} onNavigate={navigateEvidence}
-            onImpact={() => openSelectionImpact(mapImpactTarget)} />
+            path={activeGalaxySelection.file_path ?? ''} agents={experimentalAgentsEnabled ? agents.state : undefined} onNavigate={navigateEvidence} />
     </>;
     const followInspectorTarget = (target: SymbolRef): void => {
         setPinnedCode(undefined);
@@ -4568,6 +4556,7 @@ export default function App(): JSX.Element {
         <GalaxyPanel
             project={project}
             onClearSelection={clearGraphSelection}
+            onSelectionEvidence={workspace === 'galaxy' ? onSelectionEvidence : undefined}
             selectionPanel={workspace === 'galaxy' ? mapSelectionPanel : undefined}
             visible={workspace === 'galaxy' || (workspace === 'explore' && galaxyOn)}
             workspaceExpanded={workspace === 'galaxy'}
@@ -4580,16 +4569,12 @@ export default function App(): JSX.Element {
             onSelectNode={workspace === 'galaxy' ? (node) => {
                 setGalaxySelection(node);
                 setGalaxySelectionProject(project);
-                setChatGraphSelection(selectedGraphContext(layout, node, project, crypto.randomUUID()));
             } : undefined}
             onSelectShadowNode={(node) => {
                 setGalaxySelection(undefined);
-                setChatGraphSelection({ id: crypto.randomUUID(), label: workspaceText.coverageShadowSelection(node.name),
-                    text: JSON.stringify({ project, source: '/api/layout missed_graph', layer: 'coverage-shadow',
-                        selected: { id: node.sourceId, name: node.name, path: node.file_path, kind: node.label },
-                        coverage: 'Not fully indexed. Detailed reasons, source ranges, and freshness are unavailable in this layout.',
-                        limitation: 'This is coverage metadata, not a code symbol or proof that code is absent.' }, null, 2) });
-                setBrowserAiOpen(true);
+                onSelectionEvidence(selectionEvidenceContext({ project, view: 'galaxy-coverage', source: '/api/layout missed_graph',
+                    label: `Coverage · ${node.name}`, selected: { id: node.sourceId, name: node.name, path: node.file_path, kind: node.label },
+                    limitations: 'Coverage metadata only, not a code symbol. Detailed reasons, source ranges, relationships and freshness are unavailable.' }));
             }}
             onLayout={onLayout}
             walk={workspace === 'galaxy' ? undefined : walk}
@@ -4616,7 +4601,7 @@ export default function App(): JSX.Element {
              * braucht. Dieselbe Reihenfolge wie ueberall in dieser Datei: was
              * ueber dem Panel liegt, hat den Vortritt.
              */
-            escapeTaken={helpOpen || entryOpen || overlayOpen || settingsOpen || projectsOpen}
+            escapeTaken={helpOpen || entryOpen || overlayOpen || settingsOpen || configOpen || projectsOpen}
         />
     );
 
@@ -4635,7 +4620,7 @@ export default function App(): JSX.Element {
         walkStep: tourStep,
         walkSteps: tour?.document.steps.length ?? 0,
         chatTurns: chatTurns.length,
-    });
+    }).filter(tab => tab.id !== 'change');
     explainTabsRef.current = explainTabList;
 
     /*
@@ -4781,15 +4766,20 @@ export default function App(): JSX.Element {
     return (
         <AtlasChrome
             workspace={workspace}
+            onOpenConfig={() => setConfigOpen(true)} configOpen={configOpen}
             projectSwitcher={<ProjectSwitcher currentProject={project} listProjects={projectsSource.listProjects}
                 onSelectProject={openProject} onAddProject={() => setProjectsOpen(true)} indexActivity={indexActivity} />}
             onWorkspaceChange={value => { setDiagnosticsPath(undefined); changeWorkspace(value); }}
-            onOpenBrowserAi={() => setBrowserAiOpen(open => !open)}
+            onOpenBrowserAi={openAgentSettings}
+            onExpandBrowserAi={() => setBrowserAiOpen(true)}
+            agentState={localAgentState}
             onOpenSystem={() => changeWorkspace('system')}
             daemonState={serverOk === undefined ? 'checking' : serverOk ? 'connected' : 'disconnected'}
             chatOpen={browserAiOpen}
             chatDock={<BrowserChatDock open={browserAiOpen} onClose={() => setBrowserAiOpen(false)}
-                showCollapsed={workspace === 'explore'} onOpen={() => setBrowserAiOpen(true)}
+                showCollapsed onOpen={() => setBrowserAiOpen(true)}
+                proactiveSelection={proactiveSelection?.scope === selectionScope ? proactiveSelection.context : undefined}
+                selectionScope={selectionScope} onAgentStateChange={onAgentStateChange} settingsRequest={agentSettingsRequest}
                 readerContext={workspace === 'explore' ? currentReaderContext : undefined}
                 pendingContext={chatGraphSelection} onContextConsumed={clearChatGraphSelection} onContextRemoved={clearChatGraphSelection}
                 context={browserGraphContext(inspector.ir, project, inspector.filePath, inspector.symbol ? workspacePathOf(inspector.symbol.uri) : '')}
@@ -4797,23 +4787,17 @@ export default function App(): JSX.Element {
             readerActions={<>
                 <button type="button" disabled={!liveSelection} aria-keyshortcuts="Control+Shift+L Meta+Shift+L"
                     onClick={() => { if (liveSelection) attachSelection(liveSelection); }}>{workspaceText.askSelection}</button>
-                <button type="button" disabled={!inspector.filePath} onClick={() => openSelectionImpact(inspectorImpactTarget)}>{workspaceText.assessImpact}</button>
                 <button type="button" aria-expanded={codeDetailsOpen} onClick={() => setCodeDetailsOpen(open => !open)}>{workspaceText.codeDetails}</button>
             </>}
+            readerSummary={workspace === 'explore' && activePath ? <FileImpactSummary
+                project={project} target={readerImpactTarget}
+                onOpen={target => exploreEvidence({ filePath: target.filePath, line: target.line, name: target.name })} /> : undefined}
             readerDetails={codeDetailsOpen ? selectedCode : undefined}
             globalOverlay={<>
-                {(impactOpen || analysisSelection?.project === project) && <div className="atlas-analysis-overlay" role="dialog" aria-label={workspaceText.changeAnalysis} onKeyDown={event => {
-                    event.stopPropagation();
-                    if (event.key === 'Escape') { setAnalysisSelection(undefined); if (impactOpen) collapseExplain(); }
-                }}><ChangeAnalysisWorkspace key={project} project={project} client={client}
-                    selectedTarget={analysisSelection?.project === project ? analysisSelection.target : (workspace === 'architecture' || workspace === 'galaxy') ? mapImpactTarget : inspectorImpactTarget}
-                    initialMode={analysisSelection?.project === project ? 'selection' : 'worktree'} expectedGeneration={repositoryReading.snapshot?.generation}
-                    onOpenSource={target => navigateEvidence(target.filePath, target.line, target.name)}
-                    onDiagnose={() => {
-                        setDiagnosticsPath((workspace === 'architecture' || workspace === 'galaxy') ? activeGalaxySelection?.file_path : activePath || undefined);
-                        setAnalysisSelection(undefined); if (impactOpen) collapseExplain();
-                        changeWorkspace('coverage');
-                    }} onClose={() => { setAnalysisSelection(undefined); if (impactOpen) collapseExplain(); }} /></div>}
+                {configOpen && <ConfigPanel service={api} project={project} display={display} onDisplay={changeDisplay}
+                    onOpenBrowserModels={() => { setConfigOpen(false); openAgentSettings(); }}
+                    onOpenDisplay={() => { setConfigOpen(false); setSettingsOpen(true); }}
+                    onClose={() => setConfigOpen(false)} />}
                 {sourceEvidence?.project === project && <SourceEvidenceDrawer key={`${project}:${sourceEvidence.target.filePath}:${sourceEvidence.target.line ?? 1}`}
                     project={project} target={sourceEvidence.target} graph={evidenceGraph} client={client}
                     onClose={() => setSourceEvidence(undefined)} onExplore={exploreEvidence} />}
@@ -4824,7 +4808,7 @@ export default function App(): JSX.Element {
                     onOpenProject={openProject} onClose={() => setProjectsOpen(false)} />
                 {helpOpen && <HelpOverlay onClose={() => setHelpOpen(false)} />}
                 {settingsOpen && <SettingsPanel project={project} state={llmState} facts={llmFacts}
-                    onOpenBrowserModels={() => { setSettingsOpen(false); setBrowserAiOpen(true); }}
+                    onOpenBrowserModels={() => { setSettingsOpen(false); openAgentSettings(); }}
                     router={llmRouter} models={llmModels} selectedModel={selectedModel}
                     onSelectModel={chooseModel}
                     display={display} onDisplay={changeDisplay}
@@ -4838,6 +4822,7 @@ export default function App(): JSX.Element {
                 <div hidden={workspace !== 'architecture'}>
                 <ArchitecturePanel projectName={project} overview={overview} active={workspace === 'architecture'}
                     onClearSelection={clearGraphSelection}
+                    onSelectionEvidence={onSelectionEvidence}
                     coverage={coverageAsked && coverageMeta.generation === repositoryReading.snapshot?.generation ? coverage : undefined}
                     readSource={readMapSource}
                     graph={repositoryReading.snapshot} graphGeneration={repositoryReading.snapshot?.generation} selection={activeGalaxySelection} selectionPanel={mapSelectionPanel}

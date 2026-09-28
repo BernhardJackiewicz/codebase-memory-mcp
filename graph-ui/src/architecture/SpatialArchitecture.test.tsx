@@ -47,6 +47,18 @@ it('returns from a file symbol to the repository map on empty background', async
     expect(host.textContent).not.toContain('Analyze selected symbol');
     expect(clear).toHaveBeenCalledOnce();
 });
+it('publishes source-area evidence without inventing a symbol and clears it on background', async () => {
+    const onSelectionEvidence = vi.fn();
+    await act(async () => root.render(<SpatialArchitecture project="sample" generation="g1" graph={graph} overview={overview} view="overview" filter="" active onSelectionEvidence={onSelectionEvidence} onNavigate={vi.fn()} onView={vi.fn()} />));
+    await click('src/api');
+    const snapshot = JSON.parse(onSelectionEvidence.mock.lastCall![0].text).evidence;
+    expect(snapshot.project).toBe('sample'); expect(snapshot.generation).toBe('g1');
+    expect(snapshot.selected).toMatchObject({ kind: 'area', label: 'src/api', memberCount: 1 });
+    expect(snapshot.selected.members[0]).toMatchObject({ qualifiedName: 'sample.start', filePath: 'src/api/main.ts' });
+    expect(snapshot.limitations.interpretation).toContain('static references');
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Empty background"]')!.click());
+    expect(onSelectionEvidence).toHaveBeenLastCalledWith(undefined);
+});
 it('passes hidden-workspace suspension to the scene and preserves the scene across view switches', async () => {
     const props = { project: 'sample', graph, overview, filter: '', onNavigate: vi.fn(), onView: vi.fn() };
     await act(async () => root.render(<SpatialArchitecture {...props} view="overview" active />));
@@ -106,4 +118,23 @@ it('keeps the chosen entry identity across reindexing when numeric IDs are reuse
     await act(async () => root.render(<SpatialArchitecture {...props} graph={{ nodes: [{ ...node, id: 2 }, { ...second, id: 101 }], edges: [], total_nodes: 2 }} generation="new" view="entryPoints" active />));
     expect(select.value).toBe('101');
     expect(host.querySelector('[data-testid="scene"]')?.textContent).toBe('other');
+});
+
+it('focuses an aggregated hotspot area and restores all areas on empty background', async () => {
+    const other: GraphNode = { ...node, id: 2, name: 'save', qualified_name: 'sample.save', file_path: 'src/store/save.ts' };
+    const input: GraphData = { nodes: [node, other], edges: [{ source: 1, target: 2, type: 'CALLS' }], total_nodes: 2 };
+    const data = { ...overview, hotspots: [{ name: 'start', qualifiedName: node.qualified_name, fanIn: 10 }, { name: 'save', qualifiedName: other.qualified_name, fanIn: 5 }] };
+    await act(async () => root.render(<SpatialArchitecture project="sample" graph={input} overview={data} view="hotspots" filter="" active onNavigate={vi.fn()} onView={vi.fn()} />));
+    expect(host.querySelector('[data-testid="scene"]')?.textContent).toContain('start');
+    expect(host.querySelector('[data-testid="scene"]')?.textContent).toContain('save');
+    const area = [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Hotspots by source area"] button')].find(button => button.querySelector('strong')?.textContent === 'src/store')!;
+    expect(area.textContent).toContain('1 outside dependent files');
+    await act(async () => area.click());
+    expect(host.querySelector('[data-testid="scene"]')?.textContent).not.toContain('start');
+    expect(host.querySelector('[data-testid="scene"]')?.textContent).toContain('save');
+    expect(host.querySelector('[aria-label="Hotspot area"]')?.textContent).toContain('src/store');
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Empty background"]')!.click());
+    expect(host.querySelector('[data-testid="scene"]')?.textContent).toContain('start');
+    expect(host.querySelector('[aria-label="Hotspot area"]')).toBeNull();
+    expect(host.querySelector('input[type="search"]')).toBeNull();
 });

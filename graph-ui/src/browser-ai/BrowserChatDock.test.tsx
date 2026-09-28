@@ -24,7 +24,7 @@ function fixture() {
         chat: vi.fn(async (_messages: readonly BrowserChatMessage[], _onToken: (chunk: string) => void) => 'Adds the two values.'),
         stop: vi.fn(), dispose: vi.fn(),
     };
-    const props = { open: true, onClose: vi.fn(), onAttachmentConsumed: vi.fn(), onAttachmentRemoved: vi.fn(), createRuntime: vi.fn(() => runtime), removeCache: vi.fn(async () => {}) };
+    const props = { proactive: false, open: true, onClose: vi.fn(), onAttachmentConsumed: vi.fn(), onAttachmentRemoved: vi.fn(), createRuntime: vi.fn(() => runtime), removeCache: vi.fn(async () => {}) };
     return { runtime, props };
 }
 async function render(props: BrowserChatDockProps): Promise<void> { await act(async () => root.render(<BrowserChatDock {...props} />)); }
@@ -421,14 +421,197 @@ describe('persistent local browser chat', () => {
         } finally { readerControl.remove(); }
     });
 
-    it('rejects oversized automatic source without shortening it or clearing the question', async () => {
-        const { props, runtime } = fixture(); runtime.countTokens.mockResolvedValueOnce(99_999);
+    it('declines a request that remains oversized after disclosed evidence budgeting', async () => {
+        const { props, runtime } = fixture(); runtime.countTokens.mockResolvedValue(99_999);
         const text = 'x'.repeat(30_000) + '\r\n\tlast  ';
         await render({ ...props, readerContext: reader(text) }); await click('Download & load'); await type('Explain exactly'); await click('Send ↑');
-        expect(runtime.countTokens.mock.calls[0][0][0].content).toContain(text);
+        expect(runtime.countTokens.mock.calls[0][0].at(-1)!.content).not.toContain(text);
         expect(runtime.chat).not.toHaveBeenCalled();
         expect(container.querySelector('textarea')?.value).toBe('Explain exactly');
         expect(container.querySelector('.cbm-chat-reader-source pre')?.textContent).toBe(text);
         expect(container.textContent).toContain('Nothing was sent or shortened');
+    });
+});
+
+
+describe('proactive selection explanations', () => {
+    afterEach(() => vi.useRealTimers());
+    const graph = (text: string, id = text) => ({ id, label: 'Selected node', text: JSON.stringify({ evidence: { kind: 'current-selection-evidence', project: 'sample', view: 'galaxy', source: 'query_graph', generation: 'v1', selected: { name: text }, relationships: { count: 1 } }, omissions: [] }) });
+    async function settleSelection() { await act(async () => { await vi.advanceTimersByTimeAsync(650); }); }
+
+    it('requires explicit loading, debounces selections and ignores event-only identity changes', async () => {
+        vi.useFakeTimers();
+        const { props, runtime } = fixture();
+        await render({ ...props, proactive: true, proactiveSelection: graph('first') });
+        await settleSelection(); expect(props.createRuntime).not.toHaveBeenCalled();
+        await click('Download & load');
+        await render({ ...props, proactive: true, proactiveSelection: graph('latest') });
+        await settleSelection();
+        expect(runtime.chat).toHaveBeenCalledOnce();
+        expect(runtime.chat.mock.calls[0][0].at(-1)!.content).toContain('latest');
+        expect(runtime.chat.mock.calls[0][0].at(-1)!.content).not.toContain('first');
+        expect(container.querySelectorAll('.cbm-chat-turn')).toHaveLength(0);
+        expect(container.querySelector('[aria-label="Current selection explanation"]')?.textContent).toContain('Source evidence');
+        await render({ ...props, proactive: true, proactiveSelection: graph('latest', 'new-event-id') });
+        await settleSelection(); expect(runtime.chat).toHaveBeenCalledOnce();
+        await render({ ...props, proactive: true });
+        expect(container.querySelector('[aria-label="Current selection explanation"]')).toBeNull();
+    });
+
+    it('stops stale generation and waits for its settlement before starting the latest selection', async () => {
+        vi.useFakeTimers();
+        const { props, runtime } = fixture(); const old = deferred<string>();
+        runtime.chat.mockReturnValueOnce(old.promise);
+        await render({ ...props, proactive: true, proactiveSelection: graph('old') });
+        await click('Download & load'); await settleSelection();
+        await render({ ...props, proactive: true, proactiveSelection: graph('new') });
+        expect(runtime.stop).toHaveBeenCalledOnce();
+        await settleSelection(); expect(runtime.chat).toHaveBeenCalledOnce();
+        await act(async () => { runtime.chat.mock.calls[0][1]('obsolete token'); old.resolve('obsolete result'); });
+        expect(container.textContent).not.toContain('obsolete');
+        await settleSelection(); expect(runtime.chat).toHaveBeenCalledTimes(2);
+        expect(runtime.chat.mock.calls[1][0].at(-1)!.content).toContain('new');
+    });
+
+    it('preserves drafts, sends current evidence on each manual question, and does not schedule while typing', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        await render({ ...props, proactive: true, proactiveSelection: graph('one') });
+        await click('Download & load'); await type('What does it do?');
+        await settleSelection(); expect(runtime.chat).not.toHaveBeenCalled();
+        await click('Send ↑');
+        expect(runtime.chat.mock.calls[0][0].at(-1)!.content).toContain('one');
+        await type('And this?');
+        await render({ ...props, proactive: true, proactiveSelection: graph('two') });
+        await settleSelection(); expect(runtime.chat).toHaveBeenCalledOnce();
+        expect(container.querySelector('textarea')?.value).toBe('And this?');
+        await click('Send ↑');
+        expect(runtime.chat.mock.calls[1][0].at(-1)!.content).toContain('two');
+        expect(runtime.chat.mock.calls[1][0].at(-1)!.content).not.toContain('one');
+    });
+
+    it('uses exact reader source, never falls back while source is loading, and cancels pending work on unload', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        await render({ ...props, proactive: true, readerContext: reader('literal selection', 'selection'), proactiveSelection: graph('irrelevant graph') });
+        await click('Download & load'); await settleSelection();
+        expect(runtime.chat.mock.calls[0][0].at(-1)!.content).toContain('literal selection');
+        expect(runtime.chat.mock.calls[0][0].at(-1)!.content).not.toContain('irrelevant graph');
+        await render({ ...props, proactive: true, readerContext: { project: 'sample', path: 'next.ts', status: 'loading' }, proactiveSelection: graph('stale') });
+        await settleSelection(); expect(runtime.chat).toHaveBeenCalledOnce();
+        await render({ ...props, proactive: true, readerContext: reader('next file') });
+        await models(); await click('Unload model'); await settleSelection();
+        expect(runtime.chat).toHaveBeenCalledOnce();
+    });
+
+    it('reports actual runtime status and opens settings on an explicit settings request', async () => {
+        const { props } = fixture(); const onAgentStateChange = vi.fn();
+        await render({ ...props, onAgentStateChange }); expect(onAgentStateChange).toHaveBeenLastCalledWith('off');
+        await click('Download & load'); expect(onAgentStateChange).toHaveBeenLastCalledWith('active');
+        expect(container.querySelector('#cbm-chat-model')).toBeNull();
+        await render({ ...props, onAgentStateChange, settingsRequest: 1 });
+        expect(container.querySelector('#cbm-chat-model')).not.toBeNull();
+        await click('Unload model'); expect(onAgentStateChange).toHaveBeenLastCalledWith('off');
+    });
+});
+
+
+describe('selection explainer controls', () => {
+    afterEach(() => vi.useRealTimers());
+    it('uses original source for follow-ups without recycling automatic model prose', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        await render({ ...props, proactive: true, readerContext: reader('function sum(a,b) { return a+b; }') });
+        await click('Download & load');
+        await act(async () => { await vi.advanceTimersByTimeAsync(650); });
+        await type('Why?'); await click('Send ↑');
+        const request = runtime.chat.mock.calls[1][0];
+        expect(request[0].content).not.toContain('Adds the two values.');
+        expect(request[0].content).toContain('function sum(a,b)');
+        expect(request.map(message => message.role)).toEqual(['system', 'user']);
+    });
+
+    it('pauses automatic explanations and retries a stopped explanation only on request', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture(); const answer = deferred<string>();
+        runtime.chat.mockReturnValueOnce(answer.promise);
+        await render({ ...props, proactive: true, readerContext: reader('source') });
+        await click('Download & load');
+        await act(async () => { await vi.advanceTimersByTimeAsync(650); });
+        await click('Stop'); await act(async () => answer.resolve('cancelled'));
+        await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+        expect(runtime.chat).toHaveBeenCalledOnce();
+        await click('Explain again');
+        await act(async () => { await vi.advanceTimersByTimeAsync(650); });
+        expect(runtime.chat).toHaveBeenCalledTimes(2);
+        await models();
+        const automatic = [...container.querySelectorAll('label')].find(label => label.textContent?.includes('Explain selections automatically'))!.querySelector('input')!;
+        await act(async () => automatic.click());
+        await render({ ...props, proactive: true, readerContext: reader('different source') });
+        await act(async () => { await vi.advanceTimersByTimeAsync(650); });
+        expect(runtime.chat).toHaveBeenCalledTimes(2);
+    });
+});
+
+
+it('does not generate from a superseded token count and can return to that selection', async () => {
+    vi.useFakeTimers();
+    try {
+        const { props, runtime } = fixture(); const counting = deferred<number>();
+        runtime.countTokens.mockReturnValueOnce(counting.promise);
+        await render({ ...props, proactive: true, readerContext: reader('first') });
+        await click('Download & load');
+        await act(async () => { await vi.advanceTimersByTimeAsync(650); });
+        await render({ ...props, proactive: true, readerContext: reader('second') });
+        await render({ ...props, proactive: true, readerContext: reader('first') });
+        await act(async () => counting.resolve(100));
+        expect(runtime.chat).not.toHaveBeenCalled();
+        await act(async () => { await vi.advanceTimersByTimeAsync(650); });
+        expect(runtime.chat).toHaveBeenCalledOnce();
+        expect(runtime.chat.mock.calls[0][0].at(-1)!.content).toContain('first');
+    } finally { vi.useRealTimers(); }
+});
+
+
+describe('live-browser regressions', () => {
+    afterEach(() => vi.useRealTimers());
+    it('keeps unsupported automatic prose out of the explanation and exposes source evidence', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        runtime.chat.mockResolvedValueOnce('Invented destructor behavior.');
+        await render({ ...props, proactive: true, readerContext: reader('u.i = (uintptr_t)CBM_NOT_FOUND;', 'selection') });
+        await click('Download & load');
+        await act(async () => { await vi.advanceTimersByTimeAsync(650); });
+        const card = container.querySelector('[aria-label="Current selection explanation"]');
+        expect(card?.textContent).not.toContain('Invented destructor behavior.');
+        expect(card?.textContent).toContain('Source evidence');
+        expect(card?.textContent).toContain('CBM_NOT_FOUND');
+    });
+
+    it('does not promote an automatic model guess into follow-up instructions', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        runtime.chat.mockResolvedValueOnce('Invented destructor behavior.');
+        await render({ ...props, proactive: true, readerContext: reader('u.i = (uintptr_t)CBM_NOT_FOUND;', 'selection') });
+        await click('Download & load');
+        await act(async () => { await vi.advanceTimersByTimeAsync(650); });
+        await type('Quote the selected assignment.'); await click('Send ↑');
+        expect(runtime.chat.mock.calls[1][0][0].content).not.toContain('Invented destructor behavior.');
+    });
+
+    it('invalidates a failed GPU runtime and reports error instead of active', async () => {
+        const { props, runtime } = fixture(); const onAgentStateChange = vi.fn();
+        runtime.chat.mockRejectedValueOnce(new Error("failed to call OrtRun(): GPUBuffer mapAsync invalid buffer"));
+        await render({ ...props, onAgentStateChange }); await click('Download & load');
+        await type('Explain'); await click('Send ↑');
+        expect(runtime.dispose).toHaveBeenCalledOnce();
+        expect(onAgentStateChange).toHaveBeenLastCalledWith('error');
+        expect(container.textContent).toContain('Reload');
+    });
+
+    it('prepares a bounded, disclosed excerpt for an oversized file before inference', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        runtime.countTokens.mockImplementation(async messages => Math.ceil(messages.reduce((sum, message) => sum + message.content.length, 0) / 4));
+        await render({ ...props, proactive: true, readerContext: reader(Array.from({ length: 12000 }, (_, line) => `const value${line} = ${line};`).join('\n')) });
+        await click('Download & load');
+        await act(async () => { await vi.advanceTimersByTimeAsync(650); });
+        expect(runtime.chat).toHaveBeenCalledOnce();
+        const request = runtime.chat.mock.calls[0][0];
+        expect(request.reduce((sum, message) => sum + message.content.length, 0)).toBeLessThan(7000);
+        expect(container.querySelector('[aria-label="Current selection explanation"]')?.textContent).toMatch(/excerpt|sample|omitted/i);
     });
 });

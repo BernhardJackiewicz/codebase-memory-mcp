@@ -1,13 +1,22 @@
-import { useEffect, useRef, useState, type FormEvent, type JSX } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type JSX } from 'react';
 import type { BrowserAiProgress } from './browser-ai-controller';
 import { createBrowserChatRuntime, type BrowserChatRuntime } from './browser-ai-runtime';
 import { BROWSER_MODELS, removeBrowserModelCache } from './model-policy';
 import { buildChatMessages, selectionLocation, snapshotAttachment, snapshotReaderContext, type BrowserChatAttachment, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatTurn } from './chat-model';
+import { explanationInput, EXPLANATION_DELAY_MS, type ExplanationInput } from './proactive-selection';
+import { prepareExplanationContext, type PreparedExplanationContext } from './explanation-context';
+import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, CHAT_INPUT_TOKENS, citedInterpretation, explanationMessages, formatExplanationEvidence } from './explanation-response';
+import { isGpuRuntimeFailure, BrowserRuntimeFatalError } from './runtime-fault';
 import ChatMarkdown from './ChatMarkdown';
 import './browser-chat.css';
 
 export type { BrowserChatAttachment, BrowserChatContext, BrowserChatReaderContext, BrowserChatSource } from './chat-model';
 export interface BrowserChatDockProps {
+    proactiveSelection?: BrowserChatContext;
+    selectionScope?: string;
+    proactive?: boolean;
+    onAgentStateChange?: (state: 'off' | 'loading' | 'active' | 'busy' | 'error') => void;
+    settingsRequest?: number;
     open: boolean;
     onClose: () => void;
     showCollapsed?: boolean;
@@ -54,13 +63,23 @@ function ContextSnapshot({ context }: { context: BrowserChatContext }): JSX.Elem
 }
 
 /** Keep mounted when collapsed: state and worker lifetime are independent of visibility. */
-export default function BrowserChatDock({ open, onClose, showCollapsed = false, onOpen, attachment, readerContext, context = [], pendingContext, onContextConsumed, onContextRemoved, onAttachmentConsumed, onAttachmentRemoved, createRuntime = createBrowserChatRuntime, removeCache = removeBrowserModelCache }: BrowserChatDockProps): JSX.Element {
+export default function BrowserChatDock({ proactiveSelection, selectionScope = "", proactive = true, onAgentStateChange, settingsRequest = 0, open, onClose, showCollapsed = false, onOpen, attachment, readerContext, context = [], pendingContext, onContextConsumed, onContextRemoved, onAttachmentConsumed, onAttachmentRemoved, createRuntime = createBrowserChatRuntime, removeCache = removeBrowserModelCache }: BrowserChatDockProps): JSX.Element {
+    const [automatic, setAutomatic] = useState(true);
+    const [explanation, setExplanation] = useState<{ key: string; label: string; answer: string; status: string; error?: string; packet?: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; mode?: 'interpretation' | 'evidence' }>();
+    const [retryExplanation, setRetryExplanation] = useState(0);
+    const autoRun = useRef<{ key: string; cancelled: boolean } | undefined>(undefined);
+    const lastAttempt = useRef<string | undefined>(undefined);
+    const selected = useMemo(() => explanationInput(selectionScope, readerContext, proactiveSelection), [selectionScope, readerContext, proactiveSelection]);
+    const selectionRef = useRef(selected); selectionRef.current = selected;
+    const settingsSeen = useRef(settingsRequest);
     const [modelId, setModelId] = useState(initialModel.id);
     const model = BROWSER_MODELS.find(candidate => candidate.id === modelId) ?? initialModel;
     const [phase, setPhase] = useState<Phase>('off');
     const [draft, setDraft] = useState('');
     const [turns, setTurns] = useState<BrowserChatTurn[]>([]);
     const [error, setError] = useState<string>();
+    const [runtimeFailed, setRuntimeFailed] = useState(false);
+    const [contextNotice, setContextNotice] = useState<string>();
     const [notice, setNotice] = useState<string>();
     const [progress, setProgress] = useState<BrowserAiProgress>();
     const [downloaded, setDownloaded] = useState<Set<string>>(() => new Set());
@@ -92,13 +111,82 @@ export default function BrowserChatDock({ open, onClose, showCollapsed = false, 
     }, [turns, open, phase]);
     useEffect(() => { if (open && (manualAttachment || graphSelection)) input.current?.focus(); }, [open, manualAttachment?.id, graphSelection?.id]);
 
+    const agentState = phase === 'off' ? error ? 'error' : 'off' : phase === 'preparing' || phase === 'removing' ? 'loading' : phase === 'ready' ? 'active' : 'busy';
+    useEffect(() => { onAgentStateChange?.(agentState); }, [agentState, onAgentStateChange]);
+    useEffect(() => {
+        if (settingsSeen.current !== settingsRequest) { settingsSeen.current = settingsRequest; setShowModels(true); }
+    }, [settingsRequest]);
+    useEffect(() => {
+        const run = autoRun.current;
+        if (run && !run.cancelled && (run.key !== selected?.key || !automatic || !proactive)) {
+            run.cancelled = true; lastAttempt.current = undefined; runtime.current?.stop();
+        }
+    }, [selected?.key, automatic, proactive]);
+    useEffect(() => {
+        if (!proactive || !automatic || !selected || phase !== 'ready' || draft.trim() || pending.current || lastAttempt.current === selected.key) return;
+        const snapshot = selected;
+        const timer = setTimeout(() => { void explain(snapshot); }, EXPLANATION_DELAY_MS);
+        return () => clearTimeout(timer);
+    }, [selected?.key, phase, automatic, proactive, draft, retryExplanation]);
+
+    const explain = async (snapshot: ExplanationInput): Promise<void> => {
+        const currentRuntime = runtime.current;
+        if (!currentRuntime || pending.current || selectionRef.current?.key !== snapshot.key) return;
+        pending.current = true; stopRequested.current = false; setStopping(false);
+        const ticket = ++epoch.current;
+        const run = { key: snapshot.key, cancelled: false }; autoRun.current = run; lastAttempt.current = snapshot.key;
+        const valid = () => epoch.current === ticket && !run.cancelled && !stopRequested.current && selectionRef.current?.key === snapshot.key;
+        setExplanation({ key: snapshot.key, label: snapshot.label, answer: '', status: 'generating' });
+        setPhase('counting');
+        try {
+            let packet = prepareExplanationContext(snapshot.reader, snapshot.graph, 3200);
+            let request = explanationMessages(packet);
+            let count = await currentRuntime.countTokens(request);
+            if (!valid()) return;
+            for (let budget = 1900; count > Math.min(AUTO_INPUT_TOKENS, model.contextTokens - AUTO_OUTPUT_TOKENS) && budget >= 300; budget = Math.floor(budget * .6)) {
+                packet = prepareExplanationContext(snapshot.reader, snapshot.graph, budget);
+                request = explanationMessages(packet);
+                count = await currentRuntime.countTokens(request);
+                if (!valid()) return;
+            }
+            if (!packet.evidence.length || count > Math.min(AUTO_INPUT_TOKENS, model.contextTokens - AUTO_OUTPUT_TOKENS)) {
+                setExplanation({ key: snapshot.key, label: snapshot.label, answer: packet.fallback, status: 'complete', mode: 'evidence', packet });
+                return;
+            }
+            setExplanation({ key: snapshot.key, label: snapshot.label, answer: '', status: 'generating', packet });
+            setPhase('generating');
+            // Buffer structured automatic output: do not flash unchecked model guesses while streaming.
+            const answer = await currentRuntime.chat(request, () => {}, { maxOutputTokens: AUTO_OUTPUT_TOKENS });
+            if (valid()) {
+                const citation = citedInterpretation(answer, packet);
+                setExplanation({ key: snapshot.key, label: snapshot.label, answer: citation?.claim ?? packet.fallback,
+                    status: 'complete', mode: citation ? 'interpretation' : 'evidence', packet, citation });
+            }
+        } catch (failure) {
+            if (epoch.current === ticket && isGpuRuntimeFailure(failure)) { invalidateRuntime(failure); return; }
+            if (valid()) setExplanation({ key: snapshot.key, label: snapshot.label, answer: '', status: 'error', error: messageOf(failure) });
+        } finally {
+            if (epoch.current === ticket) {
+                if (run.cancelled || stopRequested.current) setExplanation(previous => previous?.key === snapshot.key ? { ...previous, status: 'stopped' } : previous);
+                autoRun.current = undefined; pending.current = false; setStopping(false); setPhase('ready');
+            }
+        }
+    };
     const release = (): void => {
+        if (autoRun.current) autoRun.current.cancelled = true;
+        autoRun.current = undefined; lastAttempt.current = undefined; setExplanation(undefined);
         const id = activeTurn.current;
         if (id) setTurns(previous => previous.map(turn => turn.id === id ? { ...turn, status: 'stopped' } : turn));
         epoch.current += 1; pending.current = false; activeTurn.current = undefined;
         stopRequested.current = false; setStopping(false);
         runtime.current?.dispose(); runtime.current = undefined;
-        setProgress(undefined); setTokenCount(undefined); setPhase('off');
+        setProgress(undefined); setTokenCount(undefined); setPhase('off'); setRuntimeFailed(false);
+    };
+    const invalidateRuntime = (failure: unknown): void => {
+        const id = activeTurn.current;
+        const message = new BrowserRuntimeFatalError(messageOf(failure)).message;
+        release(); setRuntimeFailed(true); setError(message); setShowModels(true);
+        if (id) setTurns(previous => previous.map(turn => turn.id === id ? { ...turn, status: 'error', error: message } : turn));
     };
     const prepare = async (): Promise<void> => {
         if (pending.current || model.availability !== 'available') return;
@@ -108,6 +196,7 @@ export default function BrowserChatDock({ open, onClose, showCollapsed = false, 
         try {
             const nextRuntime = createRuntime(model.id);
             runtime.current = nextRuntime;
+            nextRuntime.setFatalHandler?.(failure => { if (runtime.current === nextRuntime) invalidateRuntime(failure); });
             await nextRuntime.prepare(value => { if (epoch.current === ticket) setProgress(value); });
             if (epoch.current !== ticket) return;
             setDownloaded(previous => new Set(previous).add(model.id));
@@ -136,17 +225,27 @@ export default function BrowserChatDock({ open, onClose, showCollapsed = false, 
         const selectedGraph = !retry && graphSelection ? { ...graphSelection } : undefined;
         const nextContext = selectedGraph ? [...selectedContext.filter(item => item.id !== selectedGraph.id), selectedGraph] : selectedContext;
         const extra = (retry ? retry.context ?? [] : nextContext).map(item => ({ ...item }));
-        const request = retry ? retry.request.map(message => ({ ...message })) : buildChatMessages(turns, prompt, source, extra, reader);
-        setError(undefined); setNotice(undefined); setPhase('counting');
+        let packet: PreparedExplanationContext | undefined;
+        const currentGraph = !reader && proactiveSelection ? [proactiveSelection] : [];
+        const makeRequest = () => buildChatMessages(turns, prompt, source, extra, reader, currentGraph, packet ? formatExplanationEvidence(packet) : undefined);
+        if (!retry && ((reader?.source?.text.length ?? 0) > 5000 || currentGraph.length)) packet = prepareExplanationContext(reader, currentGraph, 3200);
+        let request = retry ? retry.request.map(message => ({ ...message })) : makeRequest();
+        setError(undefined); setNotice(undefined); setContextNotice(undefined); setPhase('counting');
         try {
-            const count = await currentRuntime.countTokens(request);
-            if (epoch.current !== ticket) return;
-            if (stopRequested.current) return;
+            let count = await currentRuntime.countTokens(request);
+            if (epoch.current !== ticket || stopRequested.current) return;
+            const limit = Math.min(CHAT_INPUT_TOKENS, model.contextTokens - model.maxOutputTokens);
+            for (let budget = packet ? 1900 : 3200; !retry && count > limit && (reader?.source || currentGraph.length) && budget >= 300; budget = Math.floor(budget * .6)) {
+                packet = prepareExplanationContext(reader, currentGraph, budget);
+                request = makeRequest(); count = await currentRuntime.countTokens(request);
+                if (epoch.current !== ticket || stopRequested.current) return;
+            }
             setTokenCount(count);
-            if (count + model.maxOutputTokens > model.contextTokens) {
-                setError(`This prompt needs ${count.toLocaleString()} input tokens; ${Math.max(0, model.contextTokens - model.maxOutputTokens).toLocaleString()} fit with space for the answer. Select less code, start a new conversation, or choose a larger-context model. Nothing was sent or shortened.`);
+            if (count > limit) {
+                setError(`This prompt needs ${count.toLocaleString()} input tokens; the local working limit is ${limit.toLocaleString()}. Select less code or start a new conversation. Nothing was sent or shortened without disclosure.`);
                 return;
             }
+            if (packet) setContextNotice(packet.limitations.length ? packet.limitations.join(' ') : 'Using compact current-selection evidence.');
             const id = retry?.id ?? `local-turn-${++nextTurn.current}`;
             const turn: BrowserChatTurn = { id, prompt, attachment: source, readerContext: reader, context: extra, modelId: model.id, request, answer: '', status: 'generating' };
             activeTurn.current = id;
@@ -167,6 +266,7 @@ export default function BrowserChatDock({ open, onClose, showCollapsed = false, 
             setTurns(previous => previous.map(item => item.id === id ? { ...item, answer: stopRequested.current ? item.answer : output, status: stopRequested.current ? 'stopped' : 'complete' } : item));
         } catch (failure) {
             if (epoch.current !== ticket) return;
+            if (isGpuRuntimeFailure(failure)) { invalidateRuntime(failure); return; }
             const explanation = messageOf(failure);
             const id = activeTurn.current;
             if (id) setTurns(previous => previous.map(turn => turn.id === id ? { ...turn, status: stopRequested.current ? 'stopped' : 'error', error: stopRequested.current ? undefined : explanation } : turn));
@@ -199,14 +299,14 @@ export default function BrowserChatDock({ open, onClose, showCollapsed = false, 
 
     if (!open && showCollapsed) return <aside className="cbm-chat-dock is-collapsed" aria-label="Local chat">
         <header className="cbm-chat-header">
-            <h2>Local chat</h2>
+            <h2>Local agent</h2>
             <button type="button" className="cbm-chat-primary" aria-expanded={false} onClick={onOpen}>{needsEnable ? 'Enable chat' : 'Open chat'}</button>
         </header>
     </aside>;
 
     return <aside className="cbm-chat-dock" hidden={!open} aria-label="Local chat">
         <header className="cbm-chat-header">
-            <div><h2>Local chat</h2><span className="cbm-chat-subtitle">Code stays in this browser</span></div>
+            <div><h2>Local agent</h2><span className="cbm-chat-subtitle">Code stays in this browser</span></div>
             <button type="button" className="cbm-chat-icon" aria-label="Collapse local chat" title="Collapse chat; keep conversation" onClick={onClose}>›</button>
         </header>
         <div className="cbm-chat-modelbar">
@@ -215,6 +315,7 @@ export default function BrowserChatDock({ open, onClose, showCollapsed = false, 
         </div>
         {(showModels || needsEnable) && <section id="cbm-chat-model-settings" className={`cbm-chat-settings${needsEnable ? ' is-setup' : ''}`} aria-label="Local model settings">
             {needsEnable && <h3>Enable chat</h3>}
+            {proactive && <label><input type="checkbox" checked={automatic} onChange={event => setAutomatic(event.target.checked)} /> Explain selections automatically</label>}
             <label htmlFor="cbm-chat-model">Model</label>
             <select id="cbm-chat-model" value={modelId} disabled={busy} onChange={event => { release(); setModelId(event.target.value); setError(undefined); setNotice(undefined); }}>
                 {BROWSER_MODELS.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.displayName} · {candidate.availability === 'unsupported' ? 'Requires runtime support' : candidate.id === model.id && phase === 'ready' ? 'Loaded' : downloaded.has(candidate.id) ? 'Downloaded this session' : 'Available'}</option>)}
@@ -223,7 +324,7 @@ export default function BrowserChatDock({ open, onClose, showCollapsed = false, 
             {model.compatibilityNote && <p>{model.compatibilityNote}</p>}
             <p><a href={model.modelCard} target="_blank" rel="noreferrer">Model details</a> · Downloads come from Hugging Face. No model downloads automatically.</p>
             <div className="cbm-chat-model-actions">
-                {phase === 'off' && <button type="button" className="cbm-chat-primary" disabled={model.availability !== 'available'} onClick={() => { void prepare(); }}>{downloaded.has(model.id) ? 'Load model' : 'Download & load'}</button>}
+                {phase === 'off' && <button type="button" className="cbm-chat-primary" disabled={model.availability !== 'available'} onClick={() => { void prepare(); }}>{runtimeFailed ? 'Reload model' : downloaded.has(model.id) ? 'Load model' : 'Download & load'}</button>}
                 {(phase === 'ready' || phase === 'generating' || phase === 'counting') && <button type="button" onClick={() => { release(); setNotice('Model unloaded. Conversation and cached files retained.'); }}>Unload model</button>}
                 <button type="button" disabled={busy} onClick={() => { void deleteCache(); }}>Delete cached model</button>
             </div>
@@ -231,13 +332,28 @@ export default function BrowserChatDock({ open, onClose, showCollapsed = false, 
         {phase === 'preparing' && <div className="cbm-chat-loading" role="status"><progress max={100} value={progress?.progress} /><span>{progress?.file ?? 'Preparing browser model…'}</span><button type="button" onClick={stop}>Stop download</button></div>}
         {error && <div className="cbm-chat-error" role="alert">{error}</div>}
         {notice && <p className="cbm-chat-notice" role="status">{notice}</p>}
-        {showConversation && <div className="cbm-chat-transcript" ref={transcript} role="log" aria-label="Conversation" aria-live="off" onScroll={() => {
+        {showConversation && !needsEnable && phase !== 'preparing' && phase !== 'removing' && proactive && automatic && selected && <section className="cbm-chat-explanation" aria-label="Current selection explanation">
+            <span className="cbm-chat-speaker">Current selection</span><strong>{selected.label}</strong>
+            {explanation?.key === selected.key ? <>{explanation.mode && <span className="cbm-chat-evidence-label">{explanation.mode === 'interpretation' ? 'Model interpretation' : 'Source evidence'}</span>}<ChatMarkdown text={explanation.answer || (explanation.status === 'generating' ? 'Explaining…' : explanation.status === 'stopped' ? 'Explanation stopped.' : '')} />
+                {explanation.packet && <>
+                    {explanation.packet.limitations.length > 0 && <p className="cbm-chat-evidence-note">{explanation.packet.limitations.join(' ')}</p>}
+                    {explanation.citation && <details className="cbm-chat-attachment"><summary>Source · {explanation.citation.location ? `${explanation.citation.location.path}:${explanation.citation.location.startLine}` : explanation.citation.evidenceId}</summary><pre>{explanation.citation.quote}</pre></details>}
+                    {explanation.mode === 'evidence' && (explanation.packet.evidence.some(item => item.source === 'code')
+                        ? explanation.packet.evidence.filter(item => item.source === 'code').slice(0, 1)
+                        : explanation.packet.evidence.filter(item => /^(Selected|Relationships)/.test(item.text)).slice(0, 2)
+                    ).map(item => <pre key={item.id} className="cbm-chat-evidence-excerpt">{item.text}</pre>)}
+                </>}
+                {explanation.error && <p role="alert">{explanation.error}</p>}
+                {explanation.status !== 'generating' && <button type="button" disabled={phase !== 'ready'} onClick={() => { lastAttempt.current = undefined; setRetryExplanation(value => value + 1); }}>Explain again</button>}
+            </> : <p>{draft.trim() ? 'Your question will use this selection.' : 'Preparing explanation…'}</p>}
+        </section>}
+        {showConversation && <div className={`cbm-chat-transcript${!turns.length && proactive && automatic && selected ? " is-explaining" : ""}`} ref={transcript} role="log" aria-label="Conversation" aria-live="off" onScroll={() => {
             const element = transcript.current;
             if (!element) return;
             followOutput.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
             if (followOutput.current) setNewOutput(false);
         }}>
-            {turns.length === 0 && <div className="cbm-chat-empty"><span aria-hidden="true">⌁</span><h3>Ask about the code.</h3><p>{readerContext ? 'The current file is included automatically. Mark code to focus your next message on that exact selection.' : 'Ask a question, or add source and graph context to your next message.'}</p></div>}
+            {turns.length === 0 && !(proactive && automatic && selected) && <div className="cbm-chat-empty"><span aria-hidden="true">⌁</span><h3>Ask about the code.</h3><p>{readerContext ? 'The current file is included automatically. Mark code to focus your next message on that exact selection.' : 'Ask a question, or add source and graph context to your next message.'}</p></div>}
             {turns.map((turn, index) => <article className="cbm-chat-turn" key={turn.id}>
                 <div className="cbm-chat-question"><span className="cbm-chat-speaker">You</span><ChatMarkdown text={turn.prompt} />{turn.attachment && <Attachment attachment={turn.attachment} />}{turn.readerContext?.source && <Attachment attachment={turn.readerContext.source} label={turn.readerContext.source.kind === 'selection' ? 'Selection snapshot' : 'File snapshot'} />}{turn.context?.map(item => <ContextSnapshot key={item.id} context={item} />)}</div>
                 <div className="cbm-chat-answer"><span className="cbm-chat-speaker">{BROWSER_MODELS.find(candidate => candidate.id === turn.modelId)?.displayName ?? turn.modelId}</span><div className="cbm-chat-answer-text"><ChatMarkdown text={turn.answer || (turn.status === 'generating' ? 'Thinking…' : turn.status === 'stopped' ? 'Stopped before an answer.' : '')} /></div>
@@ -249,7 +365,9 @@ export default function BrowserChatDock({ open, onClose, showCollapsed = false, 
         </div>}
         {newOutput && <button type="button" className="cbm-chat-jump" onClick={() => { followOutput.current = true; setNewOutput(false); if (transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight; }}>Latest answer ↓</button>}
         <form className="cbm-chat-composer" onSubmit={submit}>
+            {contextNotice && <p className="cbm-chat-evidence-note">{contextNotice}</p>}
             {readerContext && <ReaderContext context={readerContext} />}
+            {!readerContext && proactiveSelection && <div aria-label="Current graph context"><ContextSnapshot context={proactiveSelection} /></div>}
             {manualAttachment && <div className="cbm-chat-pending"><div className="cbm-chat-pending-title"><span>Attached to next message</span><button type="button" aria-label="Remove code attachment" disabled={!onAttachmentRemoved} onClick={() => onAttachmentRemoved?.(manualAttachment.id)}>×</button></div><Attachment attachment={manualAttachment} /></div>}
             {graphSelection && <div className="cbm-chat-pending"><div className="cbm-chat-pending-title"><span>Graph selection for next message</span><button type="button" aria-label="Remove graph selection" onClick={() => { setHandledContextId(graphSelection.id); onContextRemoved?.(graphSelection.id); }}>×</button></div><ContextSnapshot context={graphSelection} /></div>}
             {selectedContext.map(item => <div className="cbm-chat-pending" key={item.id}><div className="cbm-chat-pending-title"><span>Context for next message</span><button type="button" aria-label={`Remove ${item.label}`} onClick={() => setSelectedContext(previous => previous.filter(selected => selected.id !== item.id))}>×</button></div><ContextSnapshot context={item} /></div>)}

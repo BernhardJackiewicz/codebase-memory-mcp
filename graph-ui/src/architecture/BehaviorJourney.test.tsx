@@ -33,6 +33,26 @@ async function render(data: SystemProjection, changes: Partial<BehaviorJourneyPr
 async function click(text: string) { const button = [...container.querySelectorAll('button')].find(button => button.textContent === text); expect(button).toBeDefined(); await act(async () => button!.click()); }
 
 describe('behavior journeys', () => {
+    it('publishes the current call and path evidence, follows steps, and clears the background selection', async () => {
+        const onSelectionEvidence = vi.fn();
+        await render(fixture(), { targetId: 9, onSelectionEvidence });
+        let snapshot = JSON.parse(onSelectionEvidence.mock.lastCall![0].text).evidence;
+        expect(snapshot.selected.call).toMatchObject({ source_id: 1, target_id: 2, type: 'CALLS' });
+        expect(snapshot.relationships.nodeCount).toBe(9);
+        await click('Next →');
+        snapshot = JSON.parse(onSelectionEvidence.mock.lastCall![0].text).evidence;
+        expect(snapshot.selected.operation.id).toBe(2);
+        expect(snapshot.scope.step).toBe(1);
+        expect(snapshot.limitations.interpretation).toContain('not execution order');
+        await click('Empty background');
+        expect(onSelectionEvidence).toHaveBeenLastCalledWith(undefined);
+    });
+    it('keeps destination selection available without a separate search bar', async () => {
+        const targets = Array.from({ length: 20 }, (_, index) => ({ ...symbol(index + 2), distance: 1 }));
+        await render(fixture(), { targets });
+        expect(container.querySelector('[aria-label="Find a destination"]')).toBeNull();
+        expect(container.querySelectorAll('[aria-label="Behavior destination"] option')).toHaveLength(21);
+    });
     it('opens with unordered immediate calls rather than the system overview or a fabricated full journey', async () => {
         await render(fixture());
         expect(container.querySelector('[data-scene]')?.getAttribute('data-scene')).toBe('journey');

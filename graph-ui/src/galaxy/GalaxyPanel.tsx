@@ -128,6 +128,7 @@
 
 import type { JSX, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { GALAXY_NODE_LIMITS, GALAXY_EDGE_LIMITS, useViewPreferences } from '../settings/view-preferences';
 import { Html } from '@react-three/drei';
 
 import { GraphScene, computeCameraTarget, computeFitTarget, computeFrameTarget } from './GraphScene';
@@ -135,7 +136,14 @@ import type { CameraTarget } from './GraphScene';
 import type { LabelBox } from './NodeLabels';
 import { NodeTooltipCard } from './NodeTooltipCard';
 import GalaxyNavigator from './GalaxyNavigator';
+import { TraceEdgeFilter } from './TraceEdgeFilter';
+import { useOrganicLayout } from './use-organic-layout';
+import RenderProgress from './RenderProgress';
+import { useGraphScope } from './use-graph-scope';
+import { limitGraphRender, scopedHierarchy } from './graph-scope';
+import './graph-exploration.css';
 import { layoutNodeForSelection } from './selected-node';
+import { graphNodeEvidence, useSelectionEvidence, type SelectionEvidenceListener } from './selection-evidence';
 import { buildCoverageShadow } from './coverage-shadow';
 import type { CoverageShadowNode } from './coverage-shadow';
 import {
@@ -593,6 +601,7 @@ export interface GalaxyPanelProps {
     onSelectShadowNode?: ((node: CoverageShadowNode) => void) | undefined;
     selectedNode?: GraphNode | undefined;
     onClearSelection?: () => void;
+    onSelectionEvidence?: SelectionEvidenceListener;
     /** Das Projekt, dessen Layout gezeigt wird. Leer heisst: nichts laden. */
     project: string;
     /** Ob das Panel im Layout sichtbar ist. */
@@ -740,8 +749,44 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         stepQualifiedName,
     } = props;
 
-    const [data, setData] = useState<GraphData | undefined>(undefined);
+    const [layout, setData] = useState<GraphData | undefined>(undefined);
+    const [layoutLoading, setLayoutLoading] = useState(false);
+    const [spacingBusy, setSpacingBusy] = useState(false);
+    const { preferences: viewPreferences, setPreferences: setViewPreferences } = useViewPreferences(project);
+    const { galaxyNodes: nodeBudget, galaxyEdges: edgeBudget, coverageShadow: showCoverage } = viewPreferences;
+    const [traceFilter, setTraceFilter] = useState<{ project: string; types?: string[] }>({ project });
+    const traceTypes = props.workspaceExpanded && traceFilter.project === project ? traceFilter.types : undefined;
+    const changeTraceTypes = useCallback((types: string[] | undefined) => setTraceFilter({ project, types }), [project]);
+    const scope = useGraphScope({ project, layout,
+        filePath: props.workspaceExpanded ? undefined : props.focusFilePath,
+        range: props.focusSourceRange, fetch: props.fetch, edgeTypes: traceTypes });
+    const organicHistory = useRef<{ key: string; depth: number; data: GraphData } | undefined>(undefined);
+    const organicKey = JSON.stringify([project, scope.scope, scope.direction, traceTypes]);
+    const organicOptions = useMemo(() => {
+        const previous = organicHistory.current;
+        return { rootIds: scope.result?.roots,
+            previous: previous?.key === organicKey && previous.depth <= scope.depth ? previous.data : undefined };
+    }, [scope.result, scope.scope, organicKey, scope.depth]);
+    const organicTask = useOrganicLayout(scope.scope ? scope.result?.data : undefined, organicOptions);
+    const organic = organicTask.result;
+    useEffect(() => {
+        if (scope.complete && organic) organicHistory.current = { key: organicKey, depth: scope.depth, data: organic.data };
+        if (!scope.scope) organicHistory.current = undefined;
+    }, [scope.complete, scope.scope, organic, organicKey, scope.depth]);
+    const data = scope.scope ? organic?.data : layout;
+    const scopedRoot = scope.result?.roots.size === 1
+        ? scope.result.data.nodes.find(node => scope.result!.roots.has(node.id)) : undefined;
+    const notifiedScopedSymbol = useRef('');
+    useEffect(() => {
+        if (scope.scope?.kind !== 'symbol') { notifiedScopedSymbol.current = ''; return; }
+        if (!scope.complete || !scopedRoot) return;
+        const identity = `${project}:${scope.scope.qualifiedName}`;
+        if (notifiedScopedSymbol.current === identity) return;
+        notifiedScopedSymbol.current = identity;
+        props.onSelectNode?.(scopedRoot);
+    }, [scope.scope, scope.complete, scopedRoot, project, props.onSelectNode]);
     const [error, setError] = useState('');
+    useEffect(() => { if (organicTask.error) setError(organicTask.error); }, [organicTask.error]);
     const [note, setNote] = useState(GALAXY_NO_FOCUS_NOTE);
     const [highlighted, setHighlighted] = useState<Set<number> | null>(null);
     const [cameraTarget, setCameraTarget] = useState<CameraTarget | null>(null);
@@ -766,16 +811,6 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
      * etwas fehlt.
      */
     const [hiddenKinds, setHiddenKinds] = useState<ReadonlySet<string>>(() => new Set<string>());
-
-    const toggleKind = useCallback((type: string) => {
-        setHiddenKinds((hidden) => {
-            const next = new Set(hidden);
-            if (!next.delete(type)) {
-                next.add(type);
-            }
-            return next;
-        });
-    }, []);
 
     /*
      * Die Zeichenflaeche, gemessen statt geraten.
@@ -980,11 +1015,13 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
 
     useEffect(() => {
         if (project.length === 0) {
+            setLayoutLoading(false);
             return;
         }
         let cancelled = false;
         setError('');
-        loadLayout(project, fetchImpl === undefined ? {} : { fetch: fetchImpl })
+        setLayoutLoading(true);
+        loadLayout(project, { ...(fetchImpl === undefined ? {} : { fetch: fetchImpl }), maxNodes: props.workspaceExpanded ? nodeBudget : LAYOUT_NODE_BUDGET })
             .then((loaded) => {
                 if (cancelled) {
                     return;
@@ -1000,11 +1037,11 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                 }
                 setData(undefined);
                 setError(failure instanceof Error ? failure.message : String(failure));
-            });
+            }).finally(() => { if (!cancelled) setLayoutLoading(false); });
         return () => {
             cancelled = true;
         };
-    }, [project, fetchImpl, onLayout]);
+    }, [project, fetchImpl, onLayout, nodeBudget, props.workspaceExpanded]);
 
     /*
      * Der Walk als Bild.
@@ -1023,17 +1060,19 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
      * er gemeint, auch wenn der Leser darin gerade woanders hinsieht.
      */
     const activeWalk = walk ?? props.focusWalk;
-    const readerHierarchyActive = walk === undefined && Boolean(props.focusFilePath);
+    const readerHierarchyActive = !props.workspaceExpanded && walk === undefined && Boolean(props.focusFilePath);
     const readerProjection = useMemo(() => readerHierarchyActive && data
-        ? projectReaderHierarchy(data, props.focusFilePath!, props.focusSourceRange) : undefined,
-    [readerHierarchyActive, data, props.focusFilePath, props.focusSourceRange]);
+        ? projectReaderHierarchy(data, props.focusFilePath!, props.focusSourceRange, Number.MAX_SAFE_INTEGER, scope.depth > 1) : undefined,
+    [readerHierarchyActive, data, props.focusFilePath, props.focusSourceRange, scope.depth]);
     const hierarchyOrigin: HierarchyRootOrigin = walk !== undefined ? 'walk'
         : readerHierarchyActive ? 'file' : 'focus';
 
+    const scopedProjection = useMemo(() => props.workspaceExpanded && scope.scope && scope.result
+        ? scopedHierarchy(scope.result, scope.scope.name) : undefined, [props.workspaceExpanded, scope.scope, scope.result]);
     const projection = useMemo(
-        () => readerHierarchyActive ? readerProjection
-            : activeWalk === undefined ? undefined : projectHierarchy(activeWalk, { layout: data }),
-        [readerHierarchyActive, readerProjection, activeWalk, data],
+        () => scopedProjection ?? (readerHierarchyActive ? readerProjection
+            : activeWalk === undefined ? undefined : projectHierarchy(activeWalk, { layout: data })),
+        [scopedProjection, readerHierarchyActive, readerProjection, activeWalk, data],
     );
 
     /*
@@ -1056,8 +1095,8 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
      * sie vor W9 gezeigt hat.
      */
     const indexEdges = useMemo(
-        () => (readerHierarchyActive || projection === undefined ? [] : hierarchyIndexEdges(projection, data)),
-        [readerHierarchyActive, projection, data],
+        () => (readerHierarchyActive || scopedProjection || projection === undefined ? [] : hierarchyIndexEdges(projection, data)),
+        [readerHierarchyActive, scopedProjection, projection, data],
     );
 
     /*
@@ -1083,9 +1122,52 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     const kindNote = edgeKindNote(kinds.length, hiddenHere);
 
     const shown = useMemo(
-        () => (picture === undefined ? undefined : withoutEdgeKinds(picture, hiddenKinds)),
-        [picture, hiddenKinds],
+        () => {
+            if (!picture) return undefined;
+            const filtered = props.workspaceExpanded && scope.scope ? picture : withoutEdgeKinds(picture, hiddenKinds);
+            const requiredNames = new Set(data?.nodes.filter(node => scope.result?.roots.has(node.id)).map(node => node.qualified_name));
+            return props.workspaceExpanded ? limitGraphRender(filtered, nodeBudget, edgeBudget, mode === 'hierarchy'
+                ? new Set(filtered.nodes.filter(node => requiredNames.has(node.qualified_name)).map(node => node.id))
+                : scope.result?.roots) : filtered;
+        },
+        [picture, hiddenKinds, props.workspaceExpanded, nodeBudget, edgeBudget, scope.result?.roots, scope.scope, mode, data],
     );
+
+    const traceKinds = useMemo(() => edgeKinds(shown), [shown]);
+    const agentEvidence = useMemo(() => {
+        if (!scope.scope) return undefined;
+        const selected = scope.result?.data;
+        const roots = selected?.nodes.filter(node => scope.result?.roots.has(node.id)) ?? [];
+        const byId = new Map(selected?.nodes.map(node => [node.id, node]));
+        const edges = selected?.edges ?? [];
+        const typeCounts: Record<string, number> = {};
+        edges.forEach(edge => { typeCounts[edge.type] = (typeCounts[edge.type] ?? 0) + 1; });
+        return { project, view: 'galaxy', source: 'query_graph scoped indexed relationships', label: scope.scope.name,
+            selected: { scope: scope.scope, rootCount: roots.length, roots: roots.slice(0, 24).map(graphNodeEvidence), omittedRoots: Math.max(0, roots.length - 24) },
+            scope: { depth: scope.depth, direction: props.workspaceExpanded ? scope.direction : 'both', edgeTypes: traceTypes ?? 'all',
+                nodes: selected?.nodes.length ?? 0, edges: edges.length, renderedNodes: shown?.nodes.length ?? 0, renderedEdges: shown?.edges.length ?? 0 },
+            relationships: { typeCounts, items: edges.slice(0, 24).map(edge => ({ id: edge.id, type: edge.type, line: edge.line,
+                strategy: edge.strategy, confidence: edge.confidence, source: byId.get(edge.source) ? graphNodeEvidence(byId.get(edge.source)!) : { id: edge.source },
+                target: byId.get(edge.target) ? graphNodeEvidence(byId.get(edge.target)!) : { id: edge.target } })), omitted: Math.max(0, edges.length - 24) },
+            limitations: { state: scope.complete ? 'complete-indexed-scope' : scope.loading ? 'loading-partial-preview' : 'partial', error: scope.error,
+                exhausted: scope.result?.exhausted, indexCoverage: 'unavailable',
+                interpretation: 'Static indexed relationships, not runtime activity. Scope completeness is relative to the indexed graph and selected depth/types. Omitted snapshot examples do not mean absent relationships.' },
+        };
+    }, [project, scope.scope, scope.result, scope.depth, scope.direction, scope.complete, scope.loading, scope.error, traceTypes, props.workspaceExpanded, shown]);
+    useSelectionEvidence(props.onSelectionEvidence, agentEvidence, visible && props.workspaceExpanded === true);
+    const toggleKind = useCallback((type: string) => {
+        if (props.workspaceExpanded && scope.scope) {
+            const next = new Set(traceTypes ?? kinds.map(kind => kind.type));
+            if (!next.delete(type)) next.add(type);
+            changeTraceTypes([...next].sort());
+            return;
+        }
+        setHiddenKinds((hidden) => {
+            const next = new Set(hidden);
+            if (!next.delete(type)) next.add(type);
+            return next;
+        });
+    }, [props.workspaceExpanded, scope.scope, traceTypes, kinds, changeTraceTypes]);
 
     const index = useMemo(
         () => (picture === undefined ? new Map<string, GraphNode>() : nodesByQualifiedName(picture.nodes)),
@@ -1355,8 +1437,8 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     const requestedFit = props.refit ?? 0;
     const [ownFit, setOwnFit] = useState(0);
     const refitNow = useCallback(() => setOwnFit((count) => count + 1), []);
-    const coverageShadow = useMemo(() => props.workspaceExpanded && mode === 'galaxy' && data
-        ? buildCoverageShadow(data) : null, [data, props.workspaceExpanded, mode]);
+    const coverageShadow = useMemo(() => showCoverage && props.workspaceExpanded && mode === 'galaxy' && data
+        ? buildCoverageShadow(data) : null, [data, props.workspaceExpanded, mode, showCoverage]);
     const fitRequest = useMemo(() => ({ picture, mode, projection, requestedFit, ownFit, coverageShadow }),
         [picture, mode, projection, requestedFit, ownFit, coverageShadow]);
     const lastFitRequest = useRef<typeof fitRequest | undefined>(undefined);
@@ -1430,6 +1512,9 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         if (backgroundCleared || mode !== 'galaxy' || data === undefined) {
             return;
         }
+        if (props.workspaceExpanded && scope.scope) {
+            setHighlighted(new Set(data.nodes.map(node => node.id))); setNote(''); return;
+        }
         const node = focusQualifiedName ? index.get(focusQualifiedName) : undefined;
         if (props.focusFilePath === '') {
             setHighlighted(null);
@@ -1456,7 +1541,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         // `focusName` steht bewusst nicht in der Liste: er begleitet den
         // qualifizierten Namen und darf keine zweite Kamerafahrt ausloesen.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [backgroundCleared, mode, data, index, focusQualifiedName, flyTo, props.focusFilePath, props.focusSourceRange, aspect, visible]);
+    }, [backgroundCleared, mode, data, index, focusQualifiedName, flyTo, props.focusFilePath, props.focusSourceRange, aspect, visible, props.workspaceExpanded, scope.scope]);
 
     /*
      * FOLLOW: die Kamera geht dorthin, wo sich zuletzt etwas bewegt hat.
@@ -1616,10 +1701,11 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                 setHighlighted(ids);
                 flyTo(picture.nodes, ids, node.qualified_name ?? node.name);
             }
-            const selected = layoutNodeForSelection(data, node) ?? node;
+            const selected = layoutNodeForSelection(layout, node) ?? layoutNodeForSelection(data, node) ?? node;
             props.onSelectNode?.(selected);
             if (props.workspaceExpanded) {
-                setNote('Graph selection attached to the next chat message.');
+                scope.select({ kind: 'node', id: selected.id, name: selected.name, qualifiedName: selected.qualified_name });
+                setNote('');
                 return;
             }
             if (node.file_path === undefined || node.file_path.length === 0) {
@@ -1629,16 +1715,19 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
             setNote('');
             onOpenNode(selected);
         },
-        [data, picture, mode, flyTo, onOpenNode, props.onSelectNode, props.workspaceExpanded],
+        [layout, data, picture, mode, flyTo, onOpenNode, props.onSelectNode, props.workspaceExpanded, scope.select],
     );
 
     const handleBackgroundClick = useCallback(() => {
         setBackgroundCleared(true);
+        if (props.workspaceExpanded) setChosenMode('galaxy');
+        scope.reset();
+        changeTraceTypes(undefined);
         setHighlighted(null);
-        setNote(mode === 'hierarchy' ? readerProjection?.message ?? HIERARCHY_NO_FOCUS_NOTE : GALAXY_NO_FOCUS_NOTE);
+        setNote(props.workspaceExpanded ? '' : mode === 'hierarchy' ? readerProjection?.message ?? HIERARCHY_NO_FOCUS_NOTE : GALAXY_NO_FOCUS_NOTE);
         refitNow();
         props.onClearSelection?.();
-    }, [mode, refitNow, props.onClearSelection, readerProjection]);
+    }, [mode, refitNow, props.onClearSelection, readerProjection, scope.reset, props.workspaceExpanded, changeTraceTypes]);
 
     /*
      * Die Vorgabe der Ansicht, mit der Wahl des Lesers darauf.
@@ -2026,6 +2115,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                                                 return;
                                             }
                                             setChosenMode(candidate);
+                                            if (props.workspaceExpanded && !scope.scope && !activeWalk) setNote('');
                                             if (!visible) {
                                                 props.onToggleVisible?.();
                                             }
@@ -2088,26 +2178,22 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                         </Hint>
                     )}
                 </div>
-                {props.workspaceExpanded && <GalaxyNavigator nodes={data?.nodes ?? []} onSelect={handleNodeClick} />}
-                {props.workspaceExpanded && props.selectedNode && <div className="atlas-galaxy-selected">
-                    <span>{props.selectedNode.name}</span>
-                    {props.selectedNode.file_path && <button type="button" onClick={() => props.onOpenNode(props.selectedNode!)}>Open source</button>}
-                </div>}
-                {props.workspaceExpanded && <span className="atlas-galaxy-coverage-key">
+                {showCoverage && props.workspaceExpanded && !scope.scope && <span className="atlas-galaxy-coverage-key">
                     <i aria-hidden="true" />{mode === 'hierarchy' ? 'Coverage shadow is shown in galaxy view' : coverageShadow
                         ? `Coverage shadow: ${coverageShadow.counts.files} files, ${coverageShadow.counts.folders} folders with index gaps`
                         : data?.missed_graph ? 'No coverage-shadow nodes reported' : 'Coverage shadow unavailable in this layout'}
                 </span>}
                 <span
                     className="atlas-galaxy-headline"
+                    hidden={Boolean(scope.scope)}
                     data-testid="atlas-galaxy-headline"
                     data-state={state}
                 >
                     {props.workspaceExpanded && mode === 'galaxy' && state === 'ready' && data
-                        ? `${data.nodes.length.toLocaleString()} of ${data.total_nodes.toLocaleString()} nodes · ${data.edges.length.toLocaleString()} relationships loaded`
+                        ? `${shown?.nodes.length.toLocaleString() ?? 0} of ${data.total_nodes.toLocaleString()} nodes · ${shown?.edges.length.toLocaleString() ?? 0} relationships`
                         : headline}
                 </span>
-                {edgeNote.length > 0 && (
+                {edgeNote.length > 0 && !scope.scope && (
                     <span
                         className="atlas-galaxy-edgenote"
                         data-testid="atlas-galaxy-edgenote"
@@ -2118,6 +2204,44 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                     </span>
                 )}
             </header>
+            {(props.workspaceExpanded || scope.scope) && <div className="atlas-graph-exploration" aria-label="Graph scope">
+                {props.workspaceExpanded && <GalaxyNavigator embedded nodes={layout?.nodes ?? []} project={project} fetch={fetchImpl} onSelect={handleNodeClick} onSelectScope={next => { props.onClearSelection?.(); setBackgroundCleared(false); scope.select(next); }} />}
+                {scope.scope ? <>
+                    {props.workspaceExpanded && <button type="button" onClick={handleBackgroundClick}>All graph</button>}
+                    <strong className="atlas-graph-scope-name" title={scope.scope.name}>{scope.scope.name}</strong>
+                    {props.workspaceExpanded && scopedRoot?.file_path && <button type="button" onClick={() => props.onOpenNode(layoutNodeForSelection(layout, scopedRoot) ?? scopedRoot)}>Open source</button>}
+                    {props.workspaceExpanded && <label>Trace <select aria-label="Trace direction" value={scope.direction}
+                        onChange={event => scope.setDirection(event.target.value as 'both' | 'inbound' | 'outbound')}>
+                        <option value="both">Both directions</option><option value="inbound">Incoming</option><option value="outbound">Outgoing</option>
+                    </select></label>}
+                    {props.workspaceExpanded && <TraceEdgeFilter kinds={traceKinds} availableTypes={kinds.map(kind => kind.type)} selected={traceTypes} onChange={changeTraceTypes} />}
+                    <button type="button" disabled={scope.depth <= (!props.workspaceExpanded && props.focusFilePath ? 1 : 0) || scope.loading}
+                        onClick={() => scope.setDepth(scope.depth - 1)} aria-label="Remove graph layer">−</button>
+                    <span>{scope.depth} {scope.depth === 1 ? 'layer' : 'layers'}</span>
+                    <button type="button" disabled={scope.loading || scope.result?.exhausted}
+                        onClick={() => scope.setDepth(scope.depth + 1)}>Expand +1</button>
+                    <span className="atlas-graph-scope-count" role="status">{scope.validating ? 'Checking index…' : scope.loading ? 'Loading relationships…' : organicTask.loading ? 'Arranging nodes…'
+                        : scope.complete ? `${data?.nodes.length ?? 0} ${data?.nodes.length === 1 ? 'node' : 'nodes'} · ${data?.edges.length ?? 0} ${data?.edges.length === 1 ? 'edge' : 'edges'}${scope.result?.exhausted ? ' · end of trace' : ''}`
+                            : 'Partial preview'}</span>
+                    {scope.error && <span className="atlas-graph-scope-warning" title={scope.error}>Some relationships could not be loaded. <button type="button" onClick={scope.retry}>Retry</button></span>}
+                    {!props.workspaceExpanded && scope.complete && <small>All indexed direct dependencies included.</small>}
+                    {mode === 'galaxy' && organic && organic.groups.length > 1 && <small title="Groups reflect connections in this trace, not inferred architecture components.">{organic.groups.length} connection groups</small>}
+                </> : null}
+                {props.workspaceExpanded && <>
+                    <label>Nodes <select aria-label="Rendered node limit" value={nodeBudget} onChange={event => setViewPreferences({ galaxyNodes: Number(event.target.value) })}>
+                        {GALAXY_NODE_LIMITS.map(value => <option key={value} value={value}>{value.toLocaleString()}</option>)}
+                    </select></label>
+                    <label>Edges <select aria-label="Rendered edge limit" value={edgeBudget} onChange={event => setViewPreferences({ galaxyEdges: Number(event.target.value) })}>
+                        {GALAXY_EDGE_LIMITS.map(value => <option key={value} value={value}>{value.toLocaleString()}</option>)}
+                    </select></label>
+                    {mode === 'galaxy' && !scope.scope && <label className="atlas-graph-coverage-filter" title="Show files and folders with indexing gaps">
+                        <input type="checkbox" aria-label="Show coverage graph" checked={showCoverage} onChange={event => setViewPreferences({ coverageShadow: event.target.checked })} />
+                        Coverage
+                    </label>}
+                    {data && shown && (shown.nodes.length < data.nodes.length || shown.edges.length < data.edges.length) &&
+                        <small>{data.nodes.length - shown.nodes.length} nodes · {data.edges.length - shown.edges.length} edges outside render limits</small>}
+                </>}
+            </div>}
             {legendOpen && (
                 /*
                  * Der Rahmen um die Legende traegt ihre Kante.
@@ -2151,7 +2275,9 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                                 {entry.swatches.length > 0 && (
                                     <span className="atlas-galaxy-legend-swatches">
                                         {entry.swatches.map((swatch) => {
-                                            const hidden = hiddenKinds.has(swatch.label);
+                                            const hidden = props.workspaceExpanded && scope.scope
+                                                ? traceTypes !== undefined && !traceTypes.includes(swatch.label)
+                                                : hiddenKinds.has(swatch.label);
                                             const dot = (
                                                 <span
                                                     className="atlas-galaxy-legend-dot"
@@ -2229,7 +2355,9 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                     )}
                 </div>
             )}
-            <div className="atlas-galaxy-scene" data-testid="atlas-galaxy-scene" ref={scene}>
+            <div className="atlas-galaxy-scene" data-testid="atlas-galaxy-scene" ref={scene}
+                aria-busy={layoutLoading || scope.loading || organicTask.loading || spacingBusy}>
+                <RenderProgress busy={visible && (layoutLoading || scope.loading || organicTask.loading || spacingBusy)} />
                 {/*
                   * Der Weg zurueck zur eingepassten Ansicht (AC5).
                   *
@@ -2257,9 +2385,12 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                 {shown !== undefined && everVisible.current && (
                     <GraphScene
                         active={visible}
+                        separateNodes={mode === 'galaxy' && Boolean(scope.scope)}
+                        onRenderBusyChange={setSpacingBusy}
+                        idleRotation={mode === 'galaxy' && !scope.scope}
                         data={shown}
                         display={display}
-                        highlightedIds={highlighted}
+                        highlightedIds={scope.scope && scope.depth > 1 ? null : highlighted}
                         emphasizeIncidentEdges={mode === 'galaxy' && Boolean(props.focusFilePath)}
                         cameraTarget={cameraTarget}
                         /*
@@ -2428,8 +2559,11 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                     </div>
                 )}
             </div>
-            {props.selectionPanel && <aside className="galaxy-selection-evidence" aria-label="Selection evidence">{props.selectionPanel}</aside>}
-            {note.length > 0 && (
+            {props.selectionPanel && <details className="galaxy-selection-evidence atlas-galaxy-selection-details" aria-label="Selection evidence">
+                <summary>Selection details</summary>
+                <div className="atlas-galaxy-selection-details-body">{props.selectionPanel}</div>
+            </details>}
+            {note.length > 0 && !scope.loading && (
                 <p className="atlas-galaxy-note" data-testid="atlas-galaxy-note">
                     {props.workspaceExpanded && note === GALAXY_NO_FOCUS_NOTE
                         ? 'Select a node or entry point to attach graph context to chat.' : note}

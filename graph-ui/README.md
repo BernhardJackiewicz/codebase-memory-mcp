@@ -7,6 +7,27 @@ It came in as CodeAtlasWeb by Bernhard Jackiewicz (design and tracking in
 issue #1964); the text below this section is his README, kept as written.
 What the maintainers added on top:
 
+- **Config** at the right of the top bar groups daemon overrides, immediate
+  browser preferences, and external configuration references. Saves validate
+  the whole batch, detect concurrent changes, and show restart requirements.
+  See [configuration and precedence](CONFIGURATION.md).
+- **Focused exploration.** Galaxy is the search surface for nodes, files and
+  folder groups. Select a scope, then expand incoming/outgoing relationships
+  one layer at a time, restricted to the chosen edge types. Natural clusters
+  reflect connectivity, not inferred architectural components; existing nodes
+  stay in place when another layer arrives. Return to the repository map at
+  any time. Node and edge
+  budgets control the overview. Explorer requests the current file or marked
+  symbols' direct neighbors separately from the capped global layout.
+  Verified neighborhoods and layout positions are reused in bounded session
+  caches. Fresh index generations invalidate graph evidence; a capped layout
+  never counts as a complete neighborhood. Expanding fetches missing adjacency.
+- **Compact evidence.** Explorer shows a file-level impact summary from the
+  graph and local Git, with affected files on demand. Hotspots group findings
+  by source area. Architecture keeps its spatial view without a duplicate
+  report underneath. Moving arrows indicate edge direction, not runtime
+  execution; reduced-motion preferences keep direction markers stationary.
+
 - **Build and embed.** `make -f Makefile.cbm cbm-with-ui` runs `npm ci`
   (with `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`) and `npm run build` here, then
   embeds `dist/` into the binary. The dev server (`npm run dev`) listens on

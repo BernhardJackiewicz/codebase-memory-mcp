@@ -211,13 +211,9 @@ export const messages = {
 
         shortcutsTitle: 'Every key this window listens to',
         shortcutsNote:
-            'This table is derived from the wiring itself, not written beside it: the menu keys come from '
-            + 'the list the window handler reads, the walk and search keys from the functions that decide '
-            + 'what a key means. A key that stopped working could not stay in this table.',
+            'Menu shortcuts work across the workspace. Cmd/Ctrl+K opens the dedicated node and cluster search in Galaxy.',
         typingNote:
-            'Everything else you type goes into the command line, even when nothing has the cursor: the '
-            + 'line takes the focus and the character lands in it, where you can see it. That is why the '
-            + 'menu keys carry alt (option on an Apple keyboard): a bare letter is text, not a command.',
+            'Typing stays in the field you focused. Menu shortcuts use Alt (Option on an Apple keyboard).',
         columnKey: 'key',
         columnWhere: 'where it counts',
         columnDoes: 'what it does',
@@ -267,10 +263,9 @@ export const messages = {
         altPrefix: 'alt+',
         scopes: {
             mnemonic: 'anywhere, also while you type',
-            bare: 'while the command line does not have the cursor',
-            line: 'while the command line does not have the cursor',
+            bare: 'outside text fields',
+            galaxy: 'anywhere',
             walk: 'during a walk',
-            search: 'while the search window is open',
         },
         keyNames: {
             Enter: 'enter',
@@ -291,22 +286,17 @@ export const messages = {
             'mnemonic:a': 'show or hide the galaxy',
             'mnemonic:w': 'ask again where to start, and walk from there',
             'mnemonic:b': 'open the BUG hunt on the symbol in the twin',
-            'mnemonic:c': 'open change impact',
             'mnemonic:l': 'turn the local model on or off',
             'mnemonic:r': 'put every zone back to the width and height it starts with',
             'mnemonic:s': 'open or close the settings: the model, and what the drawing costs',
             'mnemonic:g': 'turn the live agent mode on or off. Off asks the bridge nothing at all',
-            'mnemonic:p': 'open or close the projects: what is indexed, index more, and what the server is doing',
+            'mnemonic:p': 'add a project index or return to its indexing progress',
             'bare:?': 'open or close this page',
-            'line:/': 'put the cursor in the command line, without typing the slash itself',
+            'galaxy:Cmd/Ctrl+K': 'open Galaxy and focus node or cluster search',
             'walk:Enter': 'go to the next step of the walk, and finish it on the last one',
             'walk:ArrowLeft': 'go back one step',
             'walk:q': 'leave the walk',
             'walk:d': 'draw the flow of this step, when the step has a symbol',
-            'search:ArrowUp': 'move the selection up',
-            'search:ArrowDown': 'move the selection down',
-            'search:Enter': 'open the selected hit, or ask the atlas when nothing matched',
-            'search:Escape': 'close the search window',
         } as Readonly<Record<string, string>>,
 
         operationsTitle: 'Running it',

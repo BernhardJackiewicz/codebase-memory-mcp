@@ -24,6 +24,7 @@
 #include "store/store.h"
 #include "watcher/watcher.h"
 #include "cli/cli.h"
+#include "cli/runtime_settings.h"
 #include "git/git_context.h"
 
 #if defined(HAVE_LIBGIT2)
@@ -703,7 +704,7 @@ bool cbm_ui_log_file_path(char *out, size_t outsz) {
 }
 
 static int64_t ui_log_rotate_bytes(void) {
-    const char *env = getenv("CBM_UI_LOG_ROTATE_BYTES");
+    const char *env = cbm_runtime_getenv("CBM_UI_LOG_ROTATE_BYTES");
     if (env && env[0] != '\0') {
         long long v = atoll(env);
         if (v > 0)
@@ -3120,6 +3121,22 @@ static void dispatch_request(cbm_http_server_t *srv, cbm_http_conn_t *c,
     bool is_get = strcmp(req->method, "GET") == 0;
     bool is_post = strcmp(req->method, "POST") == 0;
     bool is_delete = strcmp(req->method, "DELETE") == 0;
+
+    if (strcmp(req->path, "/api/config") == 0 && (is_get || is_post)) {
+        cbm_runtime_settings_note_http_port(srv->port);
+        const char *cache = cbm_resolve_cache_dir();
+        int status = 200;
+        char *json = is_post ? cbm_runtime_settings_apply_json(cache, req->body, req->body_len, &status)
+                             : cbm_runtime_settings_get_json(cache);
+        if (!json) {
+            status = 500;
+        }
+        cbm_http_replyf(c, status,
+                        "Content-Type: application/json\r\nCache-Control: no-store\r\n",
+                        "%s", json ? json : "{\"error\":\"Configuration storage unavailable.\"}");
+        free(json);
+        return;
+    }
 
     /* OPTIONS preflight for CORS */
     if (strcmp(req->method, "OPTIONS") == 0) {

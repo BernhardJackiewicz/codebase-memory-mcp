@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Edges, Html, OrbitControls, OrthographicCamera } from '@react-three/drei';
-import { Box3, Color, CubicBezierCurve3, MOUSE, TOUCH, OrthographicCamera as ThreeOrthographicCamera, Quaternion, QuadraticBezierCurve3, Vector2, Vector3 } from 'three';
+import { Box3, Color, CubicBezierCurve3, MOUSE, TOUCH, OrthographicCamera as ThreeOrthographicCamera, QuadraticBezierCurve3, Vector2, Vector3 } from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import type { SemanticEdge, SemanticGraph, SemanticNode, SemanticPlatform } from './semantic-graph';
 import { languageColor, measureSourceNode, sourceBrickHeight, sourceLanguage, sourceNodeSizePercent, type SourceCatalog, type SourceMeasure } from './source-metrics';
@@ -88,10 +88,7 @@ function relationshipGeometry(source: RenderNode, target: RenderNode, laneOffset
     const curve = source.id === target.id
         ? new CubicBezierCurve3(start.clone().add(new Vector3(1, 1, 0)), start.clone().add(new Vector3(10 + laneOffset, 10, 7)), start.clone().add(new Vector3(-10 - laneOffset, 10, 7)), end.clone().add(new Vector3(-1, 1, 0)))
         : new QuadraticBezierCurve3(start, midpoint, end);
-    const arrowAt = 0.79;
-    return { curve, points: curve.getPoints(32), arrowPosition: curve.getPoint(arrowAt),
-        arrowRotation: new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), curve.getTangent(arrowAt).normalize()),
-        labelPosition: curve.getPoint(0.5) };
+    return { curve, points: curve.getPoints(32), labelPosition: curve.getPoint(0.5) };
 }
 
 /** Direction comes from relationship semantics, never navigation or selection. */
@@ -100,7 +97,7 @@ function Relationship({ edge, geometry, selected, emphasized, dimmed, showLabel,
     selected: boolean; emphasized: boolean; dimmed: boolean; showLabel: boolean;
     onSelect: () => void; onHover: (id?: string) => void;
 }) {
-    const { curve, arrowPosition, arrowRotation, labelPosition } = geometry;
+    const { curve, labelPosition } = geometry;
     const color = edgeColor(edge.type);
     const opacity = dimmed ? 0.06 : selected ? 1 : emphasized ? 0.95 : 0.55;
     return <group>
@@ -114,11 +111,6 @@ function Relationship({ edge, geometry, selected, emphasized, dimmed, showLabel,
             <tubeGeometry args={[curve, 24, selected ? 0.11 : emphasized ? 0.085 : 0.055, 4, false]} />
             <meshBasicMaterial color={color} transparent opacity={opacity} depthWrite={false} />
         </mesh>
-        {isDirectedEdge(edge.type) && <mesh position={arrowPosition} quaternion={arrowRotation}
-            onClick={event => { event.stopPropagation(); onSelect(); }}>
-            <coneGeometry args={[selected || emphasized ? 0.42 : 0.28, 1.1, 6]} />
-            <meshBasicMaterial color={color} transparent opacity={Math.min(1, opacity + 0.18)} />
-        </mesh>}
         {showLabel && !dimmed && <Html position={labelPosition} center zIndexRange={[30, 20]}>
             <button type="button" className="architecture-edge-label" onClick={onSelect}
                 style={{ borderColor: color }} aria-label={`Inspect ${edge.type} relationship, ${edge.count} indexed edges`}>

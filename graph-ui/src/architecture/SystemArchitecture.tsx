@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import type { GraphData, GraphNode } from '../galaxy/types';
+import { useSelectionEvidence, type SelectionEvidenceListener } from '../galaxy/selection-evidence';
 import { loadSystemArchitecture, type SystemArchitectureLoader, type SystemArchitectureResponse, type SystemProjection, type SystemSymbol, type SystemWitness, type SystemCallEvidence } from './system-architecture-source';
 import { componentBasis, isContiguousPath, systemOverviewGraph, systemComponents, type SystemSceneEdge, type SystemSceneModel } from './system-architecture-model';
 import { connectionLoad } from '../graph/connection-load';
@@ -10,6 +11,7 @@ const Scene = lazy(() => import('./SystemArchitectureScene'));
 export interface SystemArchitectureProps {
     project: string; generation?: string; view: 'structure' | 'behavior'; filter: string; active: boolean;
     graph?: GraphData; onSelect?: (node: GraphNode) => void; onClearSelection?: () => void;
+    onSelectionEvidence?: SelectionEvidenceListener;
     onNavigate: (path: string, line?: number, name?: string) => void;
     loader?: SystemArchitectureLoader;
 }
@@ -34,7 +36,7 @@ const connectionAllowed = (type: string, view: ConnectionView) => view === 'all'
     || (view === 'calls' ? ['CALLS', 'IMPORTS', 'HTTP_CALLS', 'ASYNC_CALLS'] : ['INHERITS', 'IMPLEMENTS']).includes(type);
 
 /** Poll only while this view is active. A new request key hides stale results before its effect runs. */
-export default function SystemArchitecture({ project, generation, view, filter, active, graph, onSelect, onClearSelection, onNavigate, loader = loadSystemArchitecture }: SystemArchitectureProps) {
+export default function SystemArchitecture({ project, generation, view, filter, active, graph, onSelect, onClearSelection, onSelectionEvidence, onNavigate, loader = loadSystemArchitecture }: SystemArchitectureProps) {
     const [entryChoice, setEntryChoice] = useState<{ project: string; generation?: string; expectedGeneration?: string; id?: number; targetId?: number }>();
     const [entryChoices, setEntryChoices] = useState<{ project: string; generation?: string; analysisGeneration: string; entries: SystemSymbol[] }>();
     const [snapshot, setSnapshot] = useState<{ project: string; generation?: string; analysisGeneration: string; data: SystemProjection }>();
@@ -231,9 +233,20 @@ export default function SystemArchitecture({ project, generation, view, filter, 
     const behavior = queryData?.behavior;
     const completeOverview = data?.overview?.complete;
     const limitationCount = data ? Object.entries(data.limits).filter(([key, value]) => (key.startsWith('omitted_') || key.endsWith('_truncated')) && Boolean(value)).length : 0;
+    useSelectionEvidence(onSelectionEvidence, !queryPending && (selectedComponent || selectedGroup || edge) ? {
+        project, generation: projectionGeneration, view: 'architecture-structure', source: 'get_architecture system projection',
+        label: edge ? `${edge.source} → ${edge.target}` : selectedComponent?.label ?? selectedGroup?.label ?? 'System component',
+        selected: edge ? { source: edge.source, target: edge.target, type: edge.type, dependencies: selectedDependencies }
+            : { component: selectedComponent, group: selectedGroup },
+        relationships: selectedComponent ? { incoming: [...neighbors.incoming].map(([id, types]) => ({ id, types: [...types] })),
+            outgoing: [...neighbors.outgoing].map(([id, types]) => ({ id, types: [...types] })) } : undefined,
+        scope: { focusId, relationshipTypes, cyclesOnly, includeTests, includeUnconnected },
+        limitations: { analysis: data?.limits, warnings: data?.warnings, omittedNodes: model.omittedNodes, omittedEdges: model.omittedEdges,
+            interpretation: 'Groups are inferred from indexed interactions and source organization. They do not establish deployment boundaries or runtime behavior. Witnesses may be samples.' },
+    } : undefined, active && view === 'structure');
     const behaviorPage = view === 'behavior' ? <BehaviorJourney project={project} generation={projectionGeneration} data={queryData}
         entries={entries} targets={targets} entryId={requestedEntry} targetId={requestedTarget} active={active} pending={queryPending}
-        error={error} filter={filter} onRefresh={() => setRevision(value => value + 1)} onNavigate={onNavigate} onSelectSymbol={selectSymbol} onClearSelection={onClearSelection}
+        error={error} filter={filter} onRefresh={() => setRevision(value => value + 1)} onNavigate={onNavigate} onSelectSymbol={selectSymbol} onClearSelection={onClearSelection} onSelectionEvidence={onSelectionEvidence}
         onRequest={(entry, targetId) => {
             const analysisGeneration = projectionGeneration ?? sourceGeneration;
             if (entry && analysisGeneration) setEntryChoices(previous => ({ project, generation, analysisGeneration,

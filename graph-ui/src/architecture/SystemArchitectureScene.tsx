@@ -1,7 +1,7 @@
 import { Component, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Edges, Html, Line, OrbitControls, OrthographicCamera } from '@react-three/drei';
-import { Box3, Color, MOUSE, TOUCH, OrthographicCamera as ThreeOrthographicCamera, QuadraticBezierCurve3, Quaternion, Vector3 } from 'three';
+import { Box3, Color, MOUSE, TOUCH, OrthographicCamera as ThreeOrthographicCamera, QuadraticBezierCurve3, Vector3 } from 'three';
 import type { SystemSceneEdge, SystemSceneLane, SystemSceneModel, SystemSceneNode } from './system-architecture-model';
 import { edgeColor, isDirectedEdge, normalizeEdgeType } from '../graph/edge-style';
 import { EdgePulseLayer } from '../graph/EdgePulseLayer';
@@ -111,7 +111,7 @@ function connectionGeometry(source: SystemSceneNode, target: SystemSceneNode, of
         control = start.clone().lerp(end, 0.5).add(side).add(new Vector3(0, Math.min(10, 3.5 + direction.length() * 0.035), 0));
     }
     const curve = new QuadraticBezierCurve3(start, control, end);
-    return { curve, points: curve.getPoints(32), arrow: curve.getPoint(0.76), rotation: new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), curve.getTangent(0.76).normalize()) };
+    return { curve, points: curve.getPoints(32) };
 }
 
 interface ConnectionStrand { type: string; geometry: ReturnType<typeof connectionGeometry> }
@@ -126,10 +126,6 @@ function Connection({ edge, strands, selected, dimmed, emphasized, onSelect }: {
         {strands.map(({ type, geometry }) => <group key={type}>
             <Line points={geometry.points} color={edgeColor(type)} lineWidth={selected ? 2 : emphasized ? 1.6 : 0.7}
                 transparent opacity={opacity} depthWrite={false} />
-            {isDirectedEdge(type) && <mesh position={geometry.arrow} quaternion={geometry.rotation}>
-                <coneGeometry args={[selected || emphasized ? 0.85 : 0.62, 2.2, 7]} />
-                <meshBasicMaterial color={edgeColor(type)} transparent opacity={opacity} depthWrite={false} />
-            </mesh>}
         </group>)}
         {selected && <Html position={strands[0].geometry.curve.getPoint(0.5).lerp(strands.at(-1)!.geometry.curve.getPoint(0.5), 0.5)} center zIndexRange={[15, 10]} style={{ pointerEvents: 'none' }}>
             <span className="system-scene-edge-label" style={{ borderColor: edgeColor(edge.type, edge.types) }}>{internal ? 'Within group · ' : ''}{edge.types?.length ? edge.types.join(' · ').replaceAll('_', ' ') : edge.type.replaceAll('_', ' ')} · {edge.count}</span>

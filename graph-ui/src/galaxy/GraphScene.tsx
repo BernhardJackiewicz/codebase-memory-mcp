@@ -97,6 +97,7 @@ import { NodeCloud } from './NodeCloud';
 import { HaloLayer } from './HaloLayer';
 import { EdgeLines } from './EdgeLines';
 import { NodeLabels } from './NodeLabels';
+import { ScreenNodeSeparation } from './ScreenNodeSeparation';
 import type { LabelBox } from './NodeLabels';
 import { fitCamera, flatBounds, frameDistance, orthographicZoom } from './camera-frame';
 import type { CameraFit, FrameBox } from './camera-frame';
@@ -655,6 +656,10 @@ import { useGraphBackgroundReset } from '../graph/useGraphBackgroundReset';
 interface GraphSceneProps {
     /* False pauses the render loop (hidden-but-mounted panel). */
     active?: boolean;
+    /* Keep a framed hierarchy still; manual orbit remains available. */
+    idleRotation?: boolean;
+    separateNodes?: boolean;
+    onRenderBusyChange?: (busy: boolean) => void;
     data: GraphData;
     coverageShadow?: CoverageShadow | null;
     onShadowNodeClick?: (node: CoverageShadowNode) => void;
@@ -706,6 +711,9 @@ function CoverageShadowEdges({ shadow, brightness }: { shadow: CoverageShadow; b
 
 export function GraphScene({
     active = true,
+    idleRotation = true,
+    separateNodes = true,
+    onRenderBusyChange,
     data,
     coverageShadow = null,
     onShadowNodeClick,
@@ -734,19 +742,29 @@ export function GraphScene({
     const background = useGraphBackgroundReset(() => { setHovered(null); setHoveredShadow(null); onBackgroundClick?.(); });
     const flat = projection === 'flat';
     const sceneNodes = useMemo(() => coverageShadow ? [...data.nodes, ...coverageShadow.nodes] : data.nodes, [data.nodes, coverageShadow]);
+    const [separated, setSeparated] = useState<{ source: GraphNode[]; nodes: GraphNode[] }>();
+    const receiveSeparation = useCallback((source: GraphNode[], nodes: GraphNode[]) => setSeparated({ source, nodes }), []);
+    const renderedNodes = separateNodes && separated?.source === sceneNodes ? separated.nodes : sceneNodes;
+    const renderedCode = useMemo(() => renderedNodes === sceneNodes ? data.nodes : renderedNodes.slice(0, data.nodes.length),
+        [renderedNodes, sceneNodes, data.nodes]);
+    const renderedShadow = useMemo(() => {
+        if (!coverageShadow || renderedNodes === sceneNodes) return coverageShadow;
+        const nodes = renderedNodes.slice(data.nodes.length) as CoverageShadowNode[];
+        return { ...coverageShadow, nodes, nodeById: new Map(nodes.map(node => [node.id, node])) };
+    }, [coverageShadow, renderedNodes, sceneNodes, data.nodes.length]);
     const onCodeHover = useCallback((node: GraphNode | null) => {
         setHovered(node);
         if (node) setHoveredShadow(null);
     }, []);
     const onShadowHover = useCallback((node: GraphNode | null) => {
-        const selected = resolveCoverageShadowNode(coverageShadow, node);
+        const selected = resolveCoverageShadowNode(renderedShadow, node);
         setHoveredShadow(selected);
         if (selected) setHovered(null);
-    }, [coverageShadow]);
+    }, [renderedShadow]);
     const onShadowClick = useCallback((node: GraphNode) => {
-        const selected = resolveCoverageShadowNode(coverageShadow, node);
+        const selected = resolveCoverageShadowNode(renderedShadow, node);
         if (selected) onShadowNodeClick?.(selected);
-    }, [coverageShadow, onShadowNodeClick]);
+    }, [renderedShadow, onShadowNodeClick]);
 
     /* Adaptive density defaults x user multipliers. The automatic scale keeps
      * contrast roughly constant as the graph grows; the sliders nudge it.
@@ -847,7 +865,7 @@ export function GraphScene({
             {drawEdges && (
                 <EdgeLines
                     active={active}
-                    nodes={data.nodes}
+                    nodes={renderedCode}
                     edges={data.edges}
                     highlightedIds={highlightedIds}
                     emphasizeIncidentEdges={emphasizeIncidentEdges}
@@ -855,7 +873,7 @@ export function GraphScene({
                 />
             )}
             <NodeCloud
-                nodes={data.nodes}
+                nodes={renderedCode}
                 highlightedIds={highlightedIds}
                 onHover={onCodeHover}
                 onClick={onNodeClick}
@@ -863,7 +881,7 @@ export function GraphScene({
             />
             {showLabels && (
                 <NodeLabels
-                    nodes={data.nodes}
+                    nodes={renderedCode}
                     highlightedIds={highlightedIds}
                     worldFontSize={labelWorldFontSize}
                     maxTextWidth={labelMaxTextWidth}
@@ -871,21 +889,22 @@ export function GraphScene({
                     onLayout={onLabelLayout}
                 />
             )}
-            {landmarks && <HaloLayer nodes={data.nodes} />}
+            {landmarks && <HaloLayer nodes={renderedCode} />}
 
-            {coverageShadow && coverageShadow.nodes.length > 0 && <group>
-                {drawEdges && <CoverageShadowEdges shadow={coverageShadow} brightness={display.edgeBrightness} />}
-                <NodeCloud nodes={coverageShadow.nodes} highlightedIds={null} onHover={onShadowHover} onClick={onShadowClick} opacity={0.6} boost={nodeBoost * 0.75} />
-                {showLabels && <NodeLabels nodes={coverageShadow.nodes} highlightedIds={null} worldFontSize={labelWorldFontSize} maxTextWidth={labelMaxTextWidth} maxDistance={labelMaxDistance} />}
+            {renderedShadow && renderedShadow.nodes.length > 0 && <group>
+                {drawEdges && <CoverageShadowEdges shadow={renderedShadow} brightness={display.edgeBrightness} />}
+                <NodeCloud nodes={renderedShadow.nodes} highlightedIds={null} onHover={onShadowHover} onClick={onShadowClick} opacity={0.6} boost={nodeBoost * 0.75} />
+                {showLabels && <NodeLabels nodes={renderedShadow.nodes} highlightedIds={null} worldFontSize={labelWorldFontSize} maxTextWidth={labelMaxTextWidth} maxDistance={labelMaxDistance} />}
             </group>}
 
             {overlay}
             {hovered && renderTooltip !== undefined && renderTooltip(hovered)}
-            {resolveCoverageShadowNode(coverageShadow, hoveredShadow) && hoveredShadow && renderShadowTooltip?.(hoveredShadow)}
+            {resolveCoverageShadowNode(renderedShadow, hoveredShadow) && hoveredShadow && renderShadowTooltip?.(hoveredShadow)}
 
             <CameraAnimator target={cameraTarget} controlsRef={controlsRef} flat={flat} />
-            <FitProbe nodes={sceneNodes} />
-            <IdleAutoRotate controlsRef={controlsRef} enabled={!flat} />
+            {separateNodes && <ScreenNodeSeparation nodes={sceneNodes} active={active} onChange={receiveSeparation} onBusyChange={onRenderBusyChange} />}
+            <FitProbe nodes={renderedNodes} />
+            <IdleAutoRotate controlsRef={controlsRef} enabled={!flat && idleRotation && !separateNodes} />
             <FrameRateMeter nodes={sceneNodes.length} edges={data.edges.length + (coverageShadow?.edges.length ?? 0)} cap={frameCap} />
             <FrameCapDriver cap={frameCap} active={active} />
 

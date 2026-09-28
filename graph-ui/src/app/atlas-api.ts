@@ -14,6 +14,7 @@
  */
 
 import { hasErrorObservers, reportError } from '../provider/error-observer';
+import { readConfigSnapshot, type ConfigSnapshot } from '../settings/config-model';
 import { readTreeLevel } from './tree-model';
 import type { TreeLevel } from './tree-model';
 import {
@@ -98,6 +99,14 @@ const text = (value: unknown): string => (typeof value === 'string' ? value : ''
 export class AtlasApi {
 
     constructor(private readonly options: AtlasApiOptions = {}) { }
+
+    async configuration(): Promise<ConfigSnapshot> {
+        return readConfigSnapshot(await this.getJson('/api/config'));
+    }
+
+    async saveConfiguration(revision: string, changes: Record<string, string | null>): Promise<ConfigSnapshot> {
+        return readConfigSnapshot(await this.request('POST', '/api/config', { revision, changes }));
+    }
 
     private getJson(route: string): Promise<unknown> {
         return this.request('GET', route);

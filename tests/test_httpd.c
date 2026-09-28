@@ -3237,9 +3237,41 @@ TEST(ui_server_index_status_long_paths_no_overflow) {
 #endif
 }
 
+TEST(ui_server_configuration_is_atomic_and_origin_protected) {
+    char directory[256];
+    snprintf(directory,sizeof(directory),"%s/cbm-http-settings-XXXXXX",cbm_tmpdir());
+    ASSERT_NOT_NULL(cbm_mkdtemp(directory));
+    char *previous=getenv("CBM_CACHE_DIR")?strdup(getenv("CBM_CACHE_DIR")):NULL;
+    ASSERT_EQ(cbm_setenv("CBM_CACHE_DIR",directory,1),0);
+    th_server_t server;ASSERT_EQ(th_server_start(&server),0);
+    int port=cbm_http_server_port(server.srv);
+    char *response=malloc(131072);ASSERT_NOT_NULL(response);
+    ASSERT_GT(th_http(port,"GET /api/config HTTP/1.1\r\n\r\n",response,131072),0);
+    ASSERT_EQ(th_status(response),200);
+    ASSERT_NOT_NULL(strstr(response,"Cache-Control: no-store"));
+    char *body=strstr(response,"\r\n\r\n");ASSERT_NOT_NULL(body);body+=4;
+    yyjson_doc *document=yyjson_read(body,strlen(body),0);ASSERT_NOT_NULL(document);
+    const char *revision=yyjson_get_str(yyjson_obj_get(yyjson_doc_get_root(document),"revision"));ASSERT_NOT_NULL(revision);
+    char payload[256];snprintf(payload,sizeof(payload),"{\"revision\":\"%s\",\"changes\":{\"auto_index\":\"true\"}}",revision);
+    yyjson_doc_free(document);
+    char request[1024];snprintf(request,sizeof(request),"POST /api/config HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nOrigin: http://foreign.example\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",port,strlen(payload),payload);
+    ASSERT_GT(th_http_raw(port,request,response,131072),0);ASSERT_EQ(th_status(response),403);
+    snprintf(request,sizeof(request),"POST /api/config HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Type: text/plain\r\nContent-Length: %zu\r\n\r\n%s",port,strlen(payload),payload);
+    ASSERT_GT(th_http_raw(port,request,response,131072),0);ASSERT_EQ(th_status(response),415);
+    snprintf(request,sizeof(request),"POST /api/config HTTP/1.1\r\nContent-Length: %zu\r\n\r\n%s",strlen(payload),payload);
+    ASSERT_GT(th_http(port,request,response,131072),0);ASSERT_EQ(th_status(response),200);
+    ASSERT_GT(th_http(port,request,response,131072),0);ASSERT_EQ(th_status(response),409);
+    ASSERT_GT(th_http(port,"GET /api/config-extra HTTP/1.1\r\n\r\n",response,131072),0);ASSERT_EQ(th_status(response),404);
+    th_server_stop(&server);free(response);
+    if(previous){cbm_setenv("CBM_CACHE_DIR",previous,1);free(previous);}else cbm_unsetenv("CBM_CACHE_DIR");
+    char path[512];snprintf(path,sizeof(path),"%s/_config.db",directory);remove(path);cbm_rmdir(directory);
+    PASS();
+}
+
 /* ── Suite ────────────────────────────────────────────────────── */
 
 SUITE(httpd) {
+    RUN_TEST(ui_server_configuration_is_atomic_and_origin_protected);
     RUN_TEST(ui_server_browse_wide_dir_no_overflow);
     RUN_TEST(ui_server_logs_escape_dense_no_overflow);
     RUN_TEST(ui_server_index_status_long_paths_no_overflow);

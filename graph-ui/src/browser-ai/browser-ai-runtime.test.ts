@@ -18,6 +18,78 @@ beforeEach(() => { WorkerStub.instances = []; vi.stubGlobal('Worker', WorkerStub
 afterEach(() => vi.unstubAllGlobals());
 
 describe('browser chat worker boundary', () => {
+    it('terminates a poisoned GPU worker, preserves diagnostics, and refuses reuse until a fresh runtime is created', async () => {
+        const runtime = createBrowserChatRuntime(), worker = WorkerStub.instances[0], chunks = vi.fn();
+        const messages = [{ role: 'user' as const, content: 'Explain the selected function' }];
+        const pending = runtime.chat(messages, chunks);
+        const detail = 'OrtRun failed: GPUBuffer mapAsync rejected because the buffer is invalid';
+        worker.send({ id: 1, kind: 'error', error: detail, ...{ fatal: true } });
+        const failure = await pending.catch(error => error);
+        expect(failure).toMatchObject({ code: 'BROWSER_RUNTIME_FATAL', detail });
+        expect(failure.message).toContain('Reload the model');
+        expect(worker.terminate).toHaveBeenCalledOnce();
+        worker.send({ id: 1, kind: 'token', output: 'stale poisoned output' });
+        expect(chunks).not.toHaveBeenCalled();
+        await expect(runtime.prepare(vi.fn())).rejects.toMatchObject({ code: 'BROWSER_RUNTIME_FATAL' });
+        expect(worker.postMessage).toHaveBeenCalledOnce();
+        runtime.dispose(); expect(worker.terminate).toHaveBeenCalledOnce();
+        const fresh = createBrowserChatRuntime(), nextWorker = WorkerStub.instances[1];
+        const ready = fresh.prepare(vi.fn()); nextWorker.send({ id: 1, kind: 'ready' }); await ready;
+        fresh.dispose();
+    });
+
+    it('invalidates an uncaught worker failure even when no request is pending', async () => {
+        const runtime = createBrowserChatRuntime(), worker = WorkerStub.instances[0];
+        worker.onerror?.({ message: 'WebGPU device lost' } as ErrorEvent);
+        expect(worker.terminate).toHaveBeenCalledOnce();
+        const next = runtime.prepare(vi.fn());
+        // Make a wrongly reused worker settle, so this test cannot hang on the broken implementation.
+        if (worker.postMessage.mock.calls.length) worker.send({ id: 1, kind: 'ready' });
+        await expect(next).rejects.toMatchObject({ code: 'BROWSER_RUNTIME_FATAL', detail: 'WebGPU device lost' });
+        runtime.dispose();
+    });
+
+    it('invalidates a GPU failure received from an older worker without a fatal flag', async () => {
+        const runtime = createBrowserChatRuntime(), worker = WorkerStub.instances[0];
+        const next = runtime.chat([{ role: 'user', content: 'Explain' }], vi.fn());
+        worker.send({ id: 1, kind: 'error', error: 'mapAsync failed on an invalid GPUBuffer' });
+        await expect(next).rejects.toMatchObject({ code: 'BROWSER_RUNTIME_FATAL' });
+        expect(worker.terminate).toHaveBeenCalledOnce(); runtime.dispose();
+    });
+
+    it('invalidates an asynchronous fatal report even when no request is pending', async () => {
+        const runtime = createBrowserChatRuntime(), worker = WorkerStub.instances[0];
+        worker.send({ id: 0, kind: 'error', error: 'GPU device lost', ...{ fatal: true } });
+        expect(worker.terminate).toHaveBeenCalledOnce();
+        const next = runtime.prepare(vi.fn());
+        if (worker.postMessage.mock.calls.length) worker.send({ id: 1, kind: 'ready' });
+        await expect(next).rejects.toMatchObject({ code: 'BROWSER_RUNTIME_FATAL' });
+        runtime.dispose();
+    });
+
+    it('forwards a bounded answer-token request without changing ordinary chat defaults', async () => {
+        const runtime = createBrowserChatRuntime(), worker = WorkerStub.instances[0];
+        const messages = [{ role: 'user' as const, content: 'Explain' }];
+        const chatWithOptions = runtime.chat as (input: typeof messages, onToken: (chunk: string) => void, options: { maxOutputTokens: number }) => Promise<string>;
+        const result = chatWithOptions(messages, vi.fn(), { maxOutputTokens: 192 });
+        const request = worker.last(); worker.send({ id: request.id, kind: 'answer', output: 'Short answer' });
+        await result;
+        expect(request).toMatchObject({ maxOutputTokens: 192 }); runtime.dispose();
+    });
+
+    it('notifies the UI once about an idle fatal loss and immediately reports an already failed runtime', () => {
+        const runtime = createBrowserChatRuntime() as ReturnType<typeof createBrowserChatRuntime> & { setFatalHandler?: (handler: ((error: Error) => void) | undefined) => void };
+        const worker = WorkerStub.instances[0], handler = vi.fn();
+        runtime.setFatalHandler?.(handler);
+        worker.send({ id: 0, kind: 'error', error: 'GPU device lost', ...{ fatal: true } });
+        expect(handler).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ code: 'BROWSER_RUNTIME_FATAL', detail: 'GPU device lost' }));
+        worker.send({ id: 0, kind: 'error', error: 'GPU device lost again', ...{ fatal: true } });
+        expect(handler).toHaveBeenCalledOnce();
+        const late = vi.fn(); runtime.setFatalHandler?.(late);
+        expect(late).toHaveBeenCalledExactlyOnceWith(handler.mock.calls[0][0]);
+        runtime.dispose();
+    });
+
     it('creates no model requests until explicit prepare, then binds the selected model', async () => {
         const runtime = createBrowserChatRuntime(BROWSER_MODELS[1].id);
         const worker = WorkerStub.instances[0];

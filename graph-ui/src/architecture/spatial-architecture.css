@@ -81,3 +81,15 @@
 .spatial-unavailable { display:flex; align-items:center; justify-content:center; min-height:480px; padding:30px; text-align:center; color:var(--spatial-muted); font-size:14px; line-height:1.7; }
 @media(max-width:1050px) { .spatial-map-layout { grid-template-columns:minmax(0,1fr) 250px; } .spatial-heading { flex-wrap:wrap; } }
 @media(max-width:760px) { .spatial-map-layout { display:block; } .spatial-map { height:480px; } .spatial-inspector { max-height:360px; border-left:0; border-top:1px solid var(--spatial-line); } .spatial-heading { padding:18px; } .spatial-controls select { max-width:65vw; } }
+
+/* Keep the visual canvas primary; inventories and provenance are deliberate drill-downs. */
+.spatial-map-details { border-top:1px solid var(--spatial-line); padding:0 20px 12px; }
+.spatial-map-details > summary { padding:12px 0 0; }
+.spatial-map-details[open] > summary { margin-bottom:12px; }
+.spatial-map-details .spatial-file-inventory, .spatial-map-details .spatial-relationship-list,
+.spatial-map-details .spatial-coverage, .spatial-map-details .spatial-measure-note { padding-left:0; padding-right:0; }
+.spatial-selection-details { margin:12px 0; }
+.spatial-area-summary { display:grid; gap:7px; margin-top:14px; }
+.spatial-area-summary button { text-align:left; padding:11px; overflow-wrap:anywhere; }
+.spatial-area-summary strong { font-size:12px; font-weight:550; }
+.spatial-hotspot-details { padding:8px 0; }

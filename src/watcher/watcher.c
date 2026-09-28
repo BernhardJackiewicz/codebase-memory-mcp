@@ -881,7 +881,7 @@ static root_status_t root_status(const char *root_path, int *out_errno) {
  * each call so tests/operators can adjust via setenv without a restart —
  * same convention as cbm_max_file_bytes in limits.c. */
 static long prune_grace_s(void) {
-    const char *raw = getenv("CBM_WATCHER_PRUNE_GRACE_S");
+    const char *raw = cbm_runtime_getenv("CBM_WATCHER_PRUNE_GRACE_S");
     if (raw && raw[0]) {
         errno = 0;
         char *end = NULL;

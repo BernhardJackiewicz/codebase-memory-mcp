@@ -30,11 +30,8 @@ function ReadStatus({ reading, paused }: { reading: SystemReading<unknown>; paus
 export default function SystemWorkspace({ api, onOpenProjects, active = true, version, pollMs = 3000, project }: SystemWorkspaceProps) {
     const [tab, setTab] = useState<SystemTab>('overview');
     const [paused, setPaused] = useState(false);
-    const [query, setQuery] = useState('');
     const [level, setLevel] = useState<'all' | 'error' | 'warn' | 'info'>('all');
     const [scope, setScope] = useState<'daemon' | 'project' | 'unattributed'>('daemon');
-    const [search, setSearch] = useState('');
-    useEffect(() => { const timer = setTimeout(() => setSearch(query.trim()), 250); return () => clearTimeout(timer); }, [query]);
     const [copyStatus, setCopyStatus] = useState('');
     const [followTail, setFollowTail] = useState(true);
     const logRef = useRef<HTMLDivElement>(null);
@@ -44,14 +41,12 @@ export default function SystemWorkspace({ api, onOpenProjects, active = true, ve
         if (scope === 'project' && !selectedProject) throw new Error('Select a project to read its attributed events.');
         const data = await api.logs(200, level === 'all' ? undefined : level, selectedProject, {
             ...(scope === 'unattributed' ? { scope: 'unattributed' as const } : {}),
-            ...(search ? { query: search } : {}),
         });
-        if ((scope !== 'daemon' || level !== 'all' || search) && data.persistent !== true) throw new Error('Persistent history is unavailable. Filters require the daemon journal.');
+        if ((scope !== 'daemon' || level !== 'all') && data.persistent !== true) throw new Error('Persistent history is unavailable. Filters require the daemon journal.');
         if (scope === 'project' && (data.scope !== 'project' || data.project !== selectedProject)) throw new Error('The daemon did not confirm this project scope.');
         if (scope === 'unattributed' && data.scope !== 'unattributed') throw new Error('The daemon did not confirm unattributed scope.');
-        if (search && data.query !== search) throw new Error('This daemon does not confirm full-history search. Refresh the daemon before using this filter.');
         return data;
-    }, [api, level, selectedProject, scope, search]);
+    }, [api, level, selectedProject, scope]);
     const readJobs = useCallback(() => api.indexJobs(), [api]);
     const processes = useSystemPoll(readProcesses, active, paused, pollMs);
     const logs = useSystemPoll(readLogs, active && tab === 'logs', paused, pollMs);
@@ -65,7 +60,7 @@ export default function SystemWorkspace({ api, onOpenProjects, active = true, ve
     useEffect(() => {
         if (followTail && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
     }, [logs.data, followTail, tab]);
-    useEffect(() => { setCopyStatus(''); }, [query, level, logs.data]);
+    useEffect(() => { setCopyStatus(''); }, [level, logs.data]);
 
     const copyLogs = async () => {
         try {
@@ -143,7 +138,6 @@ export default function SystemWorkspace({ api, onOpenProjects, active = true, ve
                         <option value="project" disabled={!project}>Current project{project ? ` · ${project}` : ' · none selected'}</option>
                         <option value="unattributed">Unattributed events</option>
                     </select></label>
-                    <label><span>Search retained history</span><input type="search" maxLength={256} value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Find a source, path or message…" /></label>
                     <label><span>Severity</span><select aria-label="Log severity" value={level} onChange={(event) => setLevel(event.currentTarget.value as typeof level)}>
                         <option value="all">All levels</option><option value="info">Info and above</option>
                         <option value="warn">Warnings and errors</option><option value="error">Errors</option>
