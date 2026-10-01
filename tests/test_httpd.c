@@ -2403,6 +2403,125 @@ TEST(ui_server_delete_project_unlink_failure_keeps_watch) {
     PASS();
 }
 
+static bool ui_health_matches(th_server_t *server, const char *project, const char *status,
+                               const char *indexed_at, bool registered, bool running) {
+    char request[512], response[4096];
+    snprintf(request, sizeof(request), "GET /api/project-health?name=%s HTTP/1.1\r\n\r\n", project);
+    int length = th_http(cbm_http_server_port(server->srv), request, response, sizeof(response));
+    if (length <= 0 || th_status(response) != 200)
+        return false;
+    const char *body = strstr(response, "\r\n\r\n");
+    if (!body)
+        return false;
+    body += 4;
+    yyjson_doc *doc = yyjson_read(body, strlen(body), 0);
+    if (!doc)
+        return false;
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    yyjson_val *actual_status = yyjson_obj_get(root, "status");
+    yyjson_val *timestamp = yyjson_obj_get(root, "indexed_at");
+    yyjson_val *watch = yyjson_obj_get(root, "watch_registered");
+    yyjson_val *loop = yyjson_obj_get(root, "watcher_running");
+    bool matches = yyjson_is_str(actual_status) &&
+                   strcmp(yyjson_get_str(actual_status), status) == 0 &&
+                   yyjson_is_bool(watch) && yyjson_get_bool(watch) == registered &&
+                   yyjson_is_bool(loop) && yyjson_get_bool(loop) == running;
+    matches = matches && (indexed_at ? yyjson_is_str(timestamp) &&
+                                          strcmp(yyjson_get_str(timestamp), indexed_at) == 0
+                                    : yyjson_is_null(timestamp));
+    if (strcmp(status, "healthy") == 0) {
+        matches = matches && yyjson_is_int(yyjson_obj_get(root, "nodes")) &&
+                  yyjson_get_int(yyjson_obj_get(root, "nodes")) == 0 &&
+                  yyjson_is_int(yyjson_obj_get(root, "edges")) &&
+                  yyjson_get_int(yyjson_obj_get(root, "edges")) == 0 &&
+                  yyjson_get_int(yyjson_obj_get(root, "size_bytes")) > 0;
+    }
+    yyjson_doc_free(doc);
+    return matches;
+}
+
+TEST(ui_server_project_health_timestamp_and_no_watcher) {
+    ui_delete_fixture_t fx;
+    ASSERT_EQ(ui_delete_fixture_init(&fx), 0);
+    char db_path[1024];
+    ui_delete_db_path(&fx, "health-indexed", db_path, sizeof(db_path));
+    cbm_store_t *store = cbm_store_open_path(db_path);
+    ASSERT_NOT_NULL(store);
+    ASSERT_EQ(cbm_store_upsert_project(store, "health-indexed", fx.root_dir), CBM_STORE_OK);
+    cbm_project_t project = {0};
+    ASSERT_EQ(cbm_store_get_project(store, "health-indexed", &project), CBM_STORE_OK);
+    ASSERT_NOT_NULL(project.indexed_at);
+    ASSERT_TRUE(project.indexed_at[0] != '\0');
+    cbm_store_close(store);
+    /* This endpoint's corrupt branch means "cannot open". A text file is not
+     * sufficient: the store's immutable fallback opens lazily and can return
+     * a handle before discovering invalid contents. An existing directory
+     * makes both open attempts fail, independently of file permissions. */
+    ui_delete_db_path(&fx, "health-unreadable", db_path, sizeof(db_path));
+    ASSERT_EQ(th_mkdir_p(db_path), 0);
+    ASSERT_TRUE(cbm_file_exists(db_path));
+    ASSERT_NULL(cbm_store_open_path_query(db_path));
+
+    th_server_t server;
+    ASSERT_EQ(th_server_start(&server), 0);
+    bool healthy = ui_health_matches(&server, "health-indexed", "healthy", project.indexed_at,
+                                    false, false);
+    bool missing = ui_health_matches(&server, "health-missing", "missing", NULL, false, false);
+    bool corrupt = ui_health_matches(&server, "health-unreadable", "corrupt", NULL, false, false);
+    th_server_stop(&server);
+    cbm_project_free_fields(&project);
+    ui_delete_fixture_cleanup(&fx);
+    ASSERT_TRUE(healthy);
+    ASSERT_TRUE(missing);
+    ASSERT_TRUE(corrupt);
+    PASS();
+}
+
+static void *ui_health_watcher_run(void *opaque) {
+    (void)cbm_watcher_run(opaque, 10);
+    return NULL;
+}
+
+TEST(ui_server_project_health_live_watcher_state) {
+    ui_delete_fixture_t fx;
+    ASSERT_EQ(ui_delete_fixture_init(&fx), 0);
+    /* Missing root is owned by this fixture and prevents any Git subprocess. */
+    char missing_root[1024];
+    snprintf(missing_root, sizeof(missing_root), "%s/absent", fx.root_dir);
+    ASSERT_TRUE(cbm_watcher_watch(fx.watcher, "health-watched", missing_root));
+    th_server_t server;
+    ASSERT_EQ(th_server_start_with_watcher(&server, fx.watcher), 0);
+    bool registered_idle =
+        ui_health_matches(&server, "health-watched", "missing", NULL, true, false);
+    bool unregistered_idle =
+        ui_health_matches(&server, "health-other", "missing", NULL, false, false);
+
+    cbm_thread_t thread;
+    ASSERT_EQ(cbm_thread_create(&thread, 0, ui_health_watcher_run, fx.watcher), 0);
+    uint64_t deadline = cbm_now_ms() + 5000;
+    while (!cbm_watcher_project_status(fx.watcher, NULL).running && cbm_now_ms() < deadline)
+        cbm_usleep(1000);
+    bool registered_running =
+        ui_health_matches(&server, "health-watched", "missing", NULL, true, true);
+    bool unregistered_running =
+        ui_health_matches(&server, "health-other", "missing", NULL, false, true);
+    cbm_watcher_stop(fx.watcher);
+    bool stopped = ui_health_matches(&server, "health-watched", "missing", NULL, true, false);
+    int joined = cbm_thread_join(&thread);
+    cbm_watcher_unwatch(fx.watcher, "health-watched");
+    bool removed = ui_health_matches(&server, "health-watched", "missing", NULL, false, false);
+    th_server_stop(&server);
+    ui_delete_fixture_cleanup(&fx);
+    ASSERT_TRUE(registered_idle);
+    ASSERT_TRUE(unregistered_idle);
+    ASSERT_TRUE(registered_running);
+    ASSERT_TRUE(unregistered_running);
+    ASSERT_TRUE(stopped);
+    ASSERT_EQ(joined, 0);
+    ASSERT_TRUE(removed);
+    PASS();
+}
+
 TEST(ui_server_ui_config_detects_zh_accept_language) {
     th_server_t ts;
     ASSERT_EQ(th_server_start(&ts), 0);
@@ -3346,6 +3465,8 @@ SUITE(httpd) {
     RUN_TEST(ui_server_delete_project_missing_name_keeps_watch);
     RUN_TEST(ui_server_delete_project_invalid_name_keeps_watch);
     RUN_TEST(ui_server_delete_project_unlink_failure_keeps_watch);
+    RUN_TEST(ui_server_project_health_timestamp_and_no_watcher);
+    RUN_TEST(ui_server_project_health_live_watcher_state);
     RUN_TEST(ui_server_ui_config_detects_zh_accept_language);
     RUN_TEST(ui_server_ui_config_includes_serving_version_issue1820);
     RUN_TEST(ui_server_ui_config_prefers_config_lang);

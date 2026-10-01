@@ -6,7 +6,11 @@ export interface BrowserAiRuntime {
     dispose(): void;
 }
 export interface BrowserChatMessage { role: 'system' | 'user' | 'assistant'; content: string }
-export interface BrowserChatOptions { maxOutputTokens?: number }
+export interface BrowserChatOptions {
+    maxOutputTokens?: number;
+    /** Short prose summaries only; ordinary chat retains the model's generation defaults. */
+    generationProfile?: 'automatic-explanation';
+}
 export interface BrowserChatRuntime extends BrowserAiRuntime {
     countTokens(messages: readonly BrowserChatMessage[]): Promise<number>;
     chat(messages: readonly BrowserChatMessage[], onToken: (chunk: string) => void, options?: BrowserChatOptions): Promise<string>;

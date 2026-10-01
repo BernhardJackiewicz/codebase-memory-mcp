@@ -27,9 +27,68 @@ const button = (text: string) => [...container.querySelectorAll<HTMLButtonElemen
 const click = async (text: string) => { await act(async () => button(text).click()); };
 const input = () => container.querySelector<HTMLInputElement>('#config-CBM_WORKERS')!;
 const edit = async (value: string) => { await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input(), value); input().dispatchEvent(new Event('input', { bubbles: true })); }); };
-async function render() { await act(async () => root.render(<ConfigPanel project="config-test" service={service} display={DEFAULT_GRAPH_DISPLAY} onDisplay={display} onOpenBrowserModels={model} onOpenDisplay={vi.fn()} onClose={close} />)); }
+async function render(embedded = false, hidden = false, active = true) { await act(async () => root.render(<div hidden={hidden}><ConfigPanel embedded={embedded} active={active} project="config-test" service={service} display={DEFAULT_GRAPH_DISPLAY} onDisplay={display} onOpenBrowserModels={model} onOpenDisplay={vi.fn()} onClose={close} /></div>)); }
 
 describe('Config panel', () => {
+    it('embeds without a backdrop, focus capture, close action, or modal keyboard handling', async () => {
+        const outside = document.createElement('button');
+        document.body.appendChild(outside);
+        try {
+            outside.focus();
+            await render(true);
+            expect(document.activeElement).toBe(outside);
+            expect(container.querySelector('.cbm-config-backdrop')).toBeNull();
+            expect(container.querySelector('[role="dialog"]')).toBeNull();
+            expect(container.querySelector('[aria-modal]')).toBeNull();
+            expect(container.querySelector('[aria-label="Close configuration"]')).toBeNull();
+            expect(container.querySelector('[role="region"]')?.getAttribute('aria-labelledby')).toBe('cbm-config-title');
+            const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+            await act(async () => { button('Reload values').dispatchEvent(tab); input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); });
+            expect(tab.defaultPrevented).toBe(false);
+            expect(close).not.toHaveBeenCalled();
+        } finally { outside.remove(); }
+    });
+    it('retains embedded drafts when hidden and preserves explicit discard and save behavior', async () => {
+        service.saveConfiguration.mockResolvedValue({ ...snapshot({ override: '12', value: '12', pendingRestart: true }), revision: '2' });
+        await render(true); await edit('8');
+        const field = input();
+        await render(true, true); await render(true);
+        expect(input()).toBe(field);
+        expect(input().value).toBe('8');
+        expect(service.configuration).toHaveBeenCalledOnce();
+        expect(service.saveConfiguration).not.toHaveBeenCalled();
+        await click('Discard edits');
+        expect(input().value).toBe('4');
+        expect(button('Save changes').disabled).toBe(true);
+        await edit('12'); await click('Save changes');
+        expect(service.saveConfiguration).toHaveBeenCalledExactlyOnceWith('1', { CBM_WORKERS: '12' });
+        expect(container.textContent).toContain('Restart pending');
+        expect(close).not.toHaveBeenCalled();
+    });
+    it('loads only when activated and refreshes clean settings changed in another System page', async () => {
+        await render(true, true, false);
+        expect(service.configuration).not.toHaveBeenCalled();
+        await render(true);
+        expect(input().value).toBe('4');
+        await render(true, true, false);
+        service.configuration.mockResolvedValue({ ...snapshot({ value: '12', override: '12' }), revision: '2' });
+        await render(true);
+        expect(input().value).toBe('12');
+        expect(service.configuration).toHaveBeenCalledTimes(2);
+    });
+    it('keeps unsaved drafts and their revision when returning from another System page', async () => {
+        service.saveConfiguration.mockRejectedValue(new Error('HTTP 409: configuration changed'));
+        await render(true); await edit('8');
+        await render(true, true, false);
+        service.configuration.mockResolvedValue({ ...snapshot({ value: '12', override: '12' }), revision: '2' });
+        await render(true);
+        expect(input().value).toBe('8');
+        expect(service.configuration).toHaveBeenCalledOnce();
+        await click('Save changes');
+        expect(service.saveConfiguration).toHaveBeenCalledExactlyOnceWith('1', { CBM_WORKERS: '8' });
+        expect(input().value).toBe('8');
+        expect(container.textContent).toContain('409');
+    });
     it('keeps noncanonical inherited inputs visible without inventing a resolved value', async () => {
         service.configuration.mockResolvedValue(snapshot({ value: '3junk', effective: '3junk', effectiveKnown: false }));
         await render();

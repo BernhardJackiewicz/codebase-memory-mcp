@@ -57,3 +57,8 @@
 .cbm-config-reference summary span { float: right; color: #839e8e; font-size: 10px; }
 .cbm-config-reference dl { font-size: 11px; }
 @media (max-width: 700px) { .cbm-config-backdrop { padding: 8px; } .cbm-config-dialog { height: 96dvh; border-radius: 10px; } .cbm-config-heading,.cbm-config-content { padding: 17px; } .cbm-config-categories { padding: 0 14px 12px; gap: 2px; } .cbm-config-setting-main { grid-template-columns: 1fr; gap: 11px; } .cbm-config-value { justify-content: flex-start; } .cbm-config-control-grid { grid-template-columns: 1fr; } .cbm-config-reference summary span { float: none; display: block; margin-top: 3px; } .cbm-config-footer { padding: 12px; } }
+.cbm-config-dialog.cbm-config-embedded { width: 100%; height: auto; min-height: 480px; border-radius: 9px; box-shadow: none; }
+.cbm-config-embedded .cbm-config-content { overflow: visible; }
+.cbm-config-embedded .cbm-config-footer { flex-wrap: wrap; }
+@media (max-width: 1000px) { .cbm-config-embedded .cbm-config-setting-main { grid-template-columns: 1fr; gap: 11px; }.cbm-config-embedded .cbm-config-value { justify-content: flex-start; }.cbm-config-embedded .cbm-config-control-grid { grid-template-columns: 1fr; } }
+@media (max-width: 550px) { .cbm-config-embedded .cbm-config-heading, .cbm-config-embedded .cbm-config-content { padding: 13px; }.cbm-config-embedded .cbm-config-categories { padding: 0 10px 10px; }.cbm-config-embedded .cbm-config-footer > div { flex-wrap: wrap; } }

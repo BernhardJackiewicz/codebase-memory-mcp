@@ -31,13 +31,13 @@ import { createPortal } from 'react-dom';
 import AtlasTree from './AtlasTree';
 import type { AtlasTreeProps } from './AtlasTree';
 import { messages } from '../i18n/messages';
-import { CONFIG_TEXT } from '../settings/config-model';
 import type { CommandExample } from '../search/command-examples';
 import Hint from '../ui/tooltip/Hint';
 import { LAYOUT_DEFAULT } from '../layout/layout-model';
 import Splitter from '../layout/Splitter';
 import { availableWorkspaces, workspaceStrings } from './workspace-strings';
 import type { Workspace, Guidance } from './workspace-strings';
+import './agent-status.css';
 
 /** Ein Menuepunkt: sein Buchstaben-Kuerzel und der Rest des Wortes. */
 export interface MenuItem {
@@ -144,7 +144,8 @@ export interface AtlasChromeProps {
     configOpen?: boolean;
     onOpenBrowserAi?: () => void;
     agentState?: 'off' | 'loading' | 'active' | 'busy' | 'error';
-    onExpandBrowserAi?: () => void;
+    agentModelName?: string;
+    onToggleBrowserAi?: () => void;
     chatOpen?: boolean;
     chatDock?: ReactNode;
     /** Persistent code context, shared by the Explore sidebar and chat column. */
@@ -676,13 +677,20 @@ export default function AtlasChrome(props: AtlasChromeProps): JSX.Element {
                     ))}
                 </div>
                 {props.projectSwitcher}
-                {props.onOpenBrowserAi !== undefined && <button type="button" className="atlas-browser-ai-action" data-state={props.agentState ?? 'off'} aria-label="Local agent settings" title="Configure the browser-local agent" onClick={props.onOpenBrowserAi}><span aria-hidden="true" />{{ off: 'Enable agent', loading: 'Agent loading', active: 'Agent active', busy: 'Agent working', error: 'Agent error' }[props.agentState ?? 'off']}</button>}
-                {props.onOpenConfig && <button type="button" className="atlas-config-action" aria-expanded={!!props.configOpen} aria-label={CONFIG_TEXT.open} onClick={props.onOpenConfig}>{CONFIG_TEXT.title}</button>}
+                {(props.onOpenBrowserAi !== undefined || props.onToggleBrowserAi !== undefined) && <div className="atlas-agent-controls" role="group" aria-label="Local agent">
+                    {props.onOpenBrowserAi !== undefined && <button type="button" className="atlas-browser-ai-action" data-state={props.agentState ?? 'off'} aria-label="Local agent settings" title="Configure the browser-local agent" onClick={props.onOpenBrowserAi}>
+                        <span aria-hidden="true" />
+                        {{ off: 'Enable agent', loading: 'Agent loading', active: 'Agent active', busy: 'Agent working', error: 'Agent error' }[props.agentState ?? 'off']}
+                        {props.agentModelName && <small className="atlas-agent-model-name" title={props.agentModelName}>{props.agentModelName}</small>}
+                    </button>}
+                    {props.onToggleBrowserAi !== undefined && <button type="button" className="atlas-agent-chat-toggle" aria-expanded={props.chatOpen === true} aria-label={props.chatOpen ? 'Hide chat' : 'Open chat'} title={props.chatOpen ? 'Hide chat' : 'Open chat'} onClick={props.onToggleBrowserAi}>
+                        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="3" width="16" height="14" rx="2" /><path d="M12 3v14" /><path className="atlas-agent-chat-toggle-pane" d="M12 3h4a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-4z" stroke="none" /></svg>
+                    </button>}
+                </div>}
             </header>
 
             {props.workspaceStatus}
             <div className="atlas-workspace-content" style={{ '--atlas-chat-width': `${chatWidth}px` } as CSSProperties}>
-            {!showChatColumn && props.onExpandBrowserAi && <button type="button" className="atlas-agent-reopen" onClick={props.onExpandBrowserAi} aria-label="Open local agent explanations">Agent <span aria-hidden="true">‹</span></button>}
             <div className="atlas-workspace-stage">
             <div className="atlas-exploration-workspace" data-testid="atlas-exploration-workspace" hidden={props.workspace !== undefined && props.workspace !== 'explore' && props.workspace !== 'galaxy'}>
             <TabBar tabs={props.tabs} onSelectTab={props.onSelectTab} onCloseTab={props.onCloseTab} />

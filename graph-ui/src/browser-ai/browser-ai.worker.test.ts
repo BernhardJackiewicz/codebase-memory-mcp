@@ -100,6 +100,49 @@ describe('browser generation worker', () => {
         expect(fake.generate).not.toHaveBeenCalled();
     });
 
+    it('applies bounded repetition controls only to the automatic explanation profile', async () => {
+        await send({ id: 1, kind: 'prepare' });
+        const messages = [{ role: 'user' as const, content: 'Explain' }];
+        await send({ id: 2, kind: 'chat', messages, generationProfile: 'automatic-explanation' });
+        expect(fake.generate).toHaveBeenLastCalledWith(expect.objectContaining({
+            max_new_tokens: 128, do_sample: false, repetition_penalty: 1.1, no_repeat_ngram_size: 6,
+        }));
+        expect(replies().at(-1)).toMatchObject({ id: 2, kind: 'answer', output: 'A reply.' });
+        await send({ id: 3, kind: 'chat', messages });
+        const ordinary = fake.generate.mock.calls.at(-1)![0];
+        expect(ordinary).toMatchObject({ max_new_tokens: 512, do_sample: false });
+        expect(ordinary).not.toHaveProperty('repetition_penalty');
+        expect(ordinary).not.toHaveProperty('no_repeat_ngram_size');
+    });
+
+    it('rejects unknown profiles and oversized automatic answers without invalidating the model', async () => {
+        await send({ id: 1, kind: 'prepare' });
+        const messages = [{ role: 'user' as const, content: 'Explain' }];
+        for (const profile of ['unknown', '', null, {}]) {
+            await send({ id: 2, kind: 'chat', messages, generationProfile: profile as BrowserWorkerRequest['generationProfile'] });
+            expect(replies().at(-1)).toEqual({ id: 2, kind: 'error', error: 'Invalid generation profile.' });
+        }
+        await send({ id: 3, kind: 'chat', messages, generationProfile: 'automatic-explanation', maxOutputTokens: 129 });
+        expect(replies().at(-1)).toEqual({ id: 3, kind: 'error', error: 'Invalid output token limit. Use an integer from 1 to 128.' });
+        expect(fake.generate).not.toHaveBeenCalled();
+        await send({ id: 4, kind: 'chat', messages, generationProfile: 'automatic-explanation', maxOutputTokens: 64 });
+        expect(fake.generate).toHaveBeenCalledOnce();
+        expect(fake.generate).toHaveBeenLastCalledWith(expect.objectContaining({ max_new_tokens: 64 }));
+        expect(replies().at(-1)).toMatchObject({ id: 4, kind: 'answer' });
+    });
+
+    it('reserves the automatic profile token ceiling when checking the context boundary', async () => {
+        await send({ id: 1, kind: 'prepare' });
+        const messages = [{ role: 'user' as const, content: 'Explain' }];
+        fake.count = 8064;
+        await send({ id: 2, kind: 'chat', messages, generationProfile: 'automatic-explanation' });
+        expect(replies().at(-1)).toMatchObject({ id: 2, kind: 'answer' });
+        fake.generate.mockClear(); fake.count = 8065;
+        await send({ id: 3, kind: 'chat', messages, generationProfile: 'automatic-explanation' });
+        expect(fake.generate).not.toHaveBeenCalled();
+        expect(replies().at(-1)?.error).toContain('128 reserved for the answer');
+    });
+
     it('pins the real upstream tokenizer metadata probe even when it drops the revision option', async () => {
         const selected = BROWSER_MODELS[0];
         const allowed = browserModelBaseUrl(selected) + 'tokenizer_config.json';

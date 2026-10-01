@@ -256,16 +256,22 @@ it('keeps tools and explanation-depth controls out of the header', async () => {
     expect([...header.querySelectorAll('button')].some(button => button.textContent === 'Edges')).toBe(false);
 });
 
-it('places Chat directly after the project selector and keeps its toggle wired', async () => {
+it('places separate agent settings and chat controls directly after the project selector', async () => {
     const onOpenBrowserAi = vi.fn();
+    const onToggleBrowserAi = vi.fn();
     await act(async () => root.render(<AtlasChrome {...makeProps()} workspace="adr"
         projectSwitcher={<div data-testid="project-selector">Project</div>}
-        onOpenBrowserAi={onOpenBrowserAi} chatOpen />));
+        onOpenBrowserAi={onOpenBrowserAi} onToggleBrowserAi={onToggleBrowserAi} chatOpen />));
     const project = host.querySelector('[data-testid="project-selector"]')!;
-    const chat = project.nextElementSibling as HTMLButtonElement;
-    expect(chat.textContent).toBe('Chat');
+    const controls = project.nextElementSibling!;
+    expect(controls.getAttribute('aria-label')).toBe('Local agent');
+    const settings = controls.querySelector<HTMLButtonElement>('.atlas-browser-ai-action')!;
+    const chat = controls.querySelector<HTMLButtonElement>('[aria-label="Hide chat"]')!;
     expect(chat.getAttribute('aria-expanded')).toBe('true');
     await act(async () => chat.click());
+    expect(onToggleBrowserAi).toHaveBeenCalledOnce();
+    expect(onOpenBrowserAi).not.toHaveBeenCalled();
+    await act(async () => settings.click());
     expect(onOpenBrowserAi).toHaveBeenCalledOnce();
 });
 

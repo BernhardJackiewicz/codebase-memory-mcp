@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import BrowserConfig, { type BrowserConfigProps } from './BrowserConfig';
 import ConfigReference from './ConfigReference';
 import { CONFIG_TEXT, configValueError, type ConfigService, type ConfigSetting, type ConfigSnapshot } from './config-model';
 import './configuration.css';
 
-interface Props extends BrowserConfigProps { service: ConfigService; onClose: () => void }
+interface Props extends BrowserConfigProps { service: ConfigService; onClose: () => void; embedded?: boolean; active?: boolean }
 const displayValue = (value: string | null) => value === null ? 'Automatic' : value === 'true' ? 'On' : value === 'false' ? 'Off' : value || '(empty)';
 const title = (value: string) => value.replace(/[_-]/g, ' ').replace(/^./, char => char.toUpperCase());
 const timing = (value: string) => ({ restart: 'Process restart', 'next-session': 'Next session', 'next-request': 'Next request', live: 'Immediate', startup: 'After restart', 'next-index': 'Next index' }[value] ?? title(value));
@@ -41,7 +41,7 @@ function SettingRow({ setting, draft, changed, onChange, disabled }: { setting: 
     </article>;
 }
 
-export default function ConfigPanel({ service, onClose, ...browser }: Props) {
+export default function ConfigPanel({ service, onClose, embedded = false, active = true, ...browser }: Props) {
     const [snapshot, setSnapshot] = useState<ConfigSnapshot>();
     const [category, setCategory] = useState('');
     const [draft, setDraft] = useState<Record<string, string | null>>({});
@@ -54,23 +54,27 @@ export default function ConfigPanel({ service, onClose, ...browser }: Props) {
     const generation = useRef(0);
     const pending = useRef(false);
     const count = Object.keys(draft).length;
+    const draftCount = useRef(count);
+    draftCount.current = count;
     const references = snapshot?.settings.filter(setting => setting.category.toLowerCase() === 'reference') ?? [];
     const categories = [...new Set(snapshot?.settings.filter(setting => setting.category.toLowerCase() !== 'reference').map(setting => setting.category) ?? [])];
     const activeCategory = category || categories[0] || 'browser';
     const invalid = snapshot?.settings.some(setting => Object.hasOwn(draft, setting.key) && configValueError(setting, draft[setting.key]));
-    const reload = async () => {
+    const reload = useCallback(async () => {
         const ticket = ++generation.current;
         setLoading(true); setError(''); setNotice('');
         try { const next = await service.configuration(); if (ticket === generation.current) { setSnapshot(next); setDraft({}); setConfirmClose(false); } }
         catch (failure) { if (ticket === generation.current) setError(failure instanceof Error ? failure.message : 'Could not read configuration.'); }
         finally { if (ticket === generation.current) setLoading(false); }
-    };
-    useEffect(() => { void reload(); return () => { generation.current++; }; }, [service]);
+    }, [service]);
+    useEffect(() => () => { generation.current++; }, [service]);
+    useEffect(() => { if (active && draftCount.current === 0 && !pending.current) void reload(); }, [active, reload]);
     useEffect(() => {
+        if (embedded) return;
         const previous = document.activeElement;
         dialog.current?.focus();
         return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
-    }, []);
+    }, [embedded]);
     const close = () => { if (pending.current) return; if (count) setConfirmClose(true); else onClose(); };
     const keyDown = (event: KeyboardEvent<HTMLDivElement>) => {
         if (event.key === 'Escape') { event.stopPropagation(); close(); }
@@ -95,9 +99,8 @@ export default function ConfigPanel({ service, onClose, ...browser }: Props) {
         finally { pending.current = false; if (ticket === generation.current) setSaving(false); }
     };
     const navigate = (action: () => void) => { if (count) { setError('Save or discard your daemon changes before opening another settings panel.'); return; } action(); };
-    return <div className="cbm-config-backdrop" onClick={event => { if (event.target === event.currentTarget) close(); }}>
-        <div className="cbm-config-dialog" ref={dialog} role="dialog" aria-modal="true" aria-labelledby="cbm-config-title" tabIndex={-1} onKeyDown={keyDown}>
-            <header className="cbm-config-heading"><div><h2 id="cbm-config-title">{CONFIG_TEXT.title}</h2><p>Daemon settings and browser preferences</p></div><button type="button" onClick={close} disabled={saving} aria-label={CONFIG_TEXT.close}>×</button></header>
+    const panel = <div className={`cbm-config-dialog${embedded ? ' cbm-config-embedded' : ''}`} ref={dialog} role={embedded ? 'region' : 'dialog'} aria-modal={embedded ? undefined : true} aria-labelledby="cbm-config-title" tabIndex={embedded ? undefined : -1} onKeyDown={embedded ? undefined : keyDown}>
+            <header className="cbm-config-heading"><div><h2 id="cbm-config-title">{embedded ? 'Configuration' : CONFIG_TEXT.title}</h2><p>Daemon settings and browser preferences</p></div>{!embedded && <button type="button" onClick={close} disabled={saving} aria-label={CONFIG_TEXT.close}>×</button>}</header>
             <nav className="cbm-config-categories" aria-label="Configuration categories">{[...categories, 'browser', 'reference'].map(value => <button type="button" key={value} aria-pressed={activeCategory === value} onClick={() => setCategory(value)}>{value === 'reference' ? 'External inputs' : title(value)}</button>)}</nav>
             <div className="cbm-config-content">
                 {error && <div className="cbm-config-error" role="alert">{error}<p>Your edits have not been applied. Reload values to review a newer daemon configuration.</p></div>}
@@ -116,6 +119,6 @@ export default function ConfigPanel({ service, onClose, ...browser }: Props) {
                 <button type="button" disabled={loading || saving} onClick={() => { if (count) { setDraft({}); setNotice('Unsaved edits discarded.'); } else void reload(); }}>{count ? 'Discard edits' : 'Reload values'}</button>
                 <button type="button" className="cbm-config-save" disabled={!count || !!invalid || loading || saving} onClick={() => { void save(); }}>{saving ? 'Saving…' : 'Save changes'}</button>
             </div></footer>
-        </div>
-    </div>;
+        </div>;
+    return embedded ? panel : <div className="cbm-config-backdrop" onClick={event => { if (event.target === event.currentTarget) close(); }}>{panel}</div>;
 }

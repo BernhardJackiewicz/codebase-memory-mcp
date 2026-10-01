@@ -81,8 +81,8 @@ describe('AtlasApi, the projects routes', () => {
     });
 
     it('reads the health verdict', async () => {
-        const { api: client, calls } = api({ body: '{"status":"healthy","nodes":1,"edges":2,"size_bytes":3}' });
-        expect(await client.projectHealth('p')).toEqual({ status: 'healthy', nodes: 1, edges: 2, sizeBytes: 3, reason: '' });
+        const { api: client, calls } = api({ body: '{"status":"healthy","nodes":1,"edges":2,"size_bytes":3,"indexed_at":"2026-10-01T12:00:00Z","watch_registered":true,"watcher_running":false}' });
+        expect(await client.projectHealth('p')).toEqual({ status: 'healthy', nodes: 1, edges: 2, sizeBytes: 3, indexedAt: '2026-10-01T12:00:00Z', watchRegistered: true, watcherRunning: false, reason: '' });
         expect(calls[0]?.url).toBe('http://127.0.0.1:9749/api/project-health?name=p');
     });
 

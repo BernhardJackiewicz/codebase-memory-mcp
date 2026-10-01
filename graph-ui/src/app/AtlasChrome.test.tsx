@@ -81,15 +81,29 @@ const testId = (id: string): HTMLElement | null => container.querySelector(`[dat
 
 describe('AtlasChrome', () => {
 
-    it('opens configuration from the right end of the top bar', async () => {
+    it('leaves general configuration out of the top bar', async () => {
         const onOpenConfig = vi.fn();
         await render(props({ onOpenConfig, configOpen: true, onOpenBrowserAi: vi.fn(), projectSwitcher: <button>Project</button> }));
-        const action = container.querySelector<HTMLButtonElement>('[aria-label="Open configuration"]')!;
-        expect(testId('atlas-header')?.lastElementChild).toBe(action);
-        expect(action.textContent).toBe('Config');
-        expect(action.getAttribute('aria-expanded')).toBe('true');
-        await act(async () => action.click());
-        expect(onOpenConfig).toHaveBeenCalledOnce();
+        expect(testId('atlas-header')?.querySelector('[aria-label="Open configuration"]')).toBeNull();
+        expect(testId('atlas-header')?.lastElementChild?.getAttribute('aria-label')).toBe('Local agent');
+        expect(onOpenConfig).not.toHaveBeenCalled();
+    });
+
+    it('shows the selected model subtly in the agent status button and opens its configuration directly', async () => {
+        const settings = vi.fn(), toggle = vi.fn();
+        await render(props({ agentState: 'active', agentModelName: 'Qwen 3.5 0.8B', onOpenBrowserAi: settings, onToggleBrowserAi: toggle }));
+        const button = container.querySelector<HTMLButtonElement>('[aria-label="Local agent settings"]')!;
+        expect(button.textContent).toContain('Agent active');
+        expect(button.querySelector('small')?.textContent).toBe('Qwen 3.5 0.8B');
+        await act(async () => button.click());
+        expect(settings).toHaveBeenCalledOnce();
+        expect(toggle).not.toHaveBeenCalled();
+        expect(container.querySelector('[role="menu"]')).toBeNull();
+    });
+
+    it('omits the model label when no model is selected', async () => {
+        await render(props({ agentState: 'off', onOpenBrowserAi: vi.fn() }));
+        expect(container.querySelector('.atlas-agent-model-name')).toBeNull();
     });
 
     it.each([['off', 'Enable agent'], ['active', 'Agent active'], ['busy', 'Agent working'], ['loading', 'Agent loading'], ['error', 'Agent error']] as const)('shows truthful local agent state %s and opens settings beside the project', async (agentState, label) => {
@@ -97,18 +111,39 @@ describe('AtlasChrome', () => {
         await render(props({ agentState, onOpenBrowserAi: settings, projectSwitcher: <button>Project</button> }));
         const button = container.querySelector<HTMLButtonElement>('[aria-label="Local agent settings"]')!;
         expect(button.textContent).toBe(label);
-        expect(button.previousElementSibling?.textContent).toBe('Project');
+        expect(button.parentElement?.previousElementSibling?.textContent).toBe('Project');
         await act(async () => button.click());
         expect(settings).toHaveBeenCalledOnce();
     });
 
-    it('keeps a separate explanation reopen action when the architecture agent panel is folded', async () => {
-        const settings = vi.fn(), expand = vi.fn();
-        await render(props({ workspace: 'architecture', chatOpen: false, onOpenBrowserAi: settings, onExpandBrowserAi: expand }));
-        await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Open local agent explanations"]')!.click());
-        expect(expand).toHaveBeenCalledOnce(); expect(settings).not.toHaveBeenCalled();
-        await render(props({ workspace: 'architecture', chatOpen: true, onOpenBrowserAi: settings, onExpandBrowserAi: expand }));
-        expect(container.querySelector('[aria-label="Open local agent explanations"]')).toBeNull();
+    it.each(['explore', 'architecture', 'galaxy', 'system', 'adr', 'coverage', 'agents'] as const)('groups independent configuration and chat controls in the top bar for %s', async workspace => {
+        const settings = vi.fn(), toggle = vi.fn();
+        const next = (chatOpen: boolean) => props({ workspace, chatOpen, onOpenBrowserAi: settings, onToggleBrowserAi: toggle, chatDock: <input aria-label="Chat draft" defaultValue="conversation draft" /> });
+        await render(next(false));
+        const group = testId('atlas-header')?.querySelector('[role="group"][aria-label="Local agent"]');
+        expect(group?.querySelectorAll('button')).toHaveLength(2);
+        const draft = container.querySelector<HTMLInputElement>('[aria-label="Chat draft"]')!;
+        draft.value = 'retained draft';
+        const settingsButton = group?.querySelector<HTMLButtonElement>('[aria-label="Local agent settings"]')!;
+        const openButton = group?.querySelector<HTMLButtonElement>('[aria-label="Open chat"]')!;
+        expect(openButton.getAttribute('aria-expanded')).toBe('false');
+        await act(async () => settingsButton.click());
+        expect(settings).toHaveBeenCalledOnce();
+        expect(toggle).not.toHaveBeenCalled();
+        await act(async () => openButton.click());
+        expect(toggle).toHaveBeenCalledOnce();
+        expect(settings).toHaveBeenCalledOnce();
+        await render(next(true));
+        const hideButton = testId('atlas-header')?.querySelector<HTMLButtonElement>('[aria-label="Hide chat"]')!;
+        expect(hideButton.getAttribute('aria-expanded')).toBe('true');
+        await act(async () => hideButton.click());
+        expect(toggle).toHaveBeenCalledTimes(2);
+        expect(settings).toHaveBeenCalledOnce();
+        await render(next(false));
+        expect(container.querySelector('[aria-label="Chat draft"]')).toBe(draft);
+        expect(draft.value).toBe('retained draft');
+        expect(container.querySelector('.atlas-agent-reopen')).toBeNull();
+        expect(container.querySelector('[role="menu"]')).toBeNull();
     });
 
     it('traegt jede Testmarke, an der der Beweislauf das Chrome erkennt', async () => {

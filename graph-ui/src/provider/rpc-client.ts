@@ -249,7 +249,35 @@ export class RpcIntelligenceClient {
     }
 
     async listProjects(): Promise<ListProjectsResult> {
-        return readListProjects(await this.json('list_projects', {}));
+        const projects: ListProjectsResult['projects'] = [];
+        const names = new Set<string>();
+        let offset = 0;
+        let total: number | undefined;
+        for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
+            const raw = await this.json('list_projects', { limit: 500, offset });
+            let page: ListProjectsResult;
+            try { page = readListProjects(raw); }
+            catch (error) { throw asParseFailure('list_projects', error); }
+            if ((page.offset !== undefined && page.offset !== offset) || (page.returned !== undefined && page.returned !== page.projects.length))
+                throw new EngineError('list_projects', 'Project pagination did not match the requested page.');
+            if (total !== undefined && page.total !== undefined && total !== page.total)
+                throw new EngineError('list_projects', 'Project inventory changed during pagination. Refresh to read it again.');
+            total ??= page.total;
+            for (const project of page.projects) {
+                if (names.has(project.name)) throw new EngineError('list_projects', 'Project pagination repeated a project.');
+                names.add(project.name); projects.push(project);
+            }
+            const next = offset + page.projects.length;
+            if (page.hasMore !== true) {
+                if (page.nextOffset !== undefined || (total !== undefined && total !== projects.length))
+                    throw new EngineError('list_projects', 'Incomplete project inventory.');
+                return { projects };
+            }
+            if (!page.projects.length || page.nextOffset !== next || next <= offset || (total !== undefined && next >= total))
+                throw new EngineError('list_projects', 'Project pagination did not advance.');
+            offset = next;
+        }
+        throw new EngineError('list_projects', 'Project inventory exceeded the 100-page retrieval limit.');
     }
 
     async indexStatus(project: string): Promise<IndexStatusResult> {

@@ -67,14 +67,29 @@ describe('browser chat worker boundary', () => {
         runtime.dispose();
     });
 
-    it('forwards a bounded answer-token request without changing ordinary chat defaults', async () => {
+    it('forwards the automatic explanation profile without changing ordinary chat requests', async () => {
         const runtime = createBrowserChatRuntime(), worker = WorkerStub.instances[0];
         const messages = [{ role: 'user' as const, content: 'Explain' }];
-        const chatWithOptions = runtime.chat as (input: typeof messages, onToken: (chunk: string) => void, options: { maxOutputTokens: number }) => Promise<string>;
-        const result = chatWithOptions(messages, vi.fn(), { maxOutputTokens: 192 });
+        const result = runtime.chat(messages, vi.fn(), { maxOutputTokens: 128, generationProfile: 'automatic-explanation' });
         const request = worker.last(); worker.send({ id: request.id, kind: 'answer', output: 'Short answer' });
         await result;
-        expect(request).toMatchObject({ maxOutputTokens: 192 }); runtime.dispose();
+        expect(request).toMatchObject({ maxOutputTokens: 128, generationProfile: 'automatic-explanation' });
+        const ordinary = runtime.chat(messages, vi.fn());
+        const next = worker.last(); worker.send({ id: next.id, kind: 'answer', output: 'Ordinary answer' });
+        await ordinary;
+        expect(next).not.toHaveProperty('maxOutputTokens');
+        expect(next).not.toHaveProperty('generationProfile');
+        runtime.dispose();
+    });
+
+    it('forwards a bounded token request independently of an explanation profile', async () => {
+        const runtime = createBrowserChatRuntime(), worker = WorkerStub.instances[0];
+        const result = runtime.chat([{ role: 'user', content: 'Explain' }], vi.fn(), { maxOutputTokens: 192 });
+        const request = worker.last(); worker.send({ id: request.id, kind: 'answer', output: 'Short answer' });
+        await result;
+        expect(request).toMatchObject({ maxOutputTokens: 192 });
+        expect(request).not.toHaveProperty('generationProfile');
+        runtime.dispose();
     });
 
     it('notifies the UI once about an idle fatal loss and immediately reports an already failed runtime', () => {

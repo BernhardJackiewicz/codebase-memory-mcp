@@ -1842,8 +1842,9 @@ static void handle_delete_project(cbm_http_server_t *srv, cbm_http_conn_t *c,
     cbm_http_replyf(c, 200, g_cors_json, "{\"deleted\":true}");
 }
 
-/* GET /api/project-health?name=X — checks db integrity */
-static void handle_project_health(cbm_http_conn_t *c, const cbm_http_req_t *req) {
+/* GET /api/project-health?name=X — database and live watcher state */
+static void handle_project_health(cbm_http_conn_t *c, const cbm_http_req_t *req,
+                                  cbm_http_server_t *srv) {
     char name[256] = {0};
     if (!cbm_http_query_param(req->query, "name", name, (int)sizeof(name)) || name[0] == '\0') {
         cbm_http_replyf(c, 400, g_cors_json, "{\"error\":\"missing name\"}");
@@ -1853,26 +1854,51 @@ static void handle_project_health(cbm_http_conn_t *c, const cbm_http_req_t *req)
     char db_path[1024];
     db_path_for_project(name, db_path, sizeof(db_path));
 
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = doc ? yyjson_mut_obj(doc) : NULL;
+    if (!doc || !root) {
+        yyjson_mut_doc_free(doc);
+        cbm_http_replyf(c, 500, g_cors_json, "{\"error\":\"out of memory\"}");
+        return;
+    }
+    yyjson_mut_doc_set_root(doc, root);
+
+    cbm_watcher_project_status_t watch = cbm_watcher_project_status(srv->watcher, name);
+    yyjson_mut_obj_add_bool(doc, root, "watch_registered", watch.registered);
+    yyjson_mut_obj_add_bool(doc, root, "watcher_running", watch.running);
+
+    cbm_project_t project = {0};
     if (!cbm_file_exists(db_path)) {
-        cbm_http_replyf(c, 200, g_cors_json, "{\"status\":\"missing\"}");
-        return;
+        yyjson_mut_obj_add_str(doc, root, "status", "missing");
+    } else {
+        cbm_store_t *store = cbm_store_open_path_query(db_path);
+        if (!store) {
+            yyjson_mut_obj_add_str(doc, root, "status", "corrupt");
+            yyjson_mut_obj_add_str(doc, root, "reason", "cannot open");
+        } else {
+            yyjson_mut_obj_add_str(doc, root, "status", "healthy");
+            yyjson_mut_obj_add_int(doc, root, "nodes", cbm_store_count_nodes(store, name));
+            yyjson_mut_obj_add_int(doc, root, "edges", cbm_store_count_edges(store, name));
+            yyjson_mut_obj_add_int(doc, root, "size_bytes", cbm_file_size(db_path));
+            (void)cbm_store_get_project(store, name, &project);
+            cbm_store_close(store);
+        }
     }
-
-    cbm_store_t *store = cbm_store_open_path_query(db_path);
-    if (!store) {
-        cbm_http_replyf(c, 200, g_cors_json, "{\"status\":\"corrupt\",\"reason\":\"cannot open\"}");
-        return;
+    if (project.indexed_at && project.indexed_at[0]) {
+        yyjson_mut_obj_add_strcpy(doc, root, "indexed_at", project.indexed_at);
+    } else {
+        yyjson_mut_obj_add_null(doc, root, "indexed_at");
     }
+    cbm_project_free_fields(&project);
 
-    int node_count = cbm_store_count_nodes(store, name);
-    int edge_count = cbm_store_count_edges(store, name);
-    cbm_store_close(store);
-
-    int64_t size = cbm_file_size(db_path);
-
-    cbm_http_replyf(c, 200, g_cors_json,
-                    "{\"status\":\"healthy\",\"nodes\":%d,\"edges\":%d,\"size_bytes\":%lld}",
-                    node_count, edge_count, (long long)size);
+    char *json = yyjson_mut_write(doc, 0, NULL);
+    yyjson_mut_doc_free(doc);
+    if (json) {
+        cbm_http_replyf(c, 200, g_cors_json, "%s", json);
+        free(json);
+    } else {
+        cbm_http_replyf(c, 500, g_cors_json, "{\"error\":\"out of memory\"}");
+    }
 }
 
 /* ── Handle GET /api/layout ───────────────────────────────────── */
@@ -3307,7 +3333,7 @@ static void dispatch_request(cbm_http_server_t *srv, cbm_http_conn_t *c,
 
     /* GET /api/project-health → check db integrity */
     if (is_get && cbm_http_path_match(req->path, "/api/project-health*")) {
-        handle_project_health(c, req);
+        handle_project_health(c, req, srv);
         return;
     }
 

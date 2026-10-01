@@ -130,6 +130,7 @@ import { resolveRepositorySelection, useRepositorySnapshot } from './architectur
 import ActivityPanel from './agents/ActivityPanel';
 import WelcomePanel from './app/WelcomePanel';
 import BrowserChatDock from './browser-ai/BrowserChatDock';
+import { browserChatHistoryProjectKey } from './browser-ai/chat-history-cache';
 import type { BrowserChatAttachment } from './browser-ai/BrowserChatDock';
 import { browserGraphContext } from './browser-ai/graph-context';
 import { readerChatContext, type ReaderSourceOrigin } from './browser-ai/reader-chat-context';
@@ -770,6 +771,7 @@ export default function App(): JSX.Element {
     const [browserAiOpen, setBrowserAiOpen] = useState(false);
     const [localAgentState, setLocalAgentState] = useState<'off' | 'loading' | 'active' | 'busy' | 'error'>('off');
     const [agentSettingsRequest, setAgentSettingsRequest] = useState(0);
+    const [agentModelName, setAgentModelName] = useState('');
     const agentHasOpened = useRef(false);
     const onAgentStateChange = useCallback((state: 'off' | 'loading' | 'active' | 'busy' | 'error') => {
         setLocalAgentState(state);
@@ -777,7 +779,7 @@ export default function App(): JSX.Element {
             agentHasOpened.current = true; setBrowserAiOpen(true);
         }
     }, []);
-    const openAgentSettings = () => { setAgentSettingsRequest(value => value + 1); setBrowserAiOpen(true); };
+    const openAgentSettings = () => { setAgentSettingsRequest(value => value + 1); };
     const [codeDetailsOpen, setCodeDetailsOpen] = useState(false);
     const [readerSelection, setReaderSelection] = useState<ReaderSelection>();
     const [pinnedCode, setPinnedCode] = useState<SelectedCodeSnapshot>();
@@ -963,7 +965,6 @@ export default function App(): JSX.Element {
      * die Hilfe: eine Flaeche ueber dem Editor geht nicht ungefragt auf.
      */
     const [settingsOpen, setSettingsOpen] = useState(false);
-    const [configOpen, setConfigOpen] = useState(false);
     const [projectsOpen, setProjectsOpen] = useState(false);
     const [indexActivity, setIndexActivity] = useState<{ name: string; status: 'indexing' | 'done' | 'error' }>();
     /*
@@ -2682,7 +2683,7 @@ export default function App(): JSX.Element {
          * eigenes Eingabefeld. Ohne diesen Eintrag fielen Buchstaben, die
          * jemand vor dem offenen Panel tippt, in die Kommandozeile dahinter.
          */
-        overlayOpen: helpOpen || entryOpen || settingsOpen || configOpen || projectsOpen,
+        overlayOpen: helpOpen || entryOpen || settingsOpen || projectsOpen,
         walkRunning: tour !== undefined,
     };
 
@@ -4601,7 +4602,7 @@ export default function App(): JSX.Element {
              * braucht. Dieselbe Reihenfolge wie ueberall in dieser Datei: was
              * ueber dem Panel liegt, hat den Vortritt.
              */
-            escapeTaken={helpOpen || entryOpen || overlayOpen || settingsOpen || configOpen || projectsOpen}
+            escapeTaken={helpOpen || entryOpen || overlayOpen || settingsOpen || projectsOpen}
         />
     );
 
@@ -4766,20 +4767,19 @@ export default function App(): JSX.Element {
     return (
         <AtlasChrome
             workspace={workspace}
-            onOpenConfig={() => setConfigOpen(true)} configOpen={configOpen}
             projectSwitcher={<ProjectSwitcher currentProject={project} listProjects={projectsSource.listProjects}
                 onSelectProject={openProject} onAddProject={() => setProjectsOpen(true)} indexActivity={indexActivity} />}
             onWorkspaceChange={value => { setDiagnosticsPath(undefined); changeWorkspace(value); }}
             onOpenBrowserAi={openAgentSettings}
-            onExpandBrowserAi={() => setBrowserAiOpen(true)}
-            agentState={localAgentState}
+            onToggleBrowserAi={() => setBrowserAiOpen(open => !open)}
+            agentState={localAgentState} agentModelName={agentModelName}
             onOpenSystem={() => changeWorkspace('system')}
             daemonState={serverOk === undefined ? 'checking' : serverOk ? 'connected' : 'disconnected'}
             chatOpen={browserAiOpen}
             chatDock={<BrowserChatDock open={browserAiOpen} onClose={() => setBrowserAiOpen(false)}
-                showCollapsed onOpen={() => setBrowserAiOpen(true)}
+                historyKey={project ? browserChatHistoryProjectKey(window.location.origin, project) : undefined}
                 proactiveSelection={proactiveSelection?.scope === selectionScope ? proactiveSelection.context : undefined}
-                selectionScope={selectionScope} onAgentStateChange={onAgentStateChange} settingsRequest={agentSettingsRequest}
+                selectionScope={selectionScope} onAgentStateChange={onAgentStateChange} onAgentModelChange={setAgentModelName} settingsRequest={agentSettingsRequest}
                 readerContext={workspace === 'explore' ? currentReaderContext : undefined}
                 pendingContext={chatGraphSelection} onContextConsumed={clearChatGraphSelection} onContextRemoved={clearChatGraphSelection}
                 context={browserGraphContext(inspector.ir, project, inspector.filePath, inspector.symbol ? workspacePathOf(inspector.symbol.uri) : '')}
@@ -4794,10 +4794,6 @@ export default function App(): JSX.Element {
                 onOpen={target => exploreEvidence({ filePath: target.filePath, line: target.line, name: target.name })} /> : undefined}
             readerDetails={codeDetailsOpen ? selectedCode : undefined}
             globalOverlay={<>
-                {configOpen && <ConfigPanel service={api} project={project} display={display} onDisplay={changeDisplay}
-                    onOpenBrowserModels={() => { setConfigOpen(false); openAgentSettings(); }}
-                    onOpenDisplay={() => { setConfigOpen(false); setSettingsOpen(true); }}
-                    onClose={() => setConfigOpen(false)} />}
                 {sourceEvidence?.project === project && <SourceEvidenceDrawer key={`${project}:${sourceEvidence.target.filePath}:${sourceEvidence.target.line ?? 1}`}
                     project={project} target={sourceEvidence.target} graph={evidenceGraph} client={client}
                     onClose={() => setSourceEvidence(undefined)} onExplore={exploreEvidence} />}
@@ -4843,7 +4839,9 @@ export default function App(): JSX.Element {
                     <AdrWorkspace key={project} project={project} source={projectsSource} active={workspace === 'adr'} />
                 </div>
                 <div hidden={workspace !== 'system'}>
-                    <SystemWorkspace api={api} project={project} active={workspace === 'system'} version={ATLAS_VERSION}
+                    <SystemWorkspace api={api} listProjects={projectsSource.listProjects} project={project} active={workspace === 'system'} version={ATLAS_VERSION}
+                        configuration={active => <ConfigPanel embedded active={active} service={api} project={project} display={display} onDisplay={changeDisplay}
+                            onOpenBrowserModels={openAgentSettings} onOpenDisplay={() => setSettingsOpen(true)} onClose={() => {}} />}
                         onOpenProjects={() => setProjectsOpen(true)} />
                 </div>
                 <div hidden={workspace !== 'coverage'}>
