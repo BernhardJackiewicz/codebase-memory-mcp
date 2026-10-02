@@ -199,7 +199,8 @@ static bool ap_named(const char *text, size_t length, const char *name) {
 }
 
 static bool ap_suffix(const char *text, const char *suffix) {
-    size_t length = strlen(text), tail = strlen(suffix);
+    size_t length = strlen(text);
+    size_t tail = strlen(suffix);
     return length > tail && !strcmp(text + length - tail, suffix);
 }
 
@@ -1934,10 +1935,12 @@ static int ap_render(ap_context *c, const char *project, char **out_json) {
         /* Indexed entry points first, then route handlers, each in id order:
          * paths take their slots in this order, so many handlers cannot crowd
          * main out of the default paths. */
-        for (int pass = 0; pass < 2; pass++)
+        enum { AP_ENTRY_INDEXED, AP_ENTRY_HANDLER, AP_ENTRY_PASSES };
+        for (int pass = AP_ENTRY_INDEXED; pass < AP_ENTRY_PASSES; pass++)
             for (int i = 0; i < c->n; i++) {
                 ap_node *node = &c->nodes[i];
-                if (node->component < 0 || !(pass ? node->handler : node->entry))
+                if (node->component < 0 ||
+                    !(pass == AP_ENTRY_HANDLER ? node->handler : node->entry))
                     continue;
                 entry_total++;
                 if (entry_count < AP_ENTRYPOINTS) {
