@@ -137,6 +137,9 @@ import type { LabelBox } from './NodeLabels';
 import { NodeTooltipCard } from './NodeTooltipCard';
 import GalaxyNavigator from './GalaxyNavigator';
 import { TraceEdgeFilter } from './TraceEdgeFilter';
+import { PathPicker, PathSteps } from './ScopePathControls';
+import { callOrder, pathNodes, shortestScopePath, type ScopePathStep } from './scope-path';
+import { galaxyPathText } from './galaxy-strings';
 import { useOrganicLayout } from './use-organic-layout';
 import RenderProgress from './RenderProgress';
 import { useGraphScope } from './use-graph-scope';
@@ -1184,6 +1187,52 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
             return next;
         });
     }, [props.workspaceExpanded, scope.scope, traceTypes, kinds, changeTraceTypes]);
+
+    /*
+     * Der Pfad und die Aufrufreihe (Review-Befund G5, nach dem Vorbild von
+     * Graphify).
+     *
+     * Beide rechnen nur auf dem, was dieser Scope schon geladen hat, und in der
+     * Richtung, in der er verfolgt wird: der Server wird nicht gefragt, und ein
+     * fehlender Pfad heisst "nicht in diesen Beziehungen", nicht "gibt es
+     * nicht". Der Abstand ist hier die Zahl der Hops und nur hier (G6); die
+     * Wolke selbst behauptet keinen. Die Wahl haengt am Scope (`organicKey`):
+     * eine neue Wurzel, Richtung oder Kantenart verwirft sie, ein Expand
+     * rechnet sie auf dem groesseren Bild neu.
+     */
+    const [trail, setTrail] = useState<{ key: string; kind: 'path'; target: number } | { key: string; kind: 'calls' }>();
+    const [trailStep, setTrailStep] = useState(0);
+    const trailRoot = scope.result?.roots.size === 1 ? [...scope.result.roots][0] : undefined;
+    const rootCalls = useMemo(() => (data && trailRoot !== undefined ? callOrder(data.edges, trailRoot) : []), [data, trailRoot]);
+    const pathCandidates = useMemo(() => data?.nodes.filter(node => !scope.result?.roots.has(node.id)) ?? [], [data, scope.result]);
+    const trailView = useMemo(() => {
+        if (!props.workspaceExpanded || mode !== 'galaxy' || trail?.key !== organicKey || !data || !scope.result) return undefined;
+        const names = new Map(data.nodes.map(node => [node.id, node.name]));
+        const nameOf = (id: number) => names.get(id) ?? `#${id}`;
+        if (trail.kind === 'calls') {
+            return { nameOf, lines: true, labels: 'active' as const, steps: rootCalls,
+                heading: galaxyPathText.callsHeading(trailRoot === undefined ? '' : nameOf(trailRoot), rootCalls.length) };
+        }
+        const steps: ScopePathStep[] | undefined = shortestScopePath(data.edges, scope.result.roots, trail.target, scope.direction);
+        const target = nameOf(trail.target);
+        return { nameOf, lines: false, labels: 'all' as const, steps: steps ?? [],
+            heading: galaxyPathText.pathHeading(target, steps?.length ?? 0),
+            note: steps === undefined ? galaxyPathText.noPath(target) : steps.length === 0 ? galaxyPathText.isRoot(target) : undefined };
+    }, [props.workspaceExpanded, mode, trail, organicKey, data, scope.result, scope.direction, rootCalls, trailRoot]);
+    const trailActive = trailView ? Math.min(trailStep, Math.max(0, trailView.steps.length - 1)) : 0;
+    const trailIds = useMemo(() => trailView?.steps.length && scope.result ? pathNodes(trailView.steps, scope.result.roots) : undefined,
+        [trailView, scope.result]);
+    const clearTrail = useCallback(() => { setTrail(undefined); setTrailStep(0); }, []);
+    useEffect(() => {
+        if (!trailView) return;
+        const onKey = (event: globalThis.KeyboardEvent): void => {
+            if (event.key !== 'Escape' || event.defaultPrevented) return;
+            event.preventDefault();
+            clearTrail();
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [trailView, clearTrail]);
 
     const index = useMemo(
         () => (picture === undefined ? new Map<string, GraphNode>() : nodesByQualifiedName(picture.nodes)),
@@ -2269,6 +2318,13 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                     <span>{scope.depth} {scope.depth === 1 ? 'layer' : 'layers'}</span>
                     <button type="button" disabled={scope.loading || scope.result?.exhausted}
                         onClick={() => scope.setDepth(scope.depth + 1)}>Expand +1</button>
+                    {props.workspaceExpanded && mode === 'galaxy' && <>
+                        <PathPicker nodes={pathCandidates} onPick={node => { setTrail({ key: organicKey, kind: 'path', target: node.id }); setTrailStep(0); }} />
+                        <button type="button" disabled={rootCalls.length === 0} aria-pressed={trail?.key === organicKey && trail.kind === 'calls'}
+                            title={rootCalls.length ? galaxyPathText.callOrderTitle : galaxyPathText.callOrderUnavailable}
+                            onClick={() => { if (trail?.key === organicKey && trail.kind === 'calls') clearTrail(); else { setTrail({ key: organicKey, kind: 'calls' }); setTrailStep(0); } }}>
+                            {galaxyPathText.callOrder}</button>
+                    </>}
                     <span className="atlas-graph-scope-count" role="status">{scope.validating ? 'Checking index…' : scope.loading ? 'Loading relationships…' : organicTask.loading ? 'Arranging nodes…'
                         : scope.complete ? `${data?.nodes.length ?? 0} ${data?.nodes.length === 1 ? 'node' : 'nodes'} · ${data?.edges.length ?? 0} ${data?.edges.length === 1 ? 'edge' : 'edges'}${scope.result?.exhausted ? ' · end of trace' : ''}`
                             : 'Partial preview'}</span>
@@ -2407,6 +2463,8 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
             <div className="atlas-galaxy-scene" data-testid="atlas-galaxy-scene" ref={scene}
                 aria-busy={layoutLoading || scope.loading || organicTask.loading || spacingBusy}>
                 <RenderProgress busy={visible && (layoutLoading || scope.loading || organicTask.loading || spacingBusy)} />
+                {trailView && <PathSteps heading={trailView.heading} note={trailView.note} steps={trailView.steps} active={trailActive}
+                    nameOf={trailView.nameOf} lines={trailView.lines} onStep={setTrailStep} onClear={clearTrail} />}
                 {/*
                   * Der Weg zurueck zur eingepassten Ansicht (AC5).
                   *
@@ -2440,7 +2498,8 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                         rootIds={mode === 'galaxy' && sceneScoped ? scope.result?.roots : undefined}
                         data={shown}
                         display={display}
-                        highlightedIds={scope.scope && scope.depth > 1 ? null : highlighted}
+                        highlightedIds={trailIds ?? (scope.scope && scope.depth > 1 ? null : highlighted)}
+                        path={trailIds && trailView ? { steps: trailView.steps, active: trailActive, labels: trailView.labels } : undefined}
                         emphasizeIncidentEdges={mode === 'galaxy' && Boolean(props.focusFilePath)}
                         cameraTarget={cameraTarget}
                         /*
@@ -2477,7 +2536,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                         showLabels={
                             mode === 'hierarchy'
                                 ? shown.nodes.length <= HIERARCHY_LABEL_BUDGET
-                                : highlighted !== null && highlighted.size > 0
+                                : trailIds !== undefined || (highlighted !== null && highlighted.size > 0)
                         }
                         /*
                          * Landmarken nur in der Galaxie: der Halo sitzt auf den

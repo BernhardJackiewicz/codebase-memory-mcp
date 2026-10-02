@@ -10,12 +10,14 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import GalaxyPanel from './GalaxyPanel';
 import type { GraphData, GraphEdge, GraphNode } from './types';
+import type { ScenePath } from './PathLayer';
 
-const scene = vi.hoisted(() => ({ mounts: 0, unmounts: 0, renders: 0, roots: undefined as ReadonlySet<number> | undefined }));
+const scene = vi.hoisted(() => ({ mounts: 0, unmounts: 0, renders: 0, roots: undefined as ReadonlySet<number> | undefined,
+    highlighted: null as Set<number> | null, path: undefined as ScenePath | undefined }));
 vi.mock('./GraphScene', async importOriginal => ({
     ...await importOriginal<typeof import('./GraphScene')>(),
-    GraphScene: ({ data, rootIds }: { data: GraphData; rootIds?: ReadonlySet<number> }) => {
-        scene.renders += 1; scene.roots = rootIds;
+    GraphScene: ({ data, rootIds, highlightedIds, path }: { data: GraphData; rootIds?: ReadonlySet<number>; highlightedIds: Set<number> | null; path?: ScenePath }) => {
+        scene.renders += 1; scene.roots = rootIds; scene.highlighted = highlightedIds; scene.path = path;
         useEffect(() => { scene.mounts += 1; return () => { scene.unmounts += 1; }; }, []);
         return <output data-testid="scene-nodes">{data.nodes.length}</output>;
     },
@@ -27,6 +29,7 @@ const nodes = [1, 2, 3, 4, 5].map(node);
 const edges: GraphEdge[] = [
     { source: 1, target: 2, type: 'CALLS', line: 3 }, { source: 3, target: 1, type: 'CALLS', line: 4 },
     { source: 2, target: 4, type: 'CALLS', line: 2 }, { source: 4, target: 5, type: 'IMPORTS' },
+    { source: 1, target: 5, type: 'CALLS', line: 1 },
 ];
 
 /** /api/layout plus the two query_graph shapes the scope loader sends. */
@@ -77,8 +80,8 @@ it('keeps one scene mounted through selection and expansion and fits once per se
 
     await act(async () => { seam().clickNode('sample.n1'); });
     await settle(() => {
-        expect(seam().nodes).toBe(3);
-        expect(host.querySelector('.atlas-graph-scope-count')?.textContent).toBe('3 nodes · 2 edges');
+        expect(seam().nodes).toBe(4);
+        expect(host.querySelector('.atlas-graph-scope-count')?.textContent).toBe('4 nodes · 3 edges');
     });
     expect(scene.mounts).toBe(1); expect(scene.unmounts).toBe(0);
     expect(seam().fits).toBe(fitsBefore + 1);
@@ -88,7 +91,7 @@ it('keeps one scene mounted through selection and expansion and fits once per se
 
     const expand = [...host.querySelectorAll('button')].find(button => button.textContent === 'Expand +1')!;
     await act(async () => expand.click());
-    await settle(() => expect(seam().nodes).toBe(4));
+    await settle(() => expect(seam().nodes).toBe(5));
     expect(scene.mounts).toBe(1); expect(scene.unmounts).toBe(0);
     // An expansion is the same scope: no new fit, the scene keeps the reader's camera.
     expect(seam().fits).toBe(fitsBefore + 1);
@@ -97,4 +100,56 @@ it('keeps one scene mounted through selection and expansion and fits once per se
     await settle(() => expect(seam().lastFit?.nodes).toBe(3));
     expect(scene.mounts).toBe(1);
     expect(seam().fits).toBe(fitsBefore + 2);
+});
+
+const button = (label: string) => [...host.querySelectorAll('button')].find(entry => entry.textContent === label)!;
+const steps = () => [...host.querySelectorAll('[data-testid="atlas-galaxy-path-panel"] li code')].map(entry => entry.textContent);
+const heading = () => host.querySelector('[data-testid="atlas-galaxy-path-panel"] strong')?.textContent;
+
+it('highlights a path and the call order of the root inside the loaded scope, and clears with Escape or a new trace', async () => {
+    await act(async () => root.render(<GalaxyPanel project="sample" visible workspaceExpanded onOpenNode={vi.fn()} fetch={graphFetch()} />));
+    await settle(() => expect(seam().nodes).toBe(5));
+    await act(async () => { seam().clickNode('sample.n1'); });
+    await settle(() => expect(seam().nodes).toBe(4));
+    await act(async () => button('Expand +1').click());
+    await settle(() => expect(seam().nodes).toBe(5));
+
+    await act(async () => button('Call order').click());
+    expect(heading()).toBe('Calls of n1 · 2 calls');
+    expect(steps()).toEqual(['n1 --CALLS--> n5', 'n1 --CALLS--> n2']);
+    expect([...scene.highlighted ?? []].sort()).toEqual([1, 2, 5]);
+    expect(scene.path).toMatchObject({ active: 0, labels: 'active' });
+    await act(async () => button('Next').click());
+    expect(scene.path?.active).toBe(1);
+
+    host.querySelector<HTMLDetailsElement>('.atlas-graph-path-picker')!.open = true;
+    const target = [...host.querySelectorAll<HTMLButtonElement>('.atlas-graph-path-menu li button')]
+        .find(entry => entry.querySelector('strong')?.textContent === 'n4')!;
+    await act(async () => target.click());
+    expect(heading()).toBe('Path to n4 · 2 hops');
+    expect(steps()).toEqual(['n1 --CALLS--> n2', 'n2 --CALLS--> n4']);
+    expect([...scene.highlighted ?? []].sort()).toEqual([1, 2, 4]);
+    expect(scene.path).toMatchObject({ active: 0, labels: 'all' });
+    expect(seam().nodes).toBe(5);
+
+    await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
+    expect(host.querySelector('[data-testid="atlas-galaxy-path-panel"]')).toBeNull();
+    expect(scene.path).toBeUndefined();
+
+    // Incoming: the path walks the CALLS edge backwards and says so.
+    const direction = (value: string) => act(async () => {
+        const select = host.querySelector<HTMLSelectElement>('select[aria-label="Trace direction"]')!;
+        select.value = value; select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await direction('inbound');
+    await settle(() => expect(seam().nodes).toBe(2));
+    host.querySelector<HTMLDetailsElement>('.atlas-graph-path-picker')!.open = true;
+    const caller = [...host.querySelectorAll<HTMLButtonElement>('.atlas-graph-path-menu li button')]
+        .find(entry => entry.querySelector('strong')?.textContent === 'n3')!;
+    await act(async () => caller.click());
+    expect(heading()).toBe('Path to n3 · 1 hop');
+    expect(steps()).toEqual(['n1 <--CALLS-- n3']);
+    // A new trace direction is a new scope: the path view returns to the normal picture.
+    await direction('outbound');
+    expect(host.querySelector('[data-testid="atlas-galaxy-path-panel"]')).toBeNull();
 });

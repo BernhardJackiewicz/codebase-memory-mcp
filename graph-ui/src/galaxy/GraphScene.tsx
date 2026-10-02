@@ -96,6 +96,9 @@
  *     Scopes bekommen einen Ring und einen Namen, der immer zu sehen ist, und
  *     die Trennung auf dem Schirm schiebt sie nie weg. Ohne die Prop zeichnet
  *     die Szene wie vorher.
+ * 18. Neu (Review-Call 2026-10-02): die Prop `path`. Ein Pfad oder eine
+ *     Aufrufreihe liegt mit beschrifteten Kanten ueber der Szene
+ *     (src/galaxy/PathLayer.tsx). Ohne die Prop zeichnet die Szene wie vorher.
  */
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -110,6 +113,7 @@ import { HaloLayer } from './HaloLayer';
 import { EdgeLines } from './EdgeLines';
 import { NodeLabels } from './NodeLabels';
 import { ScreenNodeSeparation } from './ScreenNodeSeparation';
+import { PathLayer, type ScenePath } from './PathLayer';
 import type { LabelBox } from './NodeLabels';
 import { FRAME_MIN_DISTANCE, containShift, fitCamera, flatBounds, frameDistance, orthographicZoom } from './camera-frame';
 import type { CameraFit, FrameBox } from './camera-frame';
@@ -813,6 +817,8 @@ interface GraphSceneProps {
     frameCap?: number;
     /* Die Wurzeln des gewaehlten Scopes (Aenderung 17). */
     rootIds?: ReadonlySet<number>;
+    /* Ein Pfad oder eine Aufrufreihe ueber der Szene (Aenderung 18). */
+    path?: ScenePath;
 }
 
 export type { CameraTarget };
@@ -852,6 +858,7 @@ export function GraphScene({
     labelDistanceFactor = 0,
     frameCap = 0,
     rootIds,
+    path,
 }: GraphSceneProps) {
     const [hovered, setHovered] = useState<GraphNode | null>(null);
     const [hoveredShadow, setHoveredShadow] = useState<CoverageShadowNode | null>(null);
@@ -1016,6 +1023,7 @@ export function GraphScene({
             )}
             {landmarks && <HaloLayer nodes={renderedCode} />}
             {rootNodes.length > 0 && <RootMarkers nodes={rootNodes} />}
+            {path !== undefined && <PathLayer nodes={renderedCode} path={path} />}
 
             {renderedShadow && renderedShadow.nodes.length > 0 && <group>
                 {drawEdges && <CoverageShadowEdges shadow={renderedShadow} brightness={display.edgeBrightness} />}
