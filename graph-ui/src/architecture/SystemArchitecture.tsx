@@ -2,7 +2,8 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import type { GraphData, GraphNode } from '../galaxy/types';
 import { useSelectionEvidence, type SelectionEvidenceListener } from '../galaxy/selection-evidence';
 import { loadSystemArchitecture, type SystemArchitectureLoader, type SystemArchitectureResponse, type SystemProjection, type SystemSymbol, type SystemWitness, type SystemCallEvidence } from './system-architecture-source';
-import { componentBasis, isContiguousPath, systemOverviewGraph, systemComponents, type SystemSceneEdge, type SystemSceneModel } from './system-architecture-model';
+import { componentBasis, isContiguousPath, projectionLimits, projectionUnavailable, systemOverviewGraph, systemComponents, type SystemSceneEdge, type SystemSceneModel } from './system-architecture-model';
+import { architectureText as text } from './strings';
 import { connectionLoad } from '../graph/connection-load';
 import BehaviorJourney from './BehaviorJourney';
 import './system-architecture.css';
@@ -14,6 +15,12 @@ export interface SystemArchitectureProps {
     onSelectionEvidence?: SelectionEvidenceListener;
     onNavigate: (path: string, line?: number, name?: string) => void;
     loader?: SystemArchitectureLoader;
+}
+
+/** A limited or empty projection explains itself with the warnings that limited it. */
+function UnavailableProjection({ limits }: { limits: string[] }) {
+    return <div className="system-scene-empty" role="status" data-limited={limits.length > 0}>
+        <strong>{limits.length ? text.projectionLimited : text.projectionEmpty}</strong>{limits.map(limit => <p key={limit}>{limit}</p>)}</div>;
 }
 
 function EvidenceSource({ symbol, onOpen }: { symbol: SystemSymbol; onOpen: (symbol: SystemSymbol) => void }) {
@@ -294,9 +301,11 @@ export default function SystemArchitecture({ project, generation, view, filter, 
                         <div className="system-view-switch" role="group" aria-label="System camera"><button aria-pressed={!planar} onClick={() => setPlanar(false)}>3D</button><button aria-pressed={planar} onClick={() => setPlanar(true)}>Plan</button></div>
                     </div>
                     <div className="system-workspace"><div className="system-map">
+                        {/* The reason for an empty projection outranks any filter that would also find nothing. */}
                         {model.nodes.length ? <Suspense fallback={<div className="system-scene-empty">Preparing 3D view…</div>}><Scene model={model} selectedNode={selectedSceneNode} selectedEdge={selection?.edge}
                             onSelectNode={selectNode} onSelectEdge={selectEdge} onExpandNode={id => { toggleGroup(id); focus(id); }} onClearSelection={clearSelection} highlightedPathIndex={view === 'behavior' ? highlightedPathIndex : undefined} resetKey={resetKey} planar={planar} active={active} showConnectionLoad={showConnectionLoad} /></Suspense>
-                            : <div className="system-scene-empty">{view === 'behavior' ? filter ? 'No source paths match this filter. Clear it to see the entry point’s returned paths.' : 'No connected source path is available for this entry point.' : cyclesOnly ? 'No component cycles match the current filters in the returned analysis.' : filter ? 'No matching components. Try a broader filter or include unconnected components.' : data.components.length && !includeUnconnected ? 'No connected components match the current view. Change the connection filter or include unconnected components.' : 'No component projection is available within this analysis budget.'}</div>}
+                            : view === 'structure' && projectionUnavailable(data) ? <UnavailableProjection limits={projectionLimits(data)} />
+                            : <div className="system-scene-empty">{view === 'behavior' ? filter ? 'No source paths match this filter. Clear it to see the entry point’s returned paths.' : 'No connected source path is available for this entry point.' : cyclesOnly ? 'No component cycles match the current filters in the returned analysis.' : filter ? 'No matching components. Try a broader filter or include unconnected components.' : data.components.length && !includeUnconnected ? 'No connected components match the current view. Change the connection filter or include unconnected components.' : text.projectionEmpty}</div>}
                         <div className="system-map-caption"><span>{view === 'behavior' ? 'Arrows are indexed calls, not an execution timeline.' : 'Select to inspect · expand a group for its members'}{showConnectionLoad ? ' · rings show link load' : ''}</span>
                             <button onClick={() => setResetKey(value => value + 1)}>Fit view</button></div>
                     </div><aside className="system-inspector" aria-label="System evidence inspector">

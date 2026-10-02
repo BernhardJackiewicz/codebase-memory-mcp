@@ -75,4 +75,6 @@ export const architectureText = {
     focusGroup: (name: string) => `Show relationships for ${name}`,
     groupStats: (symbols: number) => `${symbols.toLocaleString()} symbols`,
     cohesion: (value: number) => `${Math.round(value * 100)}% cohesion`,
+    projectionLimited: 'The analysis returned no system structure for this project.',
+    projectionEmpty: 'No component projection is available within this analysis budget.',
 };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isContiguousPath, rankSystemPaths, systemBehaviorGraph, systemComponentGraph, systemOverviewGraph, systemBehaviorOverviewGraph } from './system-architecture-model';
+import { isContiguousPath, projectionLimits, projectionUnavailable, rankSystemPaths, systemBehaviorGraph, systemComponentGraph, systemOverviewGraph, systemBehaviorOverviewGraph } from './system-architecture-model';
 import type { SystemComponent, SystemDependency, SystemPath, SystemProjection, SystemSymbol } from './system-architecture-source';
 
 const symbol = (id: number, component = 'app'): SystemSymbol => ({ id, name: `f${id}`, qualified_name: `app.f${id}`, label: 'Function', component_id: component, file_path: `src/${component}.ts`, start_line: id });
@@ -20,6 +20,22 @@ const overviewProjection = (ids: string[], dependencies: SystemDependency[]): Sy
             file_count: 1, component_ids: [`component-${id}`], representatives: [] })),
         components, connections: dependencies, totals: { groups: ids.length, components: ids.length }, limits: { omitted_connections: 0 } } };
 };
+
+describe('projection limits', () => {
+    it('drops only the two standing caveats and keeps every other or reworded warning', () => {
+        const data = projection([component('app')]);
+        data.warnings = ['Component candidates are inferred from indexed declarations and interactions.', 'Paths are bounded static witnesses, not observed executions.',
+            'Graph exceeds the node budget; no sampled architecture was inferred.', 'Component candidates may be inferred differently in a future version.'];
+        expect(projectionLimits(data)).toEqual(['Graph exceeds the node budget; no sampled architecture was inferred.', 'Component candidates may be inferred differently in a future version.']);
+    });
+    it('treats a limited answer or one without groups as unavailable, independent of filters', () => {
+        expect(projectionUnavailable(projection([component('app')]))).toBe(false);
+        expect(projectionUnavailable({ ...projection([component('app')]), status: 'limited' })).toBe(true);
+        expect(projectionUnavailable(projection([]))).toBe(true);
+        expect(projectionUnavailable({ ...projection([component('app')]), overview: { complete: false, grouping_basis: 'common_source_directory_aggregate',
+            groups: [], components: [], connections: [], totals: {}, limits: {} } })).toBe(true);
+    });
+});
 
 describe('persistent system overview', () => {
     it('keeps directory siblings on a shared platform without assigning execution order', () => {

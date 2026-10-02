@@ -73,7 +73,8 @@
 .system-path-list li > span { color: var(--atlas-dim); font-size: 10px; }
 .system-scene-empty, .system-analysis-state { display: flex; align-items: center; justify-content: center; text-align: center; flex-direction: column; gap: 12px; height: 100%; min-height: 260px; padding: 30px; color: var(--atlas-dim); }
 .system-analysis-state { border: 1px solid var(--atlas-line); border-radius: 12px; }
-.system-analysis-state strong { color: var(--atlas-fg); font-weight: 500; }
+.system-analysis-state strong, .system-scene-empty[data-limited] strong { color: var(--atlas-fg); font-weight: 500; }
+.system-scene-empty[data-limited="true"] p { color: var(--atlas-fg); max-width: 560px; }
 .system-progress { width: 26px; height: 26px; border: 1px solid #869f9638; border-top-color: #a0b6aa; border-radius: 50%; animation: system-progress-turn 1.3s linear infinite; }
 @keyframes system-progress-turn { to { transform: rotate(360deg); } }
 .system-architecture .system-scene-node-label { display: grid; align-content: center; gap: 0; width: 96px; height: 28px; min-height: 0; box-sizing: border-box; margin: 0; background: #101816ec; color: #c0cec7; border: 1px solid #78928638; border-radius: 6px; padding: 6px 7px; text-align: center; line-height: 14px; font-family: var(--atlas-ui-font, system-ui, sans-serif); box-shadow: 0 2px 8px #0002; }
