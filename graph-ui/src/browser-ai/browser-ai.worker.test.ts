@@ -8,6 +8,7 @@ const fake = vi.hoisted(() => ({
     generate: vi.fn(),
     tokenizerLoad: vi.fn(),
     modelLoad: vi.fn(),
+    ngramInputs: [] as bigint[][][],
     env: { remotePathTemplate: '{model}/resolve/{revision}/', useWasmCache: true, fetch: undefined as typeof fetch | undefined, backends: { onnx: { wasm: {} } } },
 }));
 vi.mock('@huggingface/transformers', () => ({
@@ -21,7 +22,18 @@ vi.mock('@huggingface/transformers', () => ({
     },
     TextStreamer: class {
         callback: (chunk: string) => void;
-        constructor(_tokenizer: unknown, options: { callback_function: (chunk: string) => void }) { this.callback = options.callback_function; }
+        token: (tokens?: bigint[]) => void;
+        constructor(_tokenizer: unknown, options: { callback_function: (chunk: string) => void; token_callback_function: (tokens?: bigint[]) => void }) {
+            this.callback = options.callback_function; this.token = options.token_callback_function;
+        }
+    },
+    NoRepeatNGramLogitsProcessor: class {
+        constructor(public no_repeat_ngram_size: number) {}
+        _call(inputIds: bigint[][], logits: unknown) { fake.ngramInputs.push(inputIds); return logits; }
+    },
+    LogitsProcessorList: class {
+        processors: unknown[] = [];
+        push(item: unknown) { this.processors.push(item); }
     },
 }));
 
@@ -30,7 +42,7 @@ let fetchMock: ReturnType<typeof vi.fn>;
 const send = (request: BrowserWorkerRequest) => scope.onmessage!({ data: request } as MessageEvent<BrowserWorkerRequest>);
 const replies = (): BrowserWorkerResponse[] => scope.postMessage.mock.calls.map(call => call[0]);
 beforeEach(async () => {
-    vi.resetModules(); vi.clearAllMocks(); fake.count = 23;
+    vi.resetModules(); vi.clearAllMocks(); fake.count = 23; fake.ngramInputs = [];
     fake.env.useWasmCache = true; // Transformers.js 4 default in browsers with Cache Storage.
     fake.env.remotePathTemplate = '{model}/resolve/{revision}/';
     delete (fake.env.backends.onnx as { webgpu?: unknown }).webgpu;
@@ -100,19 +112,43 @@ describe('browser generation worker', () => {
         expect(fake.generate).not.toHaveBeenCalled();
     });
 
-    it('applies bounded repetition controls only to the automatic explanation profile', async () => {
+    it('applies repetition controls to automatic explanations and manual chat, checking n-grams against the answer only', async () => {
         await send({ id: 1, kind: 'prepare' });
         const messages = [{ role: 'user' as const, content: 'Explain' }];
+        type Processor = { no_repeat_ngram_size: number; _call(ids: bigint[][], logits: unknown): unknown };
+        const processor = () => (fake.generate.mock.calls.at(-1)![0] as { logits_processor: { processors: Processor[] } }).logits_processor.processors;
         await send({ id: 2, kind: 'chat', messages, generationProfile: 'automatic-explanation' });
-        expect(fake.generate).toHaveBeenLastCalledWith(expect.objectContaining({
-            max_new_tokens: 128, do_sample: false, repetition_penalty: 1.1, no_repeat_ngram_size: 6,
-        }));
+        expect(fake.generate).toHaveBeenLastCalledWith(expect.objectContaining({ max_new_tokens: 128, do_sample: false, repetition_penalty: 1.1 }));
+        expect(processor().map(item => item.no_repeat_ngram_size)).toEqual([6]);
         expect(replies().at(-1)).toMatchObject({ id: 2, kind: 'answer', output: 'A reply.' });
         await send({ id: 3, kind: 'chat', messages });
         const ordinary = fake.generate.mock.calls.at(-1)![0];
-        expect(ordinary).toMatchObject({ max_new_tokens: 512, do_sample: false });
-        expect(ordinary).not.toHaveProperty('repetition_penalty');
+        expect(ordinary).toMatchObject({ max_new_tokens: 512, do_sample: false, repetition_penalty: 1.1 });
+        // Built-in n-gram blocking would also count the prompt and garble quoted names.
         expect(ordinary).not.toHaveProperty('no_repeat_ngram_size');
+        expect(processor().map(item => item.no_repeat_ngram_size)).toEqual([20]);
+        const prompt = Array.from({ length: fake.count }, (_, index) => BigInt(index));
+        processor()[0]._call([[...prompt, 7n, 8n, 9n]], 'logits');
+        expect(fake.ngramInputs.at(-1)).toEqual([[7n, 8n, 9n]]);
+    });
+
+    it('reports whether an answer ended at the output limit, at the end of sequence, or on Stop', async () => {
+        fake.modelLoad.mockResolvedValue({ generate: fake.generate, generation_config: { eos_token_id: [2, 3] } });
+        await send({ id: 1, kind: 'prepare' });
+        const messages = [{ role: 'user' as const, content: 'List' }];
+        const emit = (tokens: number, last = 7n) => async ({ streamer }: { streamer: { callback: (chunk: string) => void; token: (tokens?: bigint[]) => void } }) => {
+            for (let index = 0; index < tokens; index++) { streamer.token([index + 1 === tokens ? last : 9n]); streamer.callback('x'); }
+        };
+        fake.generate.mockImplementationOnce(emit(64));
+        await send({ id: 2, kind: 'chat', messages, maxOutputTokens: 64 });
+        expect(replies().at(-1)).toEqual({ id: 2, kind: 'answer', output: 'x'.repeat(64), stopReason: 'length' });
+        fake.generate.mockImplementationOnce(emit(10));
+        await send({ id: 3, kind: 'chat', messages, maxOutputTokens: 64 });
+        expect(replies().at(-1)).toEqual({ id: 3, kind: 'answer', output: 'x'.repeat(10), stopReason: 'eos' });
+        // The streamer also receives the end-of-sequence token; ending on the last allowed token is not a cut.
+        fake.generate.mockImplementationOnce(emit(64, 3n));
+        await send({ id: 4, kind: 'chat', messages, maxOutputTokens: 64 });
+        expect(replies().at(-1)).toEqual({ id: 4, kind: 'answer', output: 'x'.repeat(64), stopReason: 'eos' });
     });
 
     it('rejects unknown profiles and oversized automatic answers without invalidating the model', async () => {
@@ -217,7 +253,7 @@ describe('browser generation worker', () => {
         expect(fake.template).toHaveBeenLastCalledWith(messages, expect.objectContaining({ truncation: false, enable_thinking: false, add_generation_prompt: true }));
         expect(fake.generate).toHaveBeenCalledWith(expect.objectContaining({ input_ids: expect.objectContaining({ dims: [1, 7680] }), max_new_tokens: 512, do_sample: false }));
         expect(replies().filter(reply => reply.kind === 'token').map(reply => reply.output)).toEqual(['A ', 'reply.']);
-        expect(replies().at(-1)).toEqual({ id: 3, kind: 'answer', output: 'A reply.' });
+        expect(replies().at(-1)).toEqual({ id: 3, kind: 'answer', output: 'A reply.', stopReason: 'eos' });
         fake.count = 7681; fake.generate.mockClear();
         await send({ id: 4, kind: 'chat', messages });
         expect(fake.generate).not.toHaveBeenCalled();
@@ -236,7 +272,7 @@ describe('browser generation worker', () => {
         await send({ id: 1, kind: 'stop' }); expect(criteria.interrupted).toBe(false);
         await send({ id: 2, kind: 'stop' }); expect(criteria.interrupted).toBe(true);
         complete(); await generating;
-        expect(replies().at(-1)).toEqual({ id: 2, kind: 'answer', output: 'Partial' });
+        expect(replies().at(-1)).toEqual({ id: 2, kind: 'answer', output: 'Partial', stopReason: 'interrupted' });
         await send({ id: 3, kind: 'chat', messages: [{ role: 'user', content: 'second' }] });
         expect(fake.modelLoad).toHaveBeenCalledOnce();
         expect(criteria.interrupted).toBe(false);

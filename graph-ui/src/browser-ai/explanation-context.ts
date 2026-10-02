@@ -1,4 +1,6 @@
 import { snapshotReaderContext, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatSource } from './chat-model';
+import { fairShares, readGalaxyEvidence, relationshipLine, scopeSentence, selectionSentence, sideLoaded, type GalaxyEvidence } from './galaxy-evidence';
+import { relationshipWords } from './strings';
 
 export interface ExplanationEvidence {
     id: string;
@@ -14,6 +16,8 @@ export interface PreparedExplanationContext {
     fallback: string;
     /** Human-readable strings only; callers must still count the final model tokens. */
     characterCount: number;
+    /** Set when the prompt could not name every related symbol the evidence carried: scope size and how many are named. */
+    capacity?: { nodes: number; edges: number; shown: number };
 }
 
 const record = (value: unknown): Record<string, unknown> | undefined => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -146,7 +150,15 @@ function graphFacts(value: unknown, name: string, maxCharacters: number): string
     return lines.join('\n');
 }
 
-interface GraphPreparation { facts: string[]; limitations: string[] }
+/** A fact renders itself into a character budget. Relationship facts count the
+ * names the snapshot carried and how many fit, so a bounded prompt can say how
+ * much it left out. */
+interface GraphFact { natural: number; render(budget: number): { text: string; listed?: number; available?: number } }
+interface GraphPreparation { facts: GraphFact[]; limitations: string[]; scope?: { nodes: number; edges: number } }
+
+function fixedFact(fact: string): GraphFact {
+    return { natural: fact.length, render: budget => ({ text: fitGraphFact(fact, budget) }) };
+}
 
 function fitGraphFact(fact: string, budget: number): string {
     if (fact.length <= budget) return fact;
@@ -162,10 +174,54 @@ function fitGraphFact(fact: string, budget: number): string {
     return '';
 }
 
+/** Relationships of one side: complete totals first, then each edge type with as
+ * many names as its fair share of the budget holds, then "+N more". */
+function relationshipFact(galaxy: GalaxyEvidence, side: 'incoming' | 'outgoing'): GraphFact {
+    const words = relationshipWords.en, groups = galaxy.relationships[side];
+    const total = groups.reduce((sum, group) => sum + group.count, 0);
+    const available = groups.reduce((sum, group) => sum + group.files.reduce((names, file) => names + file.symbols.length, 0), 0);
+    const empty = !sideLoaded(galaxy, side) ? (side === 'incoming' ? words.incomingNotLoaded : words.outgoingNotLoaded)
+        : !groups.length ? (galaxy.truncated ? words.cut(side) : side === 'incoming' ? words.noIncoming : words.noOutgoing) : undefined;
+    const header = side === 'incoming' ? words.incoming(total, galaxy.relationships.incomingSymbols)
+        : words.outgoing(total, galaxy.relationships.outgoingSymbols);
+    const render = (budget: number) => {
+        if (empty) return { text: empty.length <= budget ? empty : '' };
+        if (header.length > budget) return { text: '', listed: 0, available };
+        const natural = groups.map(group => relationshipLine(group, side, Infinity, words).text.length + 1);
+        const shares = fairShares(natural, budget - header.length);
+        const lines = groups.map((group, index) => relationshipLine(group, side, shares[index] - 1, words));
+        const omittedTypes = lines.filter(item => !item.text).length;
+        const note = omittedTypes ? words.moreTypes(omittedTypes) : '';
+        const text = [header, ...lines.filter(item => item.text).map(item => item.text)].join('\n');
+        return { text: note && text.length + note.length + 1 <= budget ? `${text}\n${note}` : text,
+            listed: lines.reduce((sum, item) => sum + item.listed, 0), available };
+    };
+    return { natural: render(Infinity).text.length, render };
+}
+
+/** Galaxy selections in words: what is selected, who relates to it in which
+ * direction, and how the scope was drawn. No snapshot field names or paths. */
+function galaxyFacts(galaxy: GalaxyEvidence): GraphPreparation {
+    const words = relationshipWords.en;
+    const counts = (items: { type: string; count: number }[]) => items.map(item => `${item.type} ${item.count}`).join(', ');
+    const further = [
+        ...galaxy.relationships.internal.length ? [words.internal(counts(galaxy.relationships.internal))] : [],
+        ...galaxy.relationships.beyond.length ? [words.beyond(counts(galaxy.relationships.beyond))] : [],
+    ].join('\n');
+    return {
+        facts: [fixedFact(selectionSentence(galaxy).join('\n')), fixedFact(scopeSentence(galaxy, words)),
+            relationshipFact(galaxy, 'incoming'), relationshipFact(galaxy, 'outgoing'), ...further ? [fixedFact(further)] : []],
+        limitations: ['Static graph relationships do not establish runtime execution or repository purpose.'],
+        scope: { nodes: galaxy.nodes, edges: galaxy.edges },
+    };
+}
+
 function graphEvidence(context: BrowserChatContext): GraphPreparation {
     // Producer snapshots are already bounded. Refuse arbitrary giant input before
     // parsing it; a malformed/foreign envelope is never treated as graph evidence.
     if (context.text.length > 128_000) return { facts: [], limitations: ['Graph snapshot exceeds the supported evidence size; graph facts unavailable.'] };
+    const galaxy = readGalaxyEvidence(context.text);
+    if (galaxy) return galaxyFacts(galaxy);
     let parsed: Record<string, unknown> | undefined;
     try { parsed = record(JSON.parse(context.text)); } catch { /* Report unsupported data below. */ }
     const evidence = record(parsed?.evidence);
@@ -184,7 +240,7 @@ function graphEvidence(context: BrowserChatContext): GraphPreparation {
         graphFacts(evidence.selected, 'Selected', 1400),
         graphFacts(evidence.relationships, 'Relationships', 1400),
         graphFacts(evidence.scope, 'Scope', 500),
-    ].filter(Boolean);
+    ].filter(Boolean).map(fixedFact);
     return { facts, limitations: limits };
 }
 
@@ -213,19 +269,22 @@ export function prepareExplanationContext(reader?: BrowserChatReaderContext,
     if (code.omitted) desiredLimits.unshift(`${code.omitted} source characters omitted; ${source?.kind === 'file'
         ? 'sampled source regions, not the full file' : 'only a prefix of the selected source is included'}. Ranges identify the literal excerpts.`);
     const evidence = code.evidence;
-    let remaining = evidenceBudget - evidence.reduce((count, item) => count + item.text.length, 0);
-    let omittedFacts = 0;
+    const remaining = evidenceBudget - evidence.reduce((count, item) => count + item.text.length, 0);
+    let omittedFacts = 0, listed = 0, available = 0;
     const facts = selectedGraphs.flatMap(prepared => prepared.facts);
-    for (let index = 0; index < facts.length; index++) {
-        // Leave room for relationships as well as selected identity. Compact
-        // complete fact lines; never silently cut a quoted field into a new fact.
-        const fact = fitGraphFact(facts[index], Math.floor(remaining / (facts.length - index)));
-        if (fact) {
-            evidence.push({ id: `graph-${evidence.filter(item => item.source === 'graph').length + 1}`, text: fact, source: 'graph' });
-            remaining -= fact.length;
-        } else omittedFacts++;
-    }
+    // Leave room for relationships as well as selected identity: short facts stay
+    // whole and long ones share the rest. Never silently cut a quoted field.
+    const shares = fairShares(facts.map(fact => fact.natural), remaining);
+    facts.forEach((fact, index) => {
+        const rendered = fact.render(shares[index]);
+        listed += rendered.listed ?? 0; available += rendered.available ?? 0;
+        if (rendered.text) evidence.push({ id: `graph-${evidence.filter(item => item.source === 'graph').length + 1}`, text: rendered.text, source: 'graph' });
+        else omittedFacts++;
+    });
     if (omittedFacts) desiredLimits.splice(code.omitted ? 1 : 0, 0, `${omittedFacts} graph fact groups omitted from this explanation.`);
+    const scope = selectedGraphs.find(prepared => prepared.scope)?.scope;
+    // Only the prompt budget is the model's capacity; the snapshot's own name bound is not.
+    const capacity = scope && listed < available ? { ...scope, shown: listed } : undefined;
     const limitations: string[] = [];
     let limitRemaining = limitBudget;
     for (let index = 0; index < desiredLimits.length; index++) {
@@ -241,5 +300,5 @@ export function prepareExplanationContext(reader?: BrowserChatReaderContext,
     }
     const characterCount = label.length + fallback.length + evidence.reduce((count, item) => count + item.text.length, 0)
         + limitations.reduce((count, item) => count + item.length, 0);
-    return { label, evidence, limitations, fallback, characterCount };
+    return { label, evidence, limitations, fallback, characterCount, ...capacity ? { capacity } : {} };
 }

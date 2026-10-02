@@ -89,28 +89,34 @@ describe('AtlasChrome', () => {
         expect(onOpenConfig).not.toHaveBeenCalled();
     });
 
-    it('shows the selected model subtly in the agent status button and opens its configuration directly', async () => {
+    it('shows a robot with a status lamp and keeps the model name in the tooltip and the label', async () => {
         const settings = vi.fn(), toggle = vi.fn();
         await render(props({ agentState: 'active', agentModelName: 'Qwen 3.5 0.8B', onOpenBrowserAi: settings, onToggleBrowserAi: toggle }));
-        const button = container.querySelector<HTMLButtonElement>('[aria-label="Local agent settings"]')!;
-        expect(button.textContent).toContain('Agent active');
-        expect(button.querySelector('small')?.textContent).toBe('Qwen 3.5 0.8B');
+        const button = container.querySelector<HTMLButtonElement>('.atlas-browser-ai-action')!;
+        expect(button.textContent).toBe('');
+        expect(button.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+        expect(button.querySelector(':scope > span[aria-hidden="true"]')).not.toBeNull();
+        expect(button.dataset.state).toBe('active');
+        expect(button.getAttribute('aria-label')).toBe('Local agent settings: Agent active, Qwen 3.5 0.8B');
+        expect(button.title).toBe('Agent active · Qwen 3.5 0.8B. Configure the browser-local agent.');
         await act(async () => button.click());
         expect(settings).toHaveBeenCalledOnce();
         expect(toggle).not.toHaveBeenCalled();
         expect(container.querySelector('[role="menu"]')).toBeNull();
     });
 
-    it('omits the model label when no model is selected', async () => {
+    it('omits the model from the label when no model is selected', async () => {
         await render(props({ agentState: 'off', onOpenBrowserAi: vi.fn() }));
-        expect(container.querySelector('.atlas-agent-model-name')).toBeNull();
+        expect(container.querySelector('.atlas-browser-ai-action')?.getAttribute('aria-label')).toBe('Local agent settings: Agent off');
     });
 
-    it.each([['off', 'Enable agent'], ['active', 'Agent active'], ['busy', 'Agent working'], ['loading', 'Agent loading'], ['error', 'Agent error']] as const)('shows truthful local agent state %s and opens settings beside the project', async (agentState, label) => {
+    it.each([['off', 'Agent off'], ['active', 'Agent active'], ['busy', 'Agent working'], ['loading', 'Agent loading'], ['error', 'Agent error']] as const)('shows truthful local agent state %s and opens settings beside the project', async (agentState, label) => {
         const settings = vi.fn();
         await render(props({ agentState, onOpenBrowserAi: settings, projectSwitcher: <button>Project</button> }));
-        const button = container.querySelector<HTMLButtonElement>('[aria-label="Local agent settings"]')!;
-        expect(button.textContent).toBe(label);
+        const button = container.querySelector<HTMLButtonElement>('.atlas-browser-ai-action')!;
+        expect(button.dataset.state).toBe(agentState);
+        expect(button.getAttribute('aria-label')).toBe(`Local agent settings: ${label}`);
+        expect(button.title).toContain(label);
         expect(button.parentElement?.previousElementSibling?.textContent).toBe('Project');
         await act(async () => button.click());
         expect(settings).toHaveBeenCalledOnce();
@@ -124,7 +130,7 @@ describe('AtlasChrome', () => {
         expect(group?.querySelectorAll('button')).toHaveLength(2);
         const draft = container.querySelector<HTMLInputElement>('[aria-label="Chat draft"]')!;
         draft.value = 'retained draft';
-        const settingsButton = group?.querySelector<HTMLButtonElement>('[aria-label="Local agent settings"]')!;
+        const settingsButton = group?.querySelector<HTMLButtonElement>('.atlas-browser-ai-action')!;
         const openButton = group?.querySelector<HTMLButtonElement>('[aria-label="Open chat"]')!;
         expect(openButton.getAttribute('aria-expanded')).toBe('false');
         await act(async () => settingsButton.click());

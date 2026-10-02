@@ -4,13 +4,18 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import BrowserChatDock, { type BrowserChatAttachment, type BrowserChatDockProps, type BrowserChatReaderContext } from './BrowserChatDock';
 import type { BrowserAiProgress, BrowserChatMessage } from './browser-ai-runtime';
+import type { BrowserChatOptions } from './browser-ai-controller';
 import { BROWSER_MODELS } from './model-policy';
+import { JSONB_AGG_CALLERS, jsonbAggEvidence, jsonbAggScope } from './galaxy-evidence.fixture';
+import { AGENT_PREFERENCES_KEY } from './agent-preferences';
 
 let container: HTMLDivElement;
 let root: Root;
 let renderedProps: BrowserChatDockProps;
 beforeEach(() => {
     (globalThis as unknown as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+    // Agent preferences persist in this browser; every test starts from the defaults.
+    window.localStorage.clear();
     container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); });
@@ -22,7 +27,7 @@ function fixture() {
         prepare: vi.fn(async (_progress: (value: BrowserAiProgress) => void) => {}),
         explain: vi.fn(async () => 'Legacy'),
         countTokens: vi.fn(async (_messages: readonly BrowserChatMessage[]) => 100),
-        chat: vi.fn(async (_messages: readonly BrowserChatMessage[], _onToken: (chunk: string) => void) => 'Adds the two values.'),
+        chat: vi.fn(async (_messages: readonly BrowserChatMessage[], _onToken: (chunk: string) => void, _options?: BrowserChatOptions) => 'Adds the two values.'),
         stop: vi.fn(), dispose: vi.fn(),
     };
     const props = { proactive: false, open: true, onClose: vi.fn(), onAttachmentConsumed: vi.fn(), onAttachmentRemoved: vi.fn(), createRuntime: vi.fn(() => runtime), removeCache: vi.fn(async () => {}) };
@@ -333,7 +338,7 @@ describe('persistent local browser chat', () => {
 
     it('keeps ready reader source out of the composer without downloading or offering removal', async () => {
         const { props } = fixture();
-        const context = reader('Loaded excerpt'); context.source!.partial = 'Only lines 20–80 are loaded.';
+        const context = reader('Loaded excerpt'); context.source!.partial = 'Only lines 20-80 are loaded.';
         await render({ ...props, readerContext: context, attachment: { ...selection, text: 'IGNORED_MANUAL_CODE' } });
         expect(props.createRuntime).not.toHaveBeenCalled();
         expect(container.querySelector('[aria-label="Source for next message"]')).toBeNull();
@@ -729,7 +734,7 @@ describe('live-browser regressions', () => {
     afterEach(() => vi.useRealTimers());
     it('keeps a compact composer and places frozen source beside the manual answer speaker', async () => {
         const { props, runtime } = fixture();
-        const original = reader('ORIGINAL_SOURCE'); original.source!.partial = 'Only lines 3–4 were loaded.';
+        const original = reader('ORIGINAL_SOURCE'); original.source!.partial = 'Only lines 3-4 were loaded.';
         const pendingContext = { id: 'graph-source', label: 'Callers', text: 'entry calls original' };
         await render({ ...props, readerContext: original, pendingContext }); await click('Download & load');
         const textarea = container.querySelector('textarea')!;
@@ -744,7 +749,7 @@ describe('live-browser regressions', () => {
         expect(response.firstElementChild).toBe(source);
         expect(source.open).toBe(false);
         expect(source.querySelector('summary')?.textContent).toContain('Agentⓘ Source');
-        expect(source.textContent).toContain('Only lines 3–4 were loaded.');
+        expect(source.textContent).toContain('Only lines 3-4 were loaded.');
         expect(source.textContent).toContain('entry calls original');
         await act(async () => source.querySelector('summary')!.click());
         expect(source.open).toBe(true);
@@ -880,5 +885,274 @@ describe('live-browser regressions', () => {
         const request = runtime.chat.mock.calls[0][0];
         expect(request.reduce((sum, message) => sum + message.content.length, 0)).toBeLessThan(7000);
         expect(container.querySelector('[aria-label="Current selection explanation"]')?.textContent).toMatch(/excerpt|sample|omitted/i);
+    });
+});
+
+
+describe('graph answers and answer limits', () => {
+    it('answers a caller question from the loaded graph completely, without the model, and keeps it in history', async () => {
+        const { props, runtime } = fixture();
+        await render({ ...props, proactiveSelection: jsonbAggEvidence() }); await click('Download & load');
+        await type('Who calls JSONBAgg? List every caller and the edge type.'); await click('Send ↑');
+        expect(runtime.countTokens).not.toHaveBeenCalled();
+        expect(runtime.chat).not.toHaveBeenCalled();
+        const answer = container.querySelector('.cbm-chat-answer-text')!.textContent!;
+        for (const name of JSONB_AGG_CALLERS) expect(answer).toContain(name);
+        expect(answer).toMatch(/CALLS from 11/);
+        expect(answer).toMatch(/TESTS from 11/);
+        expect(answer).toMatch(/DEFINES from 1/);
+        expect(answer).toContain('not generated by the model');
+        expect(container.querySelector('.cbm-chat-answer .cbm-chat-source-content')?.textContent).toContain('Incoming relationships: 23 from 12 symbols.');
+        expect([...container.querySelectorAll('button')].some(item => item.textContent === 'Retry')).toBe(false);
+        expect(button('Ask the model')).toBeDefined();
+        expect(container.querySelector('textarea')?.value).toBe('');
+        await type('Which of them are tests?'); await click('Send ↑');
+        const request = runtime.chat.mock.calls[0][0];
+        expect(request.map(message => message.role)).toEqual(['system', 'user', 'assistant', 'user']);
+        expect(request[2].content).toContain('test_values_list');
+    });
+
+    it('hands a listed answer to the model on request, with its evidence and without the list as history', async () => {
+        const { props, runtime } = fixture();
+        await render({ ...props, proactiveSelection: jsonbAggEvidence() }); await click('Download & load');
+        await type('Who calls JSONBAgg?'); await click('Send ↑');
+        expect(runtime.chat).not.toHaveBeenCalled();
+        await click('Ask the model');
+        expect(runtime.chat).toHaveBeenCalledOnce();
+        const request = runtime.chat.mock.calls[0][0];
+        expect(request.map(message => message.role)).toEqual(['system', 'user']);
+        expect(request[1].content).toContain('Who calls JSONBAgg?');
+        expect(request[1].content).toContain('Incoming relationships: 23 from 12 symbols.');
+        expect(container.querySelectorAll('.cbm-chat-turn')).toHaveLength(1);
+        expect(container.querySelector('.cbm-chat-answer-text')?.textContent).toBe('Adds the two values.');
+        expect(button('Retry')).toBeDefined();
+    });
+
+    // 40 callers with long names in their own files: the snapshot names 24, a default prompt fewer.
+    const longCallers = () => {
+        const callers = Array.from({ length: 40 }, (_, index) => ({ id: 2000 + index, name: `caller_with_a_long_descriptive_name_number_${index}`, label: 'Function',
+            file_path: `tests/postgres_tests/callers/test_module_number_${index}.py`, x: 0, y: 0, z: 0, size: 1, color: '#999' }));
+        return jsonbAggEvidence({ edges: callers.map(caller => ({ source: caller.id, target: 32360, type: 'CALLS' })), nodes: callers });
+    };
+    const capacityNote = () => [...[...container.querySelectorAll('.cbm-chat-turn')].at(-1)?.querySelectorAll('.cbm-chat-answer-note') ?? []]
+        .map(item => item.textContent ?? '').find(note => note.includes('too large'));
+
+    it('marks an answer cut at the output token limit and shows the capacity of an oversized scope', async () => {
+        const { props, runtime } = fixture();
+        runtime.chat.mockImplementationOnce(async (_messages, _onToken, options) => {
+            options?.onComplete?.({ stopReason: 'length' }); return 'A long list that';
+        });
+        await render({ ...props, proactiveSelection: longCallers() }); await click('Download & load');
+        await type('Explain this class'); await click('Send ↑');
+        const notes = [...container.querySelectorAll('.cbm-chat-answer-note')].map(item => item.textContent);
+        expect(notes).toContain('Shortened (token limit)');
+        const capacity = notes.map(note => /^55 nodes \/ 40 edges: too large for the local Qwen2\.5 Coder 0\.5B model; showing (\d+)$/.exec(note ?? '')).find(Boolean);
+        expect(Number(capacity?.[1])).toBeGreaterThan(0);
+        expect(Number(capacity?.[1])).toBeLessThan(24);
+        expect(runtime.chat.mock.calls[0][0].at(-1)!.content).toMatch(/\+\d+ more/);
+    });
+
+    it('does not blame the model when only the snapshot bounds the names', async () => {
+        const { props, runtime } = fixture();
+        const many = Array.from({ length: 40 }, (_, index) => ({ source: 2000 + index, target: 32360, type: 'CALLS' }));
+        await render({ ...props, proactiveSelection: jsonbAggEvidence({ edges: many }) }); await click('Download & load');
+        await type('Explain this class'); await click('Send ↑');
+        expect(runtime.chat.mock.calls[0][0].at(-1)!.content).toContain('+16 more');
+        expect(capacityNote()).toBeUndefined();
+    });
+
+    it('gives a manual question more evidence when the input limit is raised', async () => {
+        const { props, runtime } = fixture();
+        await render({ ...props, proactiveSelection: longCallers() }); await click('Download & load');
+        await type('Explain this class'); await click('Send ↑');
+        const shown = (note?: string) => Number(/showing (\d+)$/.exec(note ?? '')?.[1] ?? 24);
+        const before = shown(capacityNote());
+        await models();
+        const input = document.querySelector<HTMLInputElement>('#cbm-chat-input-tokens')!;
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '6144');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+        await type('Explain this class'); await click('Send ↑');
+        expect(runtime.chat.mock.calls[1][0].at(-1)!.content.length).toBeGreaterThan(runtime.chat.mock.calls[0][0].at(-1)!.content.length);
+        expect(before).toBeLessThan(24);
+        expect(capacityNote()).toBeUndefined();
+    });
+
+    it('releases the loaded worker when another tab chooses another model', async () => {
+        const { props, runtime } = fixture(); await render(props); await click('Download & load');
+        const raw = JSON.stringify({ version: 1, preferences: { modelId: BROWSER_MODELS[1].id, automatic: true, limits: {} } });
+        await act(async () => {
+            window.localStorage.setItem(AGENT_PREFERENCES_KEY, raw);
+            window.dispatchEvent(new StorageEvent('storage', { key: AGENT_PREFERENCES_KEY }));
+        });
+        expect(runtime.dispose).toHaveBeenCalledOnce();
+        await models();
+        const select = document.querySelector<HTMLSelectElement>('#cbm-chat-model')!;
+        expect(select.value).toBe(BROWSER_MODELS[1].id);
+        expect([...select.options].some(option => option.textContent?.endsWith('Loaded'))).toBe(false);
+        expect(button('Download & load')).toBeDefined();
+    });
+
+    it('leaves the oldest history out when the input limit is exceeded and says so', async () => {
+        const { props, runtime } = fixture();
+        await render(props); await click('Download & load');
+        for (const question of ['First question', 'Second question', 'Third question']) { await type(question); await click('Send ↑'); }
+        runtime.countTokens.mockImplementation(async messages => messages.length > 4 ? 5000 : 100);
+        await type('Fourth question'); await click('Send ↑');
+        const request = runtime.chat.mock.calls.at(-1)![0];
+        expect(request.length).toBeLessThanOrEqual(4);
+        expect(request.at(-1)!.content).toBe('Fourth question');
+        expect(request.map(message => message.content).join('\n')).not.toContain('First question');
+        expect(container.querySelectorAll('.cbm-chat-answer-note')[0]?.textContent).toMatch(/earlier messages were left out to fit the input limit/);
+    });
+});
+
+
+describe('per-selection explanation cache', () => {
+    afterEach(() => vi.useRealTimers());
+    async function settleSelection() { await act(async () => { await vi.advanceTimersByTimeAsync(650); }); }
+    const card = () => container.querySelector('[aria-label="Current selection explanation"]')?.textContent ?? '';
+
+    it('shows the cached explanation when returning to a selection without running the model again', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        runtime.chat.mockResolvedValueOnce('JSONBAgg is called by its tests.').mockResolvedValueOnce('Two layers around JSONBAgg.');
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence() }); await click('Download & load');
+        await settleSelection(); expect(runtime.chat).toHaveBeenCalledOnce();
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence({ depth: 2 }) });
+        await settleSelection(); expect(runtime.chat).toHaveBeenCalledTimes(2);
+        expect(card()).toContain('Two layers around JSONBAgg.');
+        // Back to the first selection while its scope reloads, then once it is complete again.
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence({ state: 'loading-partial-preview' }) });
+        expect(card()).toContain('JSONBAgg is called by its tests.');
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence() });
+        await settleSelection();
+        expect(runtime.chat).toHaveBeenCalledTimes(2);
+        expect(runtime.countTokens).toHaveBeenCalledTimes(2);
+        expect(card()).toContain('JSONBAgg is called by its tests.');
+        expect(card()).not.toContain('Explaining selection');
+    });
+
+    it('starts an explanation only once the scope is complete', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        const preview = jsonbAggEvidence({ edges: jsonbAggScope().edges.slice(0, 3), state: 'loading-partial-preview' });
+        await render({ ...props, proactive: true, proactiveSelection: preview }); await click('Download & load');
+        await settleSelection();
+        expect(runtime.countTokens).not.toHaveBeenCalled();
+        expect(card()).toContain('Waiting for the complete scope');
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence() });
+        await settleSelection();
+        expect(runtime.chat).toHaveBeenCalledOnce();
+        expect(runtime.chat.mock.calls[0][0].at(-1)!.content).toContain('Incoming relationships: 23 from 12 symbols.');
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence({ state: 'partial' }) });
+        await settleSelection(); expect(runtime.chat).toHaveBeenCalledOnce();
+    });
+
+    it('explains again when a returning selection now carries other evidence, as after a re-index', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        runtime.chat.mockResolvedValueOnce('Before the re-index.').mockResolvedValueOnce('Two layers.').mockResolvedValueOnce('After the re-index.');
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence() }); await click('Download & load');
+        await settleSelection(); expect(card()).toContain('Before the re-index.');
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence({ depth: 2 }) }); await settleSelection();
+        // The same selection, loading and then complete, after a re-index removed a caller.
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence({ state: 'loading-partial-preview' }) });
+        expect(card()).toContain('Before the re-index.');
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence({ edges: jsonbAggScope().edges.slice(2) }) });
+        expect(card()).not.toContain('Before the re-index.');
+        await settleSelection();
+        expect(runtime.chat).toHaveBeenCalledTimes(3);
+        expect(card()).toContain('After the re-index.');
+    });
+
+    it('regenerates on request and keeps the cache bounded', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        let calls = 0; runtime.chat.mockImplementation(async () => `Explanation number ${++calls}.`);
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence() }); await click('Download & load');
+        await settleSelection(); expect(card()).toContain('Explanation number 1.');
+        await click('Explain again'); await settleSelection();
+        expect(card()).toContain('Explanation number 2.');
+        for (let depth = 2; depth <= 33; depth++) {
+            await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence({ depth }) }); await settleSelection();
+        }
+        expect(runtime.chat).toHaveBeenCalledTimes(34);
+        // 32 later selections pushed the first one out of the cache.
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence() }); await settleSelection();
+        expect(runtime.chat).toHaveBeenCalledTimes(35);
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence({ depth: 33 }) }); await settleSelection();
+        expect(runtime.chat).toHaveBeenCalledTimes(35);
+    });
+});
+
+
+describe('agent configuration limits', () => {
+    afterEach(() => vi.useRealTimers());
+    async function setLimit(id: string, value: number): Promise<void> {
+        const input = document.querySelector<HTMLInputElement>(`#${id}`)!;
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, String(value));
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+    }
+    const field = (id: string) => document.querySelector<HTMLInputElement>(`#${id}`);
+
+    it('offers input and output limits per model within the model policy', async () => {
+        const { props } = fixture(); await render(props); await models();
+        const [first] = BROWSER_MODELS;
+        expect(document.querySelector('.cbm-chat-token-limits legend')?.textContent).toBe(`Token limits for ${first.displayName}`);
+        expect(field('cbm-chat-input-tokens')).toMatchObject({ value: '2048', min: '512', max: String(first.contextTokens - first.maxOutputTokens) });
+        expect(field('cbm-chat-output-tokens')).toMatchObject({ value: String(first.maxOutputTokens), min: '32', max: String(first.maxOutputTokens) });
+        // Every default and every suggested value is a valid step, so the arrows reach them.
+        expect(field('cbm-chat-input-tokens')?.step).toBe('64');
+        expect(field('cbm-chat-output-tokens')?.step).toBe('32');
+        expect(field('cbm-chat-output-tokens')?.validity.stepMismatch).toBe(false);
+        await setLimit('cbm-chat-output-tokens', 99_999);
+        expect(field('cbm-chat-output-tokens')?.value).toBe(String(first.maxOutputTokens));
+        await setLimit('cbm-chat-output-tokens', 128);
+        expect(field('cbm-chat-input-tokens')?.max).toBe(String(first.contextTokens - 128));
+    });
+
+    it('keeps the chosen model, automatic explanations and limits across a reload', async () => {
+        const { props } = fixture(); await render({ ...props, proactive: true }); await models();
+        const [first, second] = BROWSER_MODELS;
+        await setLimit('cbm-chat-output-tokens', 256);
+        const select = document.querySelector<HTMLSelectElement>('#cbm-chat-model')!;
+        await act(async () => { select.value = second.id; select.dispatchEvent(new Event('change', { bubbles: true })); });
+        await setLimit('cbm-chat-input-tokens', 3072);
+        const automatic = [...document.querySelectorAll('label')].find(label => label.textContent?.includes('Explain selections automatically'))!.querySelector('input')!;
+        await act(async () => automatic.click());
+        await act(async () => root.unmount());
+        root = createRoot(container);
+        await render({ ...props, proactive: true }); await models();
+        expect(document.querySelector<HTMLSelectElement>('#cbm-chat-model')?.value).toBe(second.id);
+        expect(field('cbm-chat-input-tokens')?.value).toBe('3072');
+        expect(field('cbm-chat-output-tokens')?.value).toBe(String(second.maxOutputTokens));
+        expect([...document.querySelectorAll('label')].find(label => label.textContent?.includes('Explain selections automatically'))!.querySelector('input')!.checked).toBe(false);
+        const next = document.querySelector<HTMLSelectElement>('#cbm-chat-model')!;
+        await act(async () => { next.value = first.id; next.dispatchEvent(new Event('change', { bubbles: true })); });
+        expect(field('cbm-chat-output-tokens')?.value).toBe('256');
+    });
+
+    it('applies the limits to the manual chat budget and the output tokens it asks for', async () => {
+        const { props, runtime } = fixture(); await render(props); await models();
+        await setLimit('cbm-chat-output-tokens', 128); await setLimit('cbm-chat-input-tokens', 1024);
+        await click('Download & load');
+        runtime.countTokens.mockResolvedValueOnce(1500);
+        await type('Explain'); await click('Send ↑');
+        expect(runtime.chat).not.toHaveBeenCalled();
+        expect(container.textContent).toMatch(/the local working limit is 1\D?024\./);
+        await click('Send ↑');
+        expect(runtime.chat).toHaveBeenCalledOnce();
+        expect(runtime.chat.mock.calls[0][2]).toMatchObject({ maxOutputTokens: 128 });
+    });
+
+    it('bounds automatic explanations by the configured output limit', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        await render({ ...props, proactive: true, readerContext: reader('const value = 1;') }); await models();
+        await setLimit('cbm-chat-output-tokens', 64);
+        await click('Download & load');
+        await act(async () => { await vi.advanceTimersByTimeAsync(650); });
+        expect(runtime.chat.mock.calls[0][2]).toMatchObject({ maxOutputTokens: 64, generationProfile: 'automatic-explanation' });
     });
 });

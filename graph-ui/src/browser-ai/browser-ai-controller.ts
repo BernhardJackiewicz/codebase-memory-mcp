@@ -6,10 +6,14 @@ export interface BrowserAiRuntime {
     dispose(): void;
 }
 export interface BrowserChatMessage { role: 'system' | 'user' | 'assistant'; content: string }
+/** Why generation ended: the model finished, the output budget ran out, or Stop. */
+export type BrowserStopReason = 'eos' | 'length' | 'interrupted';
 export interface BrowserChatOptions {
     maxOutputTokens?: number;
-    /** Short prose summaries only; ordinary chat retains the model's generation defaults. */
+    /** Short prose summaries; ordinary chat gets milder repetition controls. */
     generationProfile?: 'automatic-explanation';
+    /** Called once with the reason before the answer resolves. Never sent to the worker. */
+    onComplete?: (result: { stopReason: BrowserStopReason }) => void;
 }
 export interface BrowserChatRuntime extends BrowserAiRuntime {
     countTokens(messages: readonly BrowserChatMessage[]): Promise<number>;

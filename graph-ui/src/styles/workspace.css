@@ -55,6 +55,8 @@
 .atlas-shell[data-workspace=galaxy] .atlas-body { grid-template-columns: minmax(0, 1fr); }
 .atlas-shell[data-workspace=galaxy] .atlas-side { display: flex; border-left: none; }
 .atlas-shell[data-workspace=galaxy] .atlas-galaxy { min-height: 0; height: 100%; border-top: none; }
+/* Selection details are placed against the galaxy stage, never against the grid that also holds the chat column. Fullscreen keeps its own fixed box. */
+.atlas-shell[data-workspace=galaxy] .atlas-galaxy:not([data-fullscreen='true']) { position: relative; }
 .atlas-shell[data-workspace=galaxy] .atlas-galaxy-head { padding: 12px 18px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; }
 .atlas-shell[data-workspace=galaxy] .atlas-galaxy-head-row { grid-column: 2; grid-row: 1; }
 .atlas-shell[data-workspace=galaxy] .atlas-galaxy-title { display: none; }

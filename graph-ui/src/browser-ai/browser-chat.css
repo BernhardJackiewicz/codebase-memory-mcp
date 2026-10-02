@@ -117,3 +117,4 @@
 .cbm-chat-evidence-label { display: block; font-size: 10px; color: var(--chat-muted); margin: 6px 0; }
 .cbm-chat-evidence-note { font-size: 11px; color: var(--chat-muted); margin: 8px 0 !important; }
 .cbm-chat-evidence-excerpt { max-height: 150px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px; border: 1px solid var(--chat-border); border-radius: 6px; font-size: 11px; }
+.cbm-chat-dock .cbm-chat-answer-note { display: block; margin-top: 7px; color: #d6bf81; font-size: 11px; overflow-wrap: anywhere; }

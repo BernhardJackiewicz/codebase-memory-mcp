@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildChatMessages, selectionLocation, snapshotAttachment, snapshotReaderContext, userMessage, type BrowserChatAttachment, type BrowserChatReaderContext, type BrowserChatTurn } from './chat-model';
+import { buildChatMessages, selectionLocation, snapshotAttachment, snapshotReaderContext, trimChatHistory, userMessage, type BrowserChatAttachment, type BrowserChatReaderContext, type BrowserChatTurn } from './chat-model';
 
 const source: BrowserChatAttachment = { id: 'selection-1', text: '\t partial(\r\n  a + b\n', path: 'src/math.ts', project: 'sample', startLine: 3, startColumn: 8, endLine: 5, endColumn: 1, sourceVersion: 'sha256:test' };
 const attached = (content: string) => JSON.parse(content.slice(content.indexOf('\n{') + 1).split('\n')[0]);
@@ -104,5 +104,15 @@ describe('browser chat context', () => {
         expect(messages[0].content).toContain(copy.source!.text);
         expect(copy.project).toBe(source.project);
         expect(copy.source?.path).toBe(source.path);
+    });
+
+    it('trims the oldest history first, at least one turn, until the excess is gone', () => {
+        const turn = (id: string, size: number): BrowserChatTurn => ({ id, prompt: 'q'.repeat(size), answer: 'a'.repeat(size), request: [], modelId: 'test', status: 'complete' });
+        const turns = [turn('oldest', 50), turn('middle', 50), turn('newest', 50)];
+        expect(trimChatHistory(turns, 0).map(item => item.id)).toEqual(['middle', 'newest']);
+        expect(trimChatHistory(turns, 150).map(item => item.id)).toEqual(['newest']);
+        expect(trimChatHistory(turns, 10_000)).toEqual([]);
+        const kept = trimChatHistory(turns, 100);
+        expect(buildChatMessages(kept, 'Now?').map(message => message.role)).toEqual(['system', 'user', 'assistant', 'user', 'assistant', 'user']);
     });
 });
