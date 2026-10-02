@@ -144,6 +144,8 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     const manualAttachment = readerContext === undefined ? attachment : undefined;
     const currentReader = snapshotReaderContext(readerContext);
     const runtime = useRef<BrowserChatRuntime | undefined>(undefined);
+    /** The model the worker was created for; the stored choice can change in another tab. */
+    const runtimeModel = useRef<string | undefined>(undefined);
     const epoch = useRef(0);
     const pending = useRef(false);
     const stopRequested = useRef(false);
@@ -192,6 +194,12 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     const agentState = phase === 'off' ? error ? 'error' : 'off' : phase === 'preparing' || phase === 'removing' ? 'loading' : phase === 'ready' ? 'active' : 'busy';
     useEffect(() => { onAgentStateChange?.(agentState); }, [agentState, onAgentStateChange]);
     useEffect(() => { onAgentModelChange?.(model.displayName); }, [model.displayName, onAgentModelChange]);
+    useEffect(() => {
+        // Explanations belong to the model that wrote them, and a model chosen elsewhere
+        // never answers on the worker of the previous one.
+        explanations.current.clear();
+        if (runtimeModel.current !== undefined && runtimeModel.current !== model.id) release();
+    }, [model.id]);
     useEffect(() => {
         if (settingsSeen.current !== settingsRequest) { settingsSeen.current = settingsRequest; setSettingsOpen(true); }
     }, [settingsRequest]);
@@ -305,7 +313,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         if (id) setTurns(previous => previous.map(turn => turn.id === id ? { ...turn, status: 'stopped' } : turn));
         epoch.current += 1; pending.current = false; activeTurn.current = undefined;
         stopRequested.current = false; setStopping(false);
-        runtime.current?.dispose(); runtime.current = undefined;
+        runtime.current?.dispose(); runtime.current = undefined; runtimeModel.current = undefined;
         setProgress(undefined); setPhase('off'); setRuntimeFailed(false);
     };
     const invalidateRuntime = (failure: unknown): void => {
@@ -321,7 +329,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         setError(undefined); setNotice(undefined); setPhase('preparing');
         try {
             const nextRuntime = createRuntime(model.id);
-            runtime.current = nextRuntime;
+            runtime.current = nextRuntime; runtimeModel.current = model.id;
             nextRuntime.setFatalHandler?.(failure => { if (runtime.current === nextRuntime) invalidateRuntime(failure); });
             await nextRuntime.prepare(value => { if (epoch.current === ticket) setProgress(value); });
             if (epoch.current !== ticket) return;
@@ -479,7 +487,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             {proactive && <label><input type="checkbox" checked={automatic} onChange={event => setPreferences({ automatic: event.target.checked })} /> Explain selections automatically</label>}
             <span className="cbm-chat-status" role="status">{status}</span>
             <label htmlFor="cbm-chat-model">Model</label>
-            <select id="cbm-chat-model" value={modelId} disabled={busy} onChange={event => { release(); explanations.current.clear(); setPreferences({ modelId: event.target.value }); setError(undefined); setNotice(undefined); }}>
+            <select id="cbm-chat-model" value={modelId} disabled={busy} onChange={event => { release(); setPreferences({ modelId: event.target.value }); setError(undefined); setNotice(undefined); }}>
                 {BROWSER_MODELS.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.displayName} · {candidate.availability === 'unsupported' ? 'Requires runtime support' : candidate.id === model.id && phase === 'ready' ? 'Loaded' : downloaded.has(candidate.id) ? 'Downloaded this session' : 'Available'}</option>)}
             </select>
             <p>{sizeLabel(model.bytes)} download · {model.license}. Memory use is higher.</p>

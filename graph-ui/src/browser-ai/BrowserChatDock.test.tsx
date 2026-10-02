@@ -7,6 +7,7 @@ import type { BrowserAiProgress, BrowserChatMessage } from './browser-ai-runtime
 import type { BrowserChatOptions } from './browser-ai-controller';
 import { BROWSER_MODELS } from './model-policy';
 import { JSONB_AGG_CALLERS, jsonbAggEvidence, jsonbAggScope } from './galaxy-evidence.fixture';
+import { AGENT_PREFERENCES_KEY } from './agent-preferences';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -958,6 +959,21 @@ describe('graph answers and answer limits', () => {
         await type('Explain this class'); await click('Send ↑');
         expect(runtime.chat.mock.calls[0][0].at(-1)!.content).toContain('+16 more');
         expect(capacityNote()).toBeUndefined();
+    });
+
+    it('releases the loaded worker when another tab chooses another model', async () => {
+        const { props, runtime } = fixture(); await render(props); await click('Download & load');
+        const raw = JSON.stringify({ version: 1, preferences: { modelId: BROWSER_MODELS[1].id, automatic: true, limits: {} } });
+        await act(async () => {
+            window.localStorage.setItem(AGENT_PREFERENCES_KEY, raw);
+            window.dispatchEvent(new StorageEvent('storage', { key: AGENT_PREFERENCES_KEY }));
+        });
+        expect(runtime.dispose).toHaveBeenCalledOnce();
+        await models();
+        const select = document.querySelector<HTMLSelectElement>('#cbm-chat-model')!;
+        expect(select.value).toBe(BROWSER_MODELS[1].id);
+        expect([...select.options].some(option => option.textContent?.endsWith('Loaded'))).toBe(false);
+        expect(button('Download & load')).toBeDefined();
     });
 
     it('leaves the oldest history out when the input limit is exceeded and says so', async () => {
