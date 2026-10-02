@@ -677,13 +677,15 @@ export default function AtlasChrome(props: AtlasChromeProps): JSX.Element {
                     ))}
                 </div>
                 {props.projectSwitcher}
-                {(props.onOpenBrowserAi !== undefined || props.onToggleBrowserAi !== undefined) && <div className="atlas-agent-controls" role="group" aria-label="Local agent">
-                    {props.onOpenBrowserAi !== undefined && <button type="button" className="atlas-browser-ai-action" data-state={props.agentState ?? 'off'} aria-label="Local agent settings" title="Configure the browser-local agent" onClick={props.onOpenBrowserAi}>
+                {(props.onOpenBrowserAi !== undefined || props.onToggleBrowserAi !== undefined) && <div className="atlas-agent-controls" role="group" aria-label={workspaceStrings.agentControls}>
+                    {props.onOpenBrowserAi !== undefined && <button type="button" className="atlas-browser-ai-action" data-state={props.agentState ?? 'off'}
+                        aria-label={workspaceStrings.agentSettings(workspaceStrings.agentStatus[props.agentState ?? 'off'], props.agentModelName || undefined)}
+                        title={workspaceStrings.agentSettingsTitle(workspaceStrings.agentStatus[props.agentState ?? 'off'], props.agentModelName || undefined)} onClick={props.onOpenBrowserAi}>
+                        {/* Derselbe Strich und dasselbe Raster wie der Chat-Schalter daneben; den Zustand traegt die Lampe. */}
+                        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M10 3v3" /><circle cx="10" cy="2.5" r="1" fill="currentColor" stroke="none" /><rect x="3.5" y="6" width="13" height="10" rx="2.5" /><path d="M1.5 10v3M18.5 10v3" /><circle cx="7.5" cy="10.5" r="1.2" fill="currentColor" stroke="none" /><circle cx="12.5" cy="10.5" r="1.2" fill="currentColor" stroke="none" /><path d="M8 13.5h4" /></svg>
                         <span aria-hidden="true" />
-                        {{ off: 'Enable agent', loading: 'Agent loading', active: 'Agent active', busy: 'Agent working', error: 'Agent error' }[props.agentState ?? 'off']}
-                        {props.agentModelName && <small className="atlas-agent-model-name" title={props.agentModelName}>{props.agentModelName}</small>}
                     </button>}
-                    {props.onToggleBrowserAi !== undefined && <button type="button" className="atlas-agent-chat-toggle" aria-expanded={props.chatOpen === true} aria-label={props.chatOpen ? 'Hide chat' : 'Open chat'} title={props.chatOpen ? 'Hide chat' : 'Open chat'} onClick={props.onToggleBrowserAi}>
+                    {props.onToggleBrowserAi !== undefined && <button type="button" className="atlas-agent-chat-toggle" aria-expanded={props.chatOpen === true} aria-label={props.chatOpen ? workspaceStrings.hideChat : workspaceStrings.openChat} title={props.chatOpen ? workspaceStrings.hideChat : workspaceStrings.openChat} onClick={props.onToggleBrowserAi}>
                         <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="3" width="16" height="14" rx="2" /><path d="M12 3v14" /><path className="atlas-agent-chat-toggle-pane" d="M12 3h4a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-4z" stroke="none" /></svg>
                     </button>}
                 </div>}
