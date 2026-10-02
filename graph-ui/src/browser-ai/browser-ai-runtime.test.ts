@@ -82,6 +82,22 @@ describe('browser chat worker boundary', () => {
         runtime.dispose();
     });
 
+    it('reports the worker stop reason before the answer resolves and never posts the callback', async () => {
+        const runtime = createBrowserChatRuntime(), worker = WorkerStub.instances[0];
+        const onComplete = vi.fn();
+        const result = runtime.chat([{ role: 'user', content: 'List' }], vi.fn(), { maxOutputTokens: 64, onComplete });
+        const request = worker.last();
+        expect(request).not.toHaveProperty('onComplete');
+        worker.send({ id: request.id, kind: 'answer', output: 'Cut', stopReason: 'length' });
+        expect(await result).toBe('Cut');
+        expect(onComplete).toHaveBeenCalledExactlyOnceWith({ stopReason: 'length' });
+        const older = runtime.chat([{ role: 'user', content: 'List' }], vi.fn(), { onComplete });
+        worker.send({ id: worker.last().id, kind: 'answer', output: 'Older worker' });
+        await older;
+        expect(onComplete).toHaveBeenLastCalledWith({ stopReason: 'eos' });
+        runtime.dispose();
+    });
+
     it('forwards a bounded token request independently of an explanation profile', async () => {
         const runtime = createBrowserChatRuntime(), worker = WorkerStub.instances[0];
         const result = runtime.chat([{ role: 'user', content: 'Explain' }], vi.fn(), { maxOutputTokens: 192 });

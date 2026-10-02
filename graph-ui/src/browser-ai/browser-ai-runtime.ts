@@ -1,4 +1,4 @@
-import type { BrowserAiProgress, BrowserAiRuntime, BrowserAiSource, BrowserChatMessage, BrowserChatOptions, BrowserChatRuntime } from './browser-ai-controller';
+import type { BrowserAiProgress, BrowserAiRuntime, BrowserAiSource, BrowserChatMessage, BrowserChatOptions, BrowserChatRuntime, BrowserStopReason } from './browser-ai-controller';
 import { BROWSER_MODEL, getBrowserModel } from './model-policy';
 import { BrowserRuntimeFatalError, isFatalBrowserRuntimeError, isGpuRuntimeFailure, runtimeErrorDetail } from './runtime-fault';
 export { BrowserRuntimeFatalError, isFatalBrowserRuntimeError } from './runtime-fault';
@@ -22,6 +22,7 @@ export interface BrowserWorkerResponse {
     error?: string;
     fatal?: boolean;
     progress?: BrowserAiProgress;
+    stopReason?: BrowserStopReason;
 }
 
 /** One model per worker. Only prepare can authorize a download. Stop keeps GPU/model state alive. */
@@ -88,11 +89,15 @@ export function createBrowserChatRuntime(modelId: string = BROWSER_MODEL.id): Br
             if (!Number.isSafeInteger(response.count) || response.count! < 0) throw new Error('The model returned an invalid token count.');
             return response.count!;
         },
-        chat: async (messages, onToken, options) => (await request({
-            kind: 'chat', messages,
-            ...(options?.maxOutputTokens === undefined ? {} : { maxOutputTokens: options.maxOutputTokens }),
-            ...(options?.generationProfile === undefined ? {} : { generationProfile: options.generationProfile }),
-        }, { onToken })).output ?? '',
+        chat: async (messages, onToken, options) => {
+            const response = await request({
+                kind: 'chat', messages,
+                ...(options?.maxOutputTokens === undefined ? {} : { maxOutputTokens: options.maxOutputTokens }),
+                ...(options?.generationProfile === undefined ? {} : { generationProfile: options.generationProfile }),
+            }, { onToken });
+            options?.onComplete?.({ stopReason: response.stopReason ?? 'eos' });
+            return response.output ?? '';
+        },
         setFatalHandler: handler => {
             fatalHandler = handler;
             if (fatalFailure) handler?.(fatalFailure);

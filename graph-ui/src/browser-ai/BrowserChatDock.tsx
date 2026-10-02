@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type JSX, type Re
 import type { BrowserAiProgress } from './browser-ai-controller';
 import { createBrowserChatRuntime, type BrowserChatRuntime } from './browser-ai-runtime';
 import { BROWSER_MODELS, removeBrowserModelCache } from './model-policy';
-import { buildChatMessages, selectionLocation, snapshotAttachment, snapshotReaderContext, type BrowserChatAttachment, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatTurn } from './chat-model';
+import { buildChatMessages, selectionLocation, snapshotAttachment, snapshotReaderContext, trimChatHistory, type BrowserChatAttachment, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatTurn } from './chat-model';
 import { explanationInput, EXPLANATION_DELAY_MS, type ExplanationInput } from './proactive-selection';
 import { prepareExplanationContext, type PreparedExplanationContext } from './explanation-context';
 import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, CHAT_INPUT_TOKENS, citedInterpretation, parseExplanationResponse, explanationMessages, formatExplanationEvidence } from './explanation-response';
+import { relationshipAnswer } from './relationship-answer';
+import { browserChatText } from './strings';
 import { isGpuRuntimeFailure, BrowserRuntimeFatalError } from './runtime-fault';
 import ChatMarkdown from './ChatMarkdown';
 import AgentSettingsDialog from './AgentSettingsDialog';
@@ -58,6 +60,16 @@ function SourceDisclosure({ children, title }: { children?: ReactNode; title?: s
     </details> : <span className="cbm-chat-speaker" title={title}>Agent</span>;
 }
 
+/** How an answer was bounded: cut at the output limit, scope too large, history left out. */
+function AnswerNotes({ shortened, packet, model, historyOmitted }: { shortened?: boolean; packet?: PreparedExplanationContext; model: string; historyOmitted?: number }): JSX.Element {
+    const capacity = packet?.capacity;
+    return <>
+        {shortened && <small className="cbm-chat-answer-note">{browserChatText.shortened}</small>}
+        {capacity && <small className="cbm-chat-answer-note">{browserChatText.capacity(capacity.nodes, capacity.edges, model, capacity.shown)}</small>}
+        {!!historyOmitted && <small className="cbm-chat-answer-note">{browserChatText.historyTrimmed(historyOmitted)}</small>}
+    </>;
+}
+
 function PacketSource({ packet, citation }: { packet: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation> }): JSX.Element {
     return <>
         {packet.limitations.map((limit, index) => <p className="cbm-chat-evidence-note" key={index}>{limit}</p>)}
@@ -74,7 +86,7 @@ function ContextSnapshot({ context }: { context: BrowserChatContext }): JSX.Elem
 /** Keep mounted when collapsed: state and worker lifetime are independent of visibility. */
 export default function BrowserChatDock({ proactiveSelection, selectionScope = "", historyKey, proactive = true, onAgentStateChange, onAgentModelChange, settingsRequest = 0, open, onClose, showCollapsed = false, onOpen, attachment, readerContext, context = [], pendingContext, onContextConsumed, onContextRemoved, onAttachmentConsumed, onAttachmentRemoved, createRuntime = createBrowserChatRuntime, removeCache = removeBrowserModelCache }: BrowserChatDockProps): JSX.Element {
     const [automatic, setAutomatic] = useState(true);
-    const [explanation, setExplanation] = useState<{ key: string; label: string; answer: string; status: string; error?: string; packet?: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; mode?: 'interpretation' }>();
+    const [explanation, setExplanation] = useState<{ key: string; label: string; answer: string; status: string; error?: string; packet?: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; mode?: 'interpretation'; shortened?: boolean }>();
     const [retryExplanation, setRetryExplanation] = useState(0);
     const autoRun = useRef<{ key: string; cancelled: boolean; settled: Promise<void> } | undefined>(undefined);
     const manualRequest = useRef<{ cancelled: boolean } | undefined>(undefined);
@@ -198,12 +210,14 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             setExplanation({ key: snapshot.key, label: snapshot.label, answer: '', status: 'generating', packet });
             setPhase('generating');
             // Keep an explanation together and ignore output from superseded selections.
-            const answer = await currentRuntime.chat(request, () => {}, { maxOutputTokens: AUTO_OUTPUT_TOKENS, generationProfile: 'automatic-explanation' });
+            let shortened = false;
+            const answer = await currentRuntime.chat(request, () => {}, { maxOutputTokens: AUTO_OUTPUT_TOKENS, generationProfile: 'automatic-explanation',
+                onComplete: ({ stopReason }) => { shortened = stopReason === 'length'; } });
             if (valid()) {
                 const result = parseExplanationResponse(answer, packet);
                 if (!followExplanation.current) setNewExplanation(true);
                 setExplanation(result.status === 'generated'
-                    ? { key: snapshot.key, label: snapshot.label, answer: result.markdown, status: 'complete', mode: 'interpretation', packet, citation: result.citation }
+                    ? { key: snapshot.key, label: snapshot.label, answer: result.markdown, status: 'complete', mode: 'interpretation', packet, citation: result.citation, ...shortened ? { shortened } : {} }
                     : { key: snapshot.key, label: snapshot.label, answer: '', status: 'error', packet, error: result.reason });
             }
         } catch (failure) {
@@ -306,7 +320,24 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const extra = (retry ? retry.context ?? [] : nextContext).map(item => ({ ...item }));
         let packet = retry?.evidence;
         const currentGraph = !reader && proactiveSelection ? [{ ...proactiveSelection }] : [];
-        const makeRequest = () => buildChatMessages(turns, prompt, source, extra, reader, currentGraph, packet ? formatExplanationEvidence(packet) : undefined);
+        const consume = (): void => {
+            setDraft(previous => previous === prompt ? '' : previous);
+            setSelectedContext(previous => previous.filter(item => !extra.some(sent => sent.id === item.id && sent.text === item.text)));
+            if (source) onAttachmentConsumed(source.id);
+            if (selectedGraph) { setHandledContextId(selectedGraph.id); onContextConsumed?.(selectedGraph.id); }
+        };
+        // Callers and callees of the selection come from the loaded graph, complete and
+        // without the model: a small model drops and repeats names in long lists.
+        const listed = !retry && !source ? relationshipAnswer(prompt, [...currentGraph, ...extra]) : undefined;
+        if (listed) {
+            setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, context: extra,
+                evidence: prepareExplanationContext(undefined, listed.context, 3200), modelId: model.id, request: [],
+                answer: listed.markdown, status: 'complete', answeredFrom: 'graph' }]);
+            consume();
+            return;
+        }
+        let history: ChatTurn[] = turns;
+        const makeRequest = () => buildChatMessages(history, prompt, source, extra, reader, currentGraph, packet ? formatExplanationEvidence(packet) : undefined);
         if (!retry && ((reader?.source?.text.length ?? 0) > 5000 || currentGraph.length)) packet = prepareExplanationContext(reader, currentGraph, 3200);
         let request = retry ? retry.request.map(message => ({ ...message })) : makeRequest();
         const queued = { cancelled: false }; manualRequest.current = queued;
@@ -328,6 +359,13 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             let count = await currentRuntime.countTokens(request);
             if (epoch.current !== ticket || stopRequested.current) return;
             const limit = Math.min(CHAT_INPUT_TOKENS, model.contextTokens - model.maxOutputTokens);
+            // Earlier turns give way first, oldest first; the question and its evidence stay.
+            while (!retry && count > limit && history.length) {
+                const characters = request.reduce((sum, message) => sum + message.content.length, 0);
+                history = trimChatHistory(history, Math.ceil((count - limit) * characters / Math.max(1, count)));
+                request = makeRequest(); count = await currentRuntime.countTokens(request);
+                if (epoch.current !== ticket || stopRequested.current) return;
+            }
             for (let budget = packet ? 1900 : 3200; !retry && count > limit && (reader?.source || currentGraph.length) && budget >= 300; budget = Math.floor(budget * .6)) {
                 packet = prepareExplanationContext(reader, currentGraph, budget);
                 request = makeRequest(); count = await currentRuntime.countTokens(request);
@@ -338,23 +376,22 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 return;
             }
             const id = retry?.id ?? `local-turn-${crypto.randomUUID()}`;
-            const turn: ChatTurn = { id, prompt, attachment: source, readerContext: reader, context: extra, evidence: packet, modelId: model.id, request, answer: '', status: 'generating' };
+            const historyOmitted = retry ? retry.historyOmitted
+                : turns.filter(item => item.status !== 'error' && item.status !== 'generating' && !history.includes(item)).length;
+            const turn: ChatTurn = { id, prompt, attachment: source, readerContext: reader, context: extra, evidence: packet, modelId: model.id, request, answer: '', status: 'generating',
+                ...historyOmitted ? { historyOmitted } : {} };
             activeTurn.current = id;
             if (retry) setTurns(previous => previous.map(item => item.id === id ? turn : item));
-            else {
-                setTurns(previous => [...previous, turn]);
-                setDraft(previous => previous === prompt ? '' : previous);
-                setSelectedContext(previous => previous.filter(item => !extra.some(sent => sent.id === item.id && sent.text === item.text)));
-                if (source) onAttachmentConsumed(source.id);
-                if (selectedGraph) { setHandledContextId(selectedGraph.id); onContextConsumed?.(selectedGraph.id); }
-            }
+            else { setTurns(previous => [...previous, turn]); consume(); }
             setPhase('generating');
+            let shortened = false;
             const output = await currentRuntime.chat(request, chunk => {
                 if (epoch.current !== ticket || stopRequested.current) return;
                 setTurns(previous => previous.map(item => item.id === id ? { ...item, answer: item.answer + chunk } : item));
-            });
+            }, { onComplete: ({ stopReason }) => { shortened = stopReason === 'length'; } });
             if (epoch.current !== ticket) return;
-            setTurns(previous => previous.map(item => item.id === id ? { ...item, answer: stopRequested.current ? item.answer : output, status: stopRequested.current ? 'stopped' : 'complete' } : item));
+            setTurns(previous => previous.map(item => item.id === id ? { ...item, answer: stopRequested.current ? item.answer : output, status: stopRequested.current ? 'stopped' : 'complete',
+                ...shortened && !stopRequested.current ? { shortened } : {} } : item));
         } catch (failure) {
             if (epoch.current !== ticket) return;
             if (isGpuRuntimeFailure(failure)) { invalidateRuntime(failure); return; }
@@ -443,6 +480,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 </SourceDisclosure>
                 {explanation?.key === selected.key ? <>
                     <ChatMarkdown text={explanation.answer || (explanation.status === 'generating' ? 'Explaining selection…' : explanation.status === 'stopped' ? 'Explanation stopped.' : '')} />
+                    {explanation.status !== 'generating' && <AnswerNotes shortened={explanation.shortened} packet={explanation.packet} model={model.displayName} />}
                     {explanation.error && <p className="cbm-chat-turn-error" role="alert">{explanation.error}</p>}
                     {explanation.status !== 'generating' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { lastAttempt.current = undefined; setRetryExplanation(value => value + 1); }}>Explain again</button>}
                 </> : <p>{manualRequest.current ? 'This selection will be explained after your answer.' : 'Preparing explanation…'}</p>}
@@ -460,8 +498,9 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                     </> : null}
                 </SourceDisclosure><div className="cbm-chat-answer-text"><ChatMarkdown text={turn.answer || (turn.status === 'generating' ? 'Thinking…' : turn.status === 'stopped' ? 'Stopped before an answer.' : '')} /></div>
                     {turn.status === 'stopped' && turn.answer && <small>Stopped · partial answer</small>}
+                    {turn.status !== 'generating' && turn.answeredFrom !== 'graph' && <AnswerNotes shortened={turn.shortened} packet={turn.evidence} model={BROWSER_MODELS.find(candidate => candidate.id === turn.modelId)?.displayName ?? turn.modelId} historyOmitted={turn.historyOmitted} />}
                     {turn.status === 'error' && <p className="cbm-chat-turn-error" role="alert">{turn.error}</p>}
-                    {index === turns.length - 1 && turn.status !== 'generating' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { void send(turn); }}>Retry</button>}
+                    {index === turns.length - 1 && turn.status !== 'generating' && turn.answeredFrom !== 'graph' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { void send(turn); }}>Retry</button>}
                 </div>
             </article>)}
         </div>}
