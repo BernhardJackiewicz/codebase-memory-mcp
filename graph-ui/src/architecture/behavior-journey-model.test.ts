@@ -34,6 +34,15 @@ describe('focused Behavior journeys', () => {
         expect(result.scene.focusId).toBeUndefined();
     });
 
+    it('treats the source_id 0 of an unselected projection as no selection', () => {
+        const data = projection({ paths: [path([1, 2])], behavior: behavior([], [], { source_id: 0, complete: false, limits_hit: ['select_source'] }) });
+        const result = behaviorJourney(data);
+        expect(result.entry?.id).toBe(1);
+        expect(result.mode).toBe('choices');
+        expect(drawnPairs(result)).toEqual([[1, 2]]);
+        expect(behaviorJourney({ ...data, entrypoints: [], paths: [] }).mode).toBe('empty');
+    });
+
     it('uses exact-source witnesses and valid first hops but never aggregate counts or references', () => {
         const data = projection({ paths: [path([1, 2, 8])], dependencies: [
             { source: 'app', target: 'other', type: 'CALLS', count: 500, witnesses: [] },

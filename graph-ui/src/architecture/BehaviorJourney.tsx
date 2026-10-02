@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { behaviorJourney } from './behavior-journey-model';
-import type { SystemSceneModel } from './system-architecture-model';
+import { projectionLimits, type SystemSceneModel } from './system-architecture-model';
+import { architectureText as text } from './strings';
 import type { SystemProjection, SystemSymbol } from './system-architecture-source';
 import BehaviorSourceEvidence, { type BehaviorSourceSnapshot } from './BehaviorSourceEvidence';
 import { useSelectionEvidence, type SelectionEvidenceListener } from '../galaxy/selection-evidence';
@@ -78,6 +79,7 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
     const entry = journey?.entry ?? entries.find(item => item.id === entryId);
     const availableEntries = entry && !entries.some(item => item.id === entry.id) ? [entry, ...entries] : entries;
     const selectedTarget = targetOptions.find(item => item.id === targetId) ?? path?.nodes.at(-1);
+    const limits = data?.status === 'limited' ? projectionLimits(data) : [];
     const sourceKey = caller ? JSON.stringify([project, generation, caller.qualified_name, call?.callsite?.file_path ?? caller.file_path, call?.callsite?.line ?? caller.start_line]) : undefined;
     useSelectionEvidence(onSelectionEvidence, !overview && !pending && journey && symbol ? {
         project, generation, view: 'architecture-behavior', source: 'indexed behavior projection and call-site evidence',
@@ -158,6 +160,7 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
                         selectedNode={selectedEdge ? undefined : selectedNode?.id} selectedEdge={selectedEdge?.id}
                         onSelectNode={selectNode} onSelectEdge={selectEdge} onExpandNode={follow} onClearSelection={clearSelection}
                         resetKey={resetKey} planar={planar} active={active} showConnectionLoad={false} presentation="journey" /></Suspense>
+                        : limits.length ? <div className="behavior-loading" role="status"><div className="behavior-limited"><strong>{text.behaviorLimited}</strong>{limits.map(limit => <p key={limit}>{limit}</p>)}</div></div>
                         : <div className="behavior-loading">{filter ? 'No connected path matches this filter.' : targetId !== undefined ? 'No connected call-chain witness was returned for this destination.' : 'No direct call witnesses were returned for this operation.'}</div>}
                     <div className="system-map-caption"><span>{path ? `Showing operations ${(scene.nodes[0]?.depth ?? 0) + 1} to ${(scene.nodes.at(-1)?.depth ?? 0) + 1} of ${path.nodes.length}` : 'Branches are possible calls, not an execution sequence.'}</span>
                         <span>Double-click an operation to follow its calls</span></div>
