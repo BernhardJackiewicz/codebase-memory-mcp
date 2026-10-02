@@ -41,6 +41,9 @@ export interface BrowserChatDockProps {
 
 type Phase = 'off' | 'preparing' | 'ready' | 'counting' | 'generating' | 'removing';
 type ChatTurn = BrowserChatTurn & { evidence?: PreparedExplanationContext };
+type Explanation = { key: string; label: string; answer: string; status: string; error?: string; packet?: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; mode?: 'interpretation'; shortened?: boolean };
+/** Finished explanations per selection, so returning to one does not run the model again. */
+const EXPLANATION_CACHE_SIZE = 32;
 const initialModel = BROWSER_MODELS.find(model => model.availability === 'available')!;
 const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error);
 const sizeLabel = (bytes: number): string => bytes >= 1_000_000_000 ? `${(bytes / 1_000_000_000).toFixed(2)} GB` : `${Math.ceil(bytes / 1_000_000)} MB`;
@@ -86,7 +89,8 @@ function ContextSnapshot({ context }: { context: BrowserChatContext }): JSX.Elem
 /** Keep mounted when collapsed: state and worker lifetime are independent of visibility. */
 export default function BrowserChatDock({ proactiveSelection, selectionScope = "", historyKey, proactive = true, onAgentStateChange, onAgentModelChange, settingsRequest = 0, open, onClose, showCollapsed = false, onOpen, attachment, readerContext, context = [], pendingContext, onContextConsumed, onContextRemoved, onAttachmentConsumed, onAttachmentRemoved, createRuntime = createBrowserChatRuntime, removeCache = removeBrowserModelCache }: BrowserChatDockProps): JSX.Element {
     const [automatic, setAutomatic] = useState(true);
-    const [explanation, setExplanation] = useState<{ key: string; label: string; answer: string; status: string; error?: string; packet?: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; mode?: 'interpretation'; shortened?: boolean }>();
+    const [explanation, setExplanation] = useState<Explanation>();
+    const explanations = useRef(new Map<string, Explanation>());
     const [retryExplanation, setRetryExplanation] = useState(0);
     const autoRun = useRef<{ key: string; cancelled: boolean; settled: Promise<void> } | undefined>(undefined);
     const manualRequest = useRef<{ cancelled: boolean } | undefined>(undefined);
@@ -130,7 +134,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     useEffect(() => {
         if (historyProject.current === historyKey) return;
         historyProject.current = historyKey;
-        resetProject();
+        explanations.current.clear(); resetProject();
         setSelectedContext([]); setHandledContextId(undefined); setNewExplanation(false);
     }, [historyKey]);
     useEffect(() => {
@@ -174,11 +178,24 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         }
     }, [selected?.key, automatic, proactive]);
     useEffect(() => {
-        if (!historyReady || !proactive || !automatic || !selected || phase !== 'ready' || manualRequest.current || pending.current || lastAttempt.current === selected.key) return;
+        // Returning to an explained selection shows what was already written.
+        const cached = selected && explanations.current.get(selected.key);
+        if (!cached) return;
+        lastAttempt.current = cached.key;
+        setExplanation(previous => previous?.key === cached.key ? previous : cached);
+    }, [selected?.key]);
+    useEffect(() => {
+        if (!historyReady || !proactive || !automatic || !selected || selected.waiting || phase !== 'ready' || manualRequest.current || pending.current
+            || lastAttempt.current === selected.key || explanations.current.has(selected.key)) return;
         const snapshot = selected;
         const timer = setTimeout(() => { void explain(snapshot); }, EXPLANATION_DELAY_MS);
         return () => clearTimeout(timer);
-    }, [selected?.key, phase, automatic, proactive, retryExplanation, historyReady]);
+    }, [selected?.key, selected?.waiting, phase, automatic, proactive, retryExplanation, historyReady]);
+    const remember = (entry: Explanation): void => {
+        const cache = explanations.current;
+        cache.delete(entry.key); cache.set(entry.key, entry);
+        while (cache.size > EXPLANATION_CACHE_SIZE) cache.delete(cache.keys().next().value!);
+    };
 
     const explain = async (snapshot: ExplanationInput): Promise<void> => {
         const currentRuntime = runtime.current;
@@ -216,9 +233,10 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             if (valid()) {
                 const result = parseExplanationResponse(answer, packet);
                 if (!followExplanation.current) setNewExplanation(true);
-                setExplanation(result.status === 'generated'
-                    ? { key: snapshot.key, label: snapshot.label, answer: result.markdown, status: 'complete', mode: 'interpretation', packet, citation: result.citation, ...shortened ? { shortened } : {} }
-                    : { key: snapshot.key, label: snapshot.label, answer: '', status: 'error', packet, error: result.reason });
+                if (result.status === 'generated') {
+                    const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: result.markdown, status: 'complete', mode: 'interpretation', packet, citation: result.citation, ...shortened ? { shortened } : {} };
+                    remember(complete); setExplanation(complete);
+                } else setExplanation({ key: snapshot.key, label: snapshot.label, answer: '', status: 'error', packet, error: result.reason });
             }
         } catch (failure) {
             if (epoch.current === ticket && isGpuRuntimeFailure(failure)) { invalidateRuntime(failure); return; }
@@ -434,7 +452,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             {proactive && <label><input type="checkbox" checked={automatic} onChange={event => setAutomatic(event.target.checked)} /> Explain selections automatically</label>}
             <span className="cbm-chat-status" role="status">{status}</span>
             <label htmlFor="cbm-chat-model">Model</label>
-            <select id="cbm-chat-model" value={modelId} disabled={busy} onChange={event => { release(); setModelId(event.target.value); setError(undefined); setNotice(undefined); }}>
+            <select id="cbm-chat-model" value={modelId} disabled={busy} onChange={event => { release(); explanations.current.clear(); setModelId(event.target.value); setError(undefined); setNotice(undefined); }}>
                 {BROWSER_MODELS.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.displayName} · {candidate.availability === 'unsupported' ? 'Requires runtime support' : candidate.id === model.id && phase === 'ready' ? 'Loaded' : downloaded.has(candidate.id) ? 'Downloaded this session' : 'Available'}</option>)}
             </select>
             <p>{sizeLabel(model.bytes)} download · {model.license}. Memory use is higher.</p>
@@ -482,8 +500,11 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                     <ChatMarkdown text={explanation.answer || (explanation.status === 'generating' ? 'Explaining selection…' : explanation.status === 'stopped' ? 'Explanation stopped.' : '')} />
                     {explanation.status !== 'generating' && <AnswerNotes shortened={explanation.shortened} packet={explanation.packet} model={model.displayName} />}
                     {explanation.error && <p className="cbm-chat-turn-error" role="alert">{explanation.error}</p>}
-                    {explanation.status !== 'generating' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { lastAttempt.current = undefined; setRetryExplanation(value => value + 1); }}>Explain again</button>}
-                </> : <p>{manualRequest.current ? 'This selection will be explained after your answer.' : 'Preparing explanation…'}</p>}
+                    {explanation.status !== 'generating' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready' || !!selected.waiting} onClick={() => {
+                        lastAttempt.current = undefined; explanations.current.delete(selected.key); setRetryExplanation(value => value + 1);
+                    }}>Explain again</button>}
+                </> : <p>{selected.waiting === 'loading' ? browserChatText.waitingForScope : selected.waiting === 'partial' ? browserChatText.partialScope
+                    : manualRequest.current ? 'This selection will be explained after your answer.' : 'Preparing explanation…'}</p>}
             </section>}
             {turns.length === 0 && !(proactive && automatic && selected) && <div className="cbm-chat-empty"><span aria-hidden="true">⌁</span><h3>Ask about the code.</h3><p>{readerContext ? 'The current file is included automatically. Mark code to focus your next message on that exact selection.' : 'Ask a question, or add source and graph context to your next message.'}</p></div>}
             {turns.map((turn, index) => <article className="cbm-chat-turn" key={turn.id}>

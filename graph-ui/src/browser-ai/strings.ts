@@ -115,4 +115,6 @@ export const browserChatText = {
     capacity: (nodes: number, edges: number, model: string, shown: number) =>
         `${nodes} nodes / ${edges} edges: too large for the local ${model} model; showing ${shown}`,
     historyTrimmed: (count: number) => `${count} earlier ${count === 1 ? 'message was' : 'messages were'} left out to fit the input limit.`,
+    waitingForScope: 'Waiting for the complete scope before explaining…',
+    partialScope: 'This scope did not load completely, so it is not explained automatically.',
 };

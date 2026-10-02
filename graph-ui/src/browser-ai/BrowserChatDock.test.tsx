@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import BrowserChatDock, { type BrowserChatAttachment, type BrowserChatDockProps, type BrowserChatReaderContext } from './BrowserChatDock';
 import type { BrowserAiProgress, BrowserChatMessage } from './browser-ai-runtime';
 import { BROWSER_MODELS } from './model-policy';
-import { JSONB_AGG_CALLERS, jsonbAggEvidence } from './galaxy-evidence.fixture';
+import { JSONB_AGG_CALLERS, jsonbAggEvidence, jsonbAggScope } from './galaxy-evidence.fixture';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -932,5 +932,64 @@ describe('graph answers and answer limits', () => {
         expect(request.at(-1)!.content).toBe('Fourth question');
         expect(request.map(message => message.content).join('\n')).not.toContain('First question');
         expect(container.querySelectorAll('.cbm-chat-answer-note')[0]?.textContent).toMatch(/earlier messages were left out to fit the input limit/);
+    });
+});
+
+
+describe('per-selection explanation cache', () => {
+    afterEach(() => vi.useRealTimers());
+    async function settleSelection() { await act(async () => { await vi.advanceTimersByTimeAsync(650); }); }
+    const card = () => container.querySelector('[aria-label="Current selection explanation"]')?.textContent ?? '';
+
+    it('shows the cached explanation when returning to a selection without running the model again', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        runtime.chat.mockResolvedValueOnce('JSONBAgg is called by its tests.').mockResolvedValueOnce('Two layers around JSONBAgg.');
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence() }); await click('Download & load');
+        await settleSelection(); expect(runtime.chat).toHaveBeenCalledOnce();
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence({ depth: 2 }) });
+        await settleSelection(); expect(runtime.chat).toHaveBeenCalledTimes(2);
+        expect(card()).toContain('Two layers around JSONBAgg.');
+        // Back to the first selection while its scope reloads, then once it is complete again.
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence({ state: 'loading-partial-preview' }) });
+        expect(card()).toContain('JSONBAgg is called by its tests.');
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence() });
+        await settleSelection();
+        expect(runtime.chat).toHaveBeenCalledTimes(2);
+        expect(runtime.countTokens).toHaveBeenCalledTimes(2);
+        expect(card()).toContain('JSONBAgg is called by its tests.');
+        expect(card()).not.toContain('Explaining selection');
+    });
+
+    it('starts an explanation only once the scope is complete', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        const preview = jsonbAggEvidence({ edges: jsonbAggScope().edges.slice(0, 3), state: 'loading-partial-preview' });
+        await render({ ...props, proactive: true, proactiveSelection: preview }); await click('Download & load');
+        await settleSelection();
+        expect(runtime.countTokens).not.toHaveBeenCalled();
+        expect(card()).toContain('Waiting for the complete scope');
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence() });
+        await settleSelection();
+        expect(runtime.chat).toHaveBeenCalledOnce();
+        expect(runtime.chat.mock.calls[0][0].at(-1)!.content).toContain('Incoming relationships: 23 from 12 symbols.');
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence({ state: 'partial' }) });
+        await settleSelection(); expect(runtime.chat).toHaveBeenCalledOnce();
+    });
+
+    it('regenerates on request and keeps the cache bounded', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        let calls = 0; runtime.chat.mockImplementation(async () => `Explanation number ${++calls}.`);
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence() }); await click('Download & load');
+        await settleSelection(); expect(card()).toContain('Explanation number 1.');
+        await click('Explain again'); await settleSelection();
+        expect(card()).toContain('Explanation number 2.');
+        for (let depth = 2; depth <= 33; depth++) {
+            await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence({ depth }) }); await settleSelection();
+        }
+        expect(runtime.chat).toHaveBeenCalledTimes(34);
+        // 32 later selections pushed the first one out of the cache.
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence() }); await settleSelection();
+        expect(runtime.chat).toHaveBeenCalledTimes(35);
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence({ depth: 33 }) }); await settleSelection();
+        expect(runtime.chat).toHaveBeenCalledTimes(35);
     });
 });
