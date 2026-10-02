@@ -1,6 +1,6 @@
 import type { RouteRef } from '../core/intelligence-provider';
 import type { GraphData, GraphEdge, GraphNode } from '../galaxy/types';
-import { areaOf, MAP_RELATIONS } from './repository-map';
+import { areaLevels, areaOf, areaTrail, MAP_RELATIONS } from './repository-map';
 import type { RouteGraphSnapshot } from './route-graph-source';
 
 export type SemanticView = 'overview' | 'dependencies' | 'entryPoints' | 'routes' | 'hotspots';
@@ -22,6 +22,8 @@ export interface SemanticNode {
     footprint?: [number, number];
     tint?: string;
     kindLabel?: string;
+    /** An area outside the opened area or file; it keeps to its own lane. */
+    external?: boolean;
 }
 export interface SemanticEvidence {
     source: GraphNode;
@@ -181,11 +183,12 @@ function packHierarchy(box: HierarchyBox): void {
 }
 
 /**
- * Arrange unfiltered candidates by actual source folders, never relation count
- * or hotspot rank. Only positions change; callers retain all graph identities.
- * Deep paths share their third real ancestor to keep the steps shallow.
+ * Arrange candidates by actual source folders, never relation count or hotspot
+ * rank. Only positions change; callers retain all graph identities. Deep paths
+ * share their third real ancestor to keep the steps shallow; an opened area
+ * passes itself as `base` and counts as the first of those steps.
  */
-export function layoutFolderHierarchy(nodes: SemanticNode[]): SemanticPlatform[] {
+export function layoutFolderHierarchy(nodes: SemanticNode[], base = ''): SemanticPlatform[] {
     if (!nodes.length) return [];
     const root: HierarchyBox = { key: '', path: '', level: 0, children: [], width: 0, depth: 0, x: 0, z: 0 };
     const folders = new Map<string, HierarchyBox>();
@@ -208,7 +211,8 @@ export function layoutFolderHierarchy(nodes: SemanticNode[]): SemanticPlatform[]
             }
             owner = unknown;
         } else {
-            const parts = containing.split('/').filter(Boolean).slice(0, 3);
+            const parts = (base && (containing === base || containing.startsWith(`${base}/`))
+                ? [base, ...containing.slice(base.length + 1).split('/')] : containing.split('/')).filter(Boolean).slice(0, 3);
             parts.forEach((_, index) => {
                 const folderPath = parts.slice(0, index + 1).join('/');
                 const key = `folder:${folderPath}`;
@@ -240,6 +244,28 @@ export function layoutFolderHierarchy(nodes: SemanticNode[]): SemanticPlatform[]
     return platforms;
 }
 
+/**
+ * Areas outside the opened area or file wait in a lane in front of its
+ * platforms, so the platforms hold only what lies inside.
+ */
+function placeOutside(outside: SemanticNode[], inside: SemanticNode[], platforms: SemanticPlatform[]): SemanticPlatform | undefined {
+    if (!outside.length) return undefined;
+    const spacing = 34;
+    const extents = [...platforms.map(platform => [platform.position[0] - platform.width / 2, platform.position[0] + platform.width / 2, platform.position[2] + platform.depth / 2]),
+        ...inside.map(node => [node.position[0] - 12, node.position[0] + 12, node.position[2] + 12])];
+    const left = extents.length ? Math.min(...extents.map(extent => extent[0])) : 0;
+    const right = extents.length ? Math.max(...extents.map(extent => extent[1])) : 0;
+    const top = (extents.length ? Math.max(...extents.map(extent => extent[2])) : 0) + 14;
+    const columns = Math.max(1, Math.min(outside.length, Math.max(Math.floor((right - left + 10) / spacing), Math.ceil(Math.sqrt(outside.length)))));
+    const rows = Math.ceil(outside.length / columns);
+    // One extra column on the left keeps the lane's own label clear of the first brick label.
+    const width = (columns + 1) * spacing + 14; const depth = rows * spacing + 18; const center = (left + right) / 2;
+    outside.forEach((node, index) => {
+        node.position = [center + (index % columns + 1 - columns / 2) * spacing, 1.68, top + 28 + Math.floor(index / columns) * spacing];
+    });
+    return { id: 'hierarchy:outside', path: '', label: 'Outside', position: [center, 1.6, top + depth / 2], width, depth, level: 1 };
+}
+
 /** Prune empty containers without repacking the stable unfiltered layout. */
 export function pruneHierarchyPlatforms(platforms: SemanticPlatform[], nodes: SemanticNode[]): SemanticPlatform[] {
     return platforms.filter(platform => nodes.some(node => node.position[1] >= platform.position[1]
@@ -263,7 +289,7 @@ export function buildSemanticGraph(graph: GraphData, options: SemanticGraphOptio
     let edges: SemanticEdge[] = [];
     const warnings: string[] = [];
     let title = options.filePath ?? options.areaPath ?? 'Repository structure';
-    let positionMeaning = 'Nested platforms follow source folders. Positions are stable across text filters; boxes represent source grouping, not deployed services.';
+    let positionMeaning = 'Nested platforms follow source folders; areas outside the opened one wait in their own lane. Boxes represent source grouping, not deployed services.';
     const depth = bounded(options.depth, 3, 8);
     let rootId: string | undefined;
 
@@ -350,21 +376,29 @@ export function buildSemanticGraph(graph: GraphData, options: SemanticGraphOptio
     } else {
         const groups = new Map<string, SemanticNode>();
         const nodeGroups = new Map<number, string>();
+        const trails = new Map<string, string[]>();
+        const trailOf = (path: string) => { let trail = trails.get(path); if (!trail) trails.set(path, trail = areaTrail(path)); return trail; };
+        // An opened area shows its next level: deeper areas, and the files that sit in it directly.
+        const scope = options.filePath ? undefined : options.areaPath;
+        const levelOf = (path: string): { kind: 'area' | 'file'; path: string } | undefined => {
+            const trail = trailOf(path);
+            if (!scope) return { kind: 'area', path: trail[0] };
+            const at = trail.indexOf(scope);
+            return at < 0 ? undefined : at + 1 < trail.length ? { kind: 'area', path: trail[at + 1] } : { kind: 'file', path };
+        };
+        const scopedLabel = (path: string) => scope && path.startsWith(`${scope}/`) ? path.slice(scope.length + 1) : path;
         for (const node of graph.nodes.filter(sourceNode).sort(nodeOrder)) {
             if (options.visibleFiles && !options.visibleFiles.has(node.file_path!)) continue;
-            const area = areaOf(node.file_path!);
-            if (options.areaPath && area !== options.areaPath) continue;
-            if (options.filePath && node.file_path !== options.filePath) continue;
             if (options.filePath) {
-                if (['File', 'Module'].includes(node.label)) continue;
+                if (node.file_path !== options.filePath || ['File', 'Module'].includes(node.label)) continue;
                 const result = symbolNode(node); groups.set(result.id, result); nodeGroups.set(node.id, result.id);
                 continue;
             }
-            const kind = options.areaPath ? 'file' : 'area';
-            const path = options.areaPath ? node.file_path! : area;
-            const id = `${kind}:${path}`;
-            const group = groups.get(id) ?? { id, kind, label: path, detail: '', position: [0, 0, 0], count: 0,
-                filePath: kind === 'file' ? path : undefined, areaPath: area, members: [] };
+            const level = levelOf(node.file_path!);
+            if (!level) continue;
+            const id = `${level.kind}:${level.path}`;
+            const group = groups.get(id) ?? { id, kind: level.kind, label: scopedLabel(level.path), detail: '', position: [0, 0, 0], count: 0,
+                filePath: level.kind === 'file' ? level.path : undefined, areaPath: level.kind === 'area' ? level.path : scope, members: [] };
             group.members.push(node); group.count++; groups.set(id, group); nodeGroups.set(node.id, id);
         }
         // Retain files with no graph nodes/edges as navigable inventory objects.
@@ -372,23 +406,30 @@ export function buildSemanticGraph(graph: GraphData, options: SemanticGraphOptio
         const inventory = new Map<string, Set<string>>();
         for (const path of options.knownFiles ?? []) {
             if (!path || path === '{}' || (options.visibleFiles && !options.visibleFiles.has(path))) continue;
-            const area = areaOf(path);
-            if ((options.areaPath && area !== options.areaPath) || (options.filePath && path !== options.filePath)) continue;
-            const kind = options.areaPath || options.filePath ? 'file' : 'area';
-            const key = kind === 'file' ? path : area;
-            const id = `${kind}:${key}`;
+            if (options.filePath && path !== options.filePath) continue;
+            const level = options.filePath ? { kind: 'file' as const, path } : levelOf(path);
+            if (!level) continue;
+            const id = `${level.kind}:${level.path}`;
             const paths = inventory.get(id) ?? new Set<string>(); paths.add(path); inventory.set(id, paths);
             if (options.filePath && [...groups.values()].some(group => group.filePath === path)) continue;
-            if (!groups.has(id)) groups.set(id, { id, kind, label: key,
+            if (!groups.has(id)) groups.set(id, { id, kind: level.kind, label: options.filePath ? path : scopedLabel(level.path),
                 detail: options.filePath ? 'File inventory · no symbols in the loaded graph' : '',
-                position: [0, 0, 0], count: 0, areaPath: area, filePath: kind === 'file' ? path : undefined, members: [] });
+                position: [0, 0, 0], count: 0, areaPath: level.kind === 'area' ? level.path : scope ?? areaOf(path),
+                filePath: level.kind === 'file' ? path : undefined, members: [] });
         }
         let scopedEvidence = evidence;
         if (options.areaPath || options.filePath) {
             const inScope = (node: GraphNode) => sourceNode(node)
                 && (!options.visibleFiles || options.visibleFiles.has(node.file_path!))
-                && (!options.areaPath || areaOf(node.file_path!) === options.areaPath)
-                && (!options.filePath || node.file_path === options.filePath);
+                && (options.filePath ? node.file_path === options.filePath : levelOf(node.file_path!) !== undefined);
+            // An outside area is named where its trail leaves the opened one: a sibling, not a repository root area.
+            const reference = scope ? areaLevels(scope) : trailOf(options.filePath!);
+            const outsideArea = (path: string) => {
+                const trail = trailOf(path);
+                let shared = 0;
+                while (shared < trail.length && trail[shared] === reference[shared]) shared++;
+                return trail[Math.min(shared, trail.length - 1)];
+            };
             scopedEvidence = evidence.filter(edge => inScope(edge.source) || inScope(edge.target));
             for (const edge of scopedEvidence) {
                 if (inScope(edge.source) === inScope(edge.target)) continue;
@@ -407,11 +448,11 @@ export function buildSemanticGraph(graph: GraphData, options: SemanticGraphOptio
                     groups.set(id, group); nodeGroups.set(inside.id, id);
                 }
                 if (!nodeGroups.has(inside.id)) continue;
-                const areaPath = areaOf(outside.file_path!);
+                const areaPath = outsideArea(outside.file_path!);
                 const id = `area:${areaPath}`;
                 const group: SemanticNode = groups.get(id) ?? { id, kind: 'area', label: areaPath,
                     detail: 'External source area · inferred from file paths', position: [0, 0, 0],
-                    count: 0, areaPath, members: [] };
+                    count: 0, areaPath, members: [], external: true };
                 if (!group.members.includes(outside)) { group.members.push(outside); group.count++; }
                 groups.set(id, group); nodeGroups.set(outside.id, id);
             }
@@ -422,12 +463,20 @@ export function buildSemanticGraph(graph: GraphData, options: SemanticGraphOptio
         if (options.view === 'dependencies') title = options.filePath ?? options.areaPath ?? 'Dependencies between source areas';
     }
 
-    const platforms = options.view !== 'entryPoints' && options.view !== 'routes' ? layoutFolderHierarchy(nodes) : undefined;
     const filter = options.filter?.trim().toLowerCase();
     const matching = new Set<string>();
+    const capped = (candidates: SemanticNode[], relations: SemanticEdge[]) => {
+        const degrees = new Map<string, number>();
+        for (const edge of relations) for (const id of [edge.source, edge.target]) degrees.set(id, (degrees.get(id) ?? 0) + edge.count);
+        return [...candidates].sort((a, b) => (a.id === rootId ? -1 : b.id === rootId ? 1 : 0)
+            || Number(matching.has(b.id)) - Number(matching.has(a.id))
+            || (a.depth ?? 0) - (b.depth ?? 0) || (degrees.get(b.id) ?? 0) - (degrees.get(a.id) ?? 0) || compare(a.id, b.id))
+            .slice(0, bounded(options.maxNodes, 40, 80)).sort((a, b) => compare(a.id, b.id));
+    };
+    const unfiltered = capped(nodes, edges);
     if (filter) {
         for (const node of nodes) {
-            if (`${node.label} ${node.detail} ${node.members.map(member => member.name).join(' ')}`.toLowerCase().includes(filter)) matching.add(node.id);
+            if (`${node.label} ${node.filePath ?? node.areaPath ?? ''} ${node.detail} ${node.members.map(member => member.name).join(' ')}`.toLowerCase().includes(filter)) matching.add(node.id);
         }
         const context = new Set(matching);
         for (const edge of edges) {
@@ -438,12 +487,17 @@ export function buildSemanticGraph(graph: GraphData, options: SemanticGraphOptio
         if (context.size > matching.size) warnings.push('Showing filter matches and their one-hop neighbors for relationship context.');
     }
     const totalNodes = nodes.length; const totalEdges = edges.length;
-    const degrees = new Map<string, number>();
-    for (const edge of edges) for (const id of [edge.source, edge.target]) degrees.set(id, (degrees.get(id) ?? 0) + edge.count);
-    nodes.sort((a, b) => (a.id === rootId ? -1 : b.id === rootId ? 1 : 0)
-        || Number(matching.has(b.id)) - Number(matching.has(a.id))
-        || (a.depth ?? 0) - (b.depth ?? 0) || (degrees.get(b.id) ?? 0) - (degrees.get(a.id) ?? 0) || compare(a.id, b.id));
-    nodes = nodes.slice(0, bounded(options.maxNodes, 40, 80)).sort((a, b) => compare(a.id, b.id));
+    nodes = filter ? capped(nodes, edges) : unfiltered;
+    // Cap first, then lay out, so the platforms are sized to what is drawn. A
+    // filter that only narrows the drawn map keeps its positions.
+    let platforms: SemanticPlatform[] | undefined;
+    if (options.view !== 'entryPoints' && options.view !== 'routes') {
+        const layout = nodes.every(node => unfiltered.includes(node)) ? unfiltered : nodes;
+        const inside = layout.filter(node => !node.external);
+        platforms = layoutFolderHierarchy(inside, options.filePath ? '' : options.areaPath ?? '');
+        const lane = placeOutside(layout.filter(node => node.external), inside, platforms);
+        if (lane) platforms.push(lane);
+    }
     const visibleIds = new Set(nodes.map(node => node.id));
     edges = edges.filter(edge => visibleIds.has(edge.source) && visibleIds.has(edge.target))
         .sort((a, b) => Number(matching.has(b.source) || matching.has(b.target)) - Number(matching.has(a.source) || matching.has(a.target))

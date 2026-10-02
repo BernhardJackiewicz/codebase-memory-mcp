@@ -33,8 +33,11 @@ describe('source folder hierarchy layout', () => {
         expect(filtered.platforms?.map(platform => platform.path)).toEqual(['src']);
         filtered.nodes.forEach(item => expect(item.position).toEqual(full.nodes.find(original => original.id === item.id)!.position));
         filtered.edges.forEach(edge => expect(edge).toEqual(full.edges.find(original => original.id === edge.id)));
+        // The cap applies before the layout, so a capped map frames only what it draws.
         const capped = buildSemanticGraph(input, { view: 'overview', maxNodes: 1 });
-        expect(capped.nodes[0].position).toEqual(full.nodes.find(item => item.id === capped.nodes[0].id)!.position);
+        const cappedSource = capped.platforms!.find(platform => platform.path === 'src')!;
+        expect(containsNode(cappedSource, capped.nodes[0])).toBe(true);
+        expect(cappedSource.width * cappedSource.depth).toBeLessThan(source.width * source.depth);
         const imports = buildSemanticGraph(input, { view: 'dependencies', relations: ['IMPORTS'] });
         imports.nodes.forEach(item => expect(item.position).toEqual(full.nodes.find(original => original.id === item.id)!.position));
     });
@@ -76,6 +79,70 @@ describe('source folder hierarchy layout', () => {
         expect(model.platforms?.map(platform => platform.path)).toEqual(['src']);
         model.nodes.forEach(item => expect(containsNode(model.platforms![0], item)).toBe(true));
         expect(model.edges).toEqual([]);
+    });
+});
+
+describe('drilling into large areas', () => {
+    // A Django-like top-level folder: 45 sub-packages, two direct files, and callers outside it.
+    const inside = Array.from({ length: 45 }, (_, index) => node(100 + index, `django/app${String(index).padStart(2, '0')}/models/base.py`, `model${index}`));
+    const large: GraphData = { total_nodes: 52, nodes: [...inside, node(200, 'django/shortcuts.py', 'render'), node(201, 'django/__init__.py', 'setup'),
+        node(202, 'tests/admin_views/tests.py', 'test_admin'), node(203, 'tests/runtests.py', 'run'), node(204, 'setup.py', 'install'),
+        node(205, 'django/app00/views/list.py', 'list_view'), node(206, 'django/app01/models/fields/json.py', 'JSONField')],
+    edges: [...inside.slice(1).map((item, index) => ({ source: item.id, target: inside[index].id, type: 'CALLS' })),
+        ...inside.slice(0, 6).map(item => ({ source: 202, target: item.id, type: 'CALLS' })), { source: 203, target: 200, type: 'CALLS' },
+        ...inside.slice(0, 4).map(item => ({ source: 204, target: item.id, type: 'IMPORTS' })), { source: 204, target: 201, type: 'IMPORTS' },
+        { source: 205, target: 100, type: 'CALLS' }, { source: 206, target: 100, type: 'CALLS' }] };
+    const insidePlatform = (model: ReturnType<typeof buildSemanticGraph>) => model.platforms!.find(platform => platform.path === 'django')!;
+
+    it('opens a top-level folder at its next level, not at its files', () => {
+        expect(buildSemanticGraph(large, { view: 'overview' }).nodes.find(item => item.id === 'area:django')?.label).toBe('django');
+        const model = buildSemanticGraph(large, { view: 'overview', areaPath: 'django', maxNodes: 80 });
+        const inner = model.nodes.filter(item => !item.external);
+        expect(inner.filter(item => item.kind === 'area')).toHaveLength(45);
+        expect(inner.filter(item => item.kind === 'file').map(item => [item.id, item.label])).toEqual([
+            ['file:django/__init__.py', '__init__.py'], ['file:django/shortcuts.py', 'shortcuts.py']]);
+        expect(model.nodes.find(item => item.id === 'area:django/app00')).toMatchObject({ label: 'app00', areaPath: 'django/app00', count: 2 });
+        expect(model.nodes.some(item => item.filePath?.startsWith('django/app'))).toBe(false);
+        expect(model.edges.find(edge => edge.source === 'area:django/app01' && edge.target === 'area:django/app00')?.count).toBe(2);
+    });
+    it('caps before the folder layout and keeps outside areas in their own lane', () => {
+        const model = buildSemanticGraph(large, { view: 'overview', areaPath: 'django' });
+        expect(model.nodes).toHaveLength(40);
+        expect(model.omittedNodes).toBe(model.totalNodes - 40);
+        const outside = model.nodes.filter(item => item.external);
+        expect(outside.map(item => item.id).sort()).toEqual(['area:(root)', 'area:tests']);
+        outside.forEach(item => expect(item.detail).toBe('External source area · inferred from file paths'));
+        const platform = insidePlatform(model);
+        const lane = model.platforms!.find(item => item.id === 'hierarchy:outside')!;
+        expect(lane.label).toBe('Outside');
+        expect(model.platforms!.map(item => item.id).sort()).toEqual(['hierarchy:folder:django', 'hierarchy:outside']);
+        model.nodes.filter(item => !item.external).forEach(item => expect(containsNode(platform, item)).toBe(true));
+        outside.forEach(item => { expect(containsNode(lane, item)).toBe(true); expect(containsNode(platform, item)).toBe(false); });
+        // The platform is exactly the packing of the drawn bricks, not of all 47 inner parts.
+        const drawn = model.nodes.filter(item => !item.external).map(item => ({ ...item, position: [0, 0, 0] as [number, number, number] }));
+        const repacked = layoutFolderHierarchy(drawn, 'django').find(item => item.path === 'django')!;
+        expect([platform.width, platform.depth]).toEqual([repacked.width, repacked.depth]);
+        const complete = insidePlatform(buildSemanticGraph(large, { view: 'overview', areaPath: 'django', maxNodes: 80 }));
+        expect(platform.width * platform.depth).toBeLessThan(complete.width * complete.depth);
+    });
+    it('names outside areas as siblings of a nested area and keeps relative labels below it', () => {
+        const nested = buildSemanticGraph(large, { view: 'overview', areaPath: 'django/app00' });
+        expect(nested.title).toBe('django/app00');
+        expect(nested.nodes.filter(item => !item.external).map(item => [item.id, item.label])).toEqual([
+            ['area:django/app00/models', 'models'], ['area:django/app00/views', 'views']]);
+        expect(nested.nodes.filter(item => item.external).map(item => item.id).sort()).toEqual(['area:(root)', 'area:django/app01', 'area:tests']);
+        expect(nested.platforms!.find(item => item.path === 'django/app00')?.label).toBe('django/app00');
+        const deeper = buildSemanticGraph(large, { view: 'overview', areaPath: 'django/app01/models' });
+        expect(deeper.nodes.filter(item => !item.external).map(item => item.label)).toEqual(['fields', 'base.py']);
+        expect(deeper.platforms!.filter(item => item.id !== 'hierarchy:outside').map(item => item.path)).toEqual(['django/app01/models']);
+    });
+    it('applies the source-container rule relative to the opened area', () => {
+        const ui: GraphData = { total_nodes: 3, edges: [], nodes: [node(1, 'graph-ui/src/App.tsx', 'App'),
+            node(2, 'graph-ui/src/app/AtlasChrome.tsx', 'AtlasChrome'), node(3, 'graph-ui/vite.config.ts', 'config')] };
+        const model = buildSemanticGraph(ui, { view: 'overview', areaPath: 'graph-ui' });
+        expect(model.nodes.map(item => [item.id, item.label])).toEqual([['area:graph-ui/src', 'src'], ['area:graph-ui/src/app', 'src/app'],
+            ['file:graph-ui/vite.config.ts', 'vite.config.ts']]);
+        expect(buildSemanticGraph(ui, { view: 'overview', areaPath: 'graph-ui/src' }).nodes.map(item => item.id)).toEqual(['file:graph-ui/src/App.tsx']);
     });
 });
 

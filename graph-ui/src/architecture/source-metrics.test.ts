@@ -49,6 +49,17 @@ describe('source size and language encoding', () => {
         expect(catalog.referencePath).toBe('src/store');
         expect(languageColor('TypeScript')).toBe(languageColor(sourceLanguage('other/project/test.tsx')));
     });
+    it('measures the sub-areas of an opened area without changing the repository reference', () => {
+        const nested: GraphData = { total_nodes: 3, edges: [], nodes: [node(1, 'django/contrib/admin/options.py', 'Module', 1, 400),
+            node(2, 'django/contrib/auth/models.py', 'Module', 1, 100), node(3, 'django/shortcuts.py', 'Module', 1, 50)] };
+        const catalog = collectSourceMetrics(nested);
+        expect(catalog.areas.get('django')?.lines).toBe(550);
+        expect(catalog.areas.get('django/contrib')?.lines).toBe(500);
+        expect(catalog.areas.get('django/contrib/admin')?.lines).toBe(400);
+        expect(catalog.referencePath).toBe('django');
+        const area = buildSemanticGraph(nested, { view: 'overview', areaPath: 'django' }).nodes.find(item => item.id === 'area:django/contrib')!;
+        expect(measureSourceNode(area, catalog)?.lines).toBe(500);
+    });
     it('compresses million-line outliers into finite bounded monotonic heights', () => {
         const heights = [0, 1, 100, 10000, 1000000].map(lines => sourceBrickHeight(lines, 1000000));
         heights.forEach((height, index) => { expect(Number.isFinite(height)).toBe(true); expect(height).toBeGreaterThanOrEqual(1.5); expect(height).toBeLessThanOrEqual(14); if (index) expect(height).toBeGreaterThan(heights[index - 1]); });

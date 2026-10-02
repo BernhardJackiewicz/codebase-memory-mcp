@@ -1,6 +1,6 @@
 import type { GraphData } from '../galaxy/types';
 import type { SemanticNode } from './semantic-graph';
-import { areaOf, MAP_RELATIONS } from './repository-map';
+import { areaTrail, MAP_RELATIONS } from './repository-map';
 
 export interface LanguageMeasure { name: string; color: string; lines: number; files: number }
 export interface SourceMeasure {
@@ -102,9 +102,10 @@ export function collectSourceMetrics(graph: GraphData, knownFiles: string[] = []
             if (file) file.connection = 'connected';
         }
     }
+    // Every level of a file's trail, so an opened area can measure its own sub-areas.
     const areaFiles = new Map<string, FileMeasure[]>();
-    for (const file of files.values()) {
-        const area = areaOf(file.path); const items = areaFiles.get(area) ?? [];
+    for (const file of files.values()) for (const area of areaTrail(file.path)) {
+        const items = areaFiles.get(area) ?? [];
         items.push(file); areaFiles.set(area, items);
     }
     const areas = new Map([...areaFiles].map(([area, members]) => [area, summarize(members)]));
@@ -118,7 +119,8 @@ export function collectSourceMetrics(graph: GraphData, knownFiles: string[] = []
         return result;
     };
     // Root-direct files remain truthful measurements, but the root platform is
-    // the visual baseline rather than a competing folder-size denominator.
+    // the visual baseline rather than a competing folder-size denominator. A
+    // nested area never outgrows the repository area that contains it.
     const folderReference = largest([...areas].filter(([path]) => path !== '(root)').map(([path, area]) => [path, area.lines]));
     const reference = folderReference ?? largest([...files.values()].map(file => [file.path, file.lines]));
     return { files, areas, total, referenceLines: Math.max(1, reference?.lines ?? 1),

@@ -1,10 +1,11 @@
-import { Component, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Component, Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { ArchitectureOverviewDto } from '../core/intelligence-provider';
 import type { GraphData, GraphNode } from '../galaxy/types';
 import { graphNodeEvidence, useSelectionEvidence, type SelectionEvidenceListener } from '../galaxy/selection-evidence';
 import { ArchitectureScene } from './ArchitectureScene';
 import { buildSemanticGraph, semanticEntryPoints, type SemanticNode, type SemanticView } from './semantic-graph';
 import { loadRouteGraph, type RouteGraphSnapshot } from './route-graph-source';
+import { areaLevels } from './repository-map';
 import { collectSourceMetrics, measureSourceNode } from './source-metrics';
 import SourceMetricsDetails from './SourceMetricsDetails';
 import type { CoverageIndex } from '../app/tree-model';
@@ -139,7 +140,7 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
         <div className="spatial-controls">
             {['overview', 'dependencies', 'entryPoints'].includes(view) && <div className="spatial-projection-modes" role="group" aria-label="Overview mode"><button aria-pressed={view !== 'entryPoints'} onClick={() => onView('overview')}>Structure</button><button aria-pressed={view === 'entryPoints'} onClick={() => onView('entryPoints')}>Entry points</button></div>}
             {(view === 'overview' || view === 'dependencies') && <nav aria-label="Architecture location"><button onClick={clearScope}>{project}</button>
-                {areaPath && <><span>/</span><button onClick={() => { setFilePath(undefined); setSelection(undefined); }}>{areaPath}</button></>}{filePath && <><span>/</span><span>{filePath.split('/').at(-1)}</span></>}
+                {areaPath && areaLevels(areaPath).map((level, index, levels) => <Fragment key={level}><span>/</span><button onClick={() => { setAreaPath(level); setFilePath(undefined); setSelection(undefined); }}>{index ? level.slice(levels[index - 1].length + 1) : level}</button></Fragment>)}{filePath && <><span>/</span><span>{filePath.split('/').at(-1)}</span></>}
             </nav>}
             {view === 'entryPoints' && <><label>Start <select aria-label="Entry point" value={currentEntry?.id ?? ''} onChange={event => { const node = entries.find(node => node.id === Number(event.target.value)); setEntryChoice(node ? { node, generation } : undefined); setSelection(undefined); }}>
                 {!entries.length && <option value="">No indexed entry points</option>}{entries.map(node => <option key={node.id} value={node.id}>{node.name} · {node.file_path}</option>)}
@@ -161,7 +162,8 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
         <div className="spatial-map-layout">
             <div className="spatial-map"><SceneBoundary key={project}>
                 {model.nodes.length ? <ArchitectureScene model={model} selectedId={selectedNode?.id} selectedEdgeId={selectedEdge?.id} onSelect={selectNode}
-                    onSelectEdge={id => { setSelection({ scope, edge: id }); setMemberLimit(5); }} onOpen={id => { const node = nodesById.get(id); if (node && (node.kind === 'area' || node.kind === 'file')) openGroup(node); }} onClearSelection={clearScope} active={active} planar={planar} resetKey={resetKey} catalog={catalog} heightMetric={heightMetric} colorMetric={colorMetric} hotspots={hotspotCatalog} showHotspots={showHotspots} />
+                    onSelectEdge={id => { setSelection({ scope, edge: id }); setMemberLimit(5); }} onOpen={id => { const node = nodesById.get(id); if (node && (node.kind === 'area' || node.kind === 'file')) openGroup(node); }} onClearSelection={clearScope} active={active} planar={planar} resetKey={resetKey} catalog={catalog} heightMetric={heightMetric} colorMetric={colorMetric} hotspots={hotspotCatalog} showHotspots={showHotspots}
+                    adaptiveLabels={view === 'overview' || view === 'dependencies'} />
                     : <div className="spatial-unavailable">{filter ? 'No matching graph evidence. Try a broader filter.' : view === 'hotspots' ? 'No ranked hotspot measurements are available in this snapshot.' : view === 'entryPoints' ? 'No indexed entry points in this snapshot.' : view === 'routes' ? 'No endpoint evidence is available in this snapshot.' : filePath ? 'No indexed symbols in this file. Use “Read this file” to inspect its source.' : 'No source nodes are available in this repository snapshot.'}</div>}
             </SceneBoundary><div className="spatial-map-caption"><span title={model.positionMeaning}>{view === 'hotspots' ? 'Gravity: incoming references' : view === 'entryPoints' ? 'Static call paths' : 'Source folders and indexed relationships'}</span><span>Drag to orbit · scroll to zoom · select to inspect</span></div></div>
             <aside className="spatial-inspector" aria-label="Architecture inspector">
