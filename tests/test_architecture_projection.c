@@ -1206,6 +1206,65 @@ TEST(projection_many_small_components_stay_within_response_budget) {
     PASS();
 }
 
+static yyjson_val *projection_component_of(yyjson_doc *doc, const char *qn) {
+    yyjson_val *parts = projection_field(doc, "components");
+    for (size_t i = 0; i < yyjson_arr_size(parts); i++) {
+        yyjson_val *part = yyjson_arr_get(parts, i);
+        yyjson_val *rep = yyjson_arr_get(yyjson_obj_get(part, "representatives"), 0);
+        if (!strcmp(yyjson_get_str(yyjson_obj_get(rep, "qualified_name")), qn))
+            return part;
+    }
+    return NULL;
+}
+
+TEST(projection_python_test_files_follow_name_conventions) {
+    cbm_store_t *store = projection_store();
+    ASSERT_NOT_NULL(store);
+    projection_node(store, "Class", "projection.app.tests.ViewTests", "app/tests.py", false);
+    projection_node(store, "Function", "projection.app.models_test.check", "app/models_test.py",
+                    false);
+    projection_node(store, "Function", "projection.conftest.fixture", "test/conftest.py", false);
+    projection_node(store, "Function", "projection.check", "test/check.c", false);
+    projection_node(store, "Function", "projection.app.views.index", "app/views.py", false);
+    /* django/test/ ships Django's testing API. The extractor flags its
+     * functions from the directory alone; the class carries no flag. */
+    int64_t client = projection_node(store, "Class", "projection.django.test.client.Client",
+                                     "django/test/client.py", false);
+    cbm_node_t method = {.project = "projection",
+                         .label = "Method",
+                         .name = "get",
+                         .qualified_name = "projection.django.test.client.Client.get",
+                         .file_path = "django/test/client.py",
+                         .properties_json = "{\"is_test\":true}"};
+    int64_t get = cbm_store_upsert_node(store, &method);
+    projection_edge(store, client, get, "DEFINES_METHOD");
+    char *json = NULL;
+    ASSERT_EQ(cbm_store_architecture_projection(store, "projection", NULL, &json), CBM_STORE_OK);
+    yyjson_doc *doc = yyjson_read(json, strlen(json), 0);
+    ASSERT_NOT_NULL(doc);
+    const char *tests[] = {"projection.app.tests.ViewTests", "projection.app.models_test.check",
+                           "projection.conftest.fixture", "projection.check"};
+    for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); i++) {
+        yyjson_val *part = projection_component_of(doc, tests[i]);
+        ASSERT_NOT_NULL(part);
+        ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(part, "role")), "test");
+        ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(part, "role_basis")), "test_path_convention");
+    }
+    yyjson_val *views = projection_component_of(doc, "projection.app.views.index");
+    ASSERT_NOT_NULL(views);
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(views, "role")), "non_test");
+    /* One role per file: the class and its flagged method stay one part. */
+    yyjson_val *api = projection_component_of(doc, "projection.django.test.client.Client");
+    ASSERT_NOT_NULL(api);
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(api, "role")), "non_test");
+    ASSERT_EQ(yyjson_get_int(yyjson_obj_get(api, "member_count")), 2);
+    ASSERT_EQ(yyjson_arr_size(projection_field(doc, "components")), 6);
+    yyjson_doc_free(doc);
+    free(json);
+    cbm_store_close(store);
+    PASS();
+}
+
 SUITE(architecture_projection) {
     RUN_TEST(projection_accounts_for_isolated_nodes_and_files);
     RUN_TEST(projection_preserves_typed_edges_and_contiguous_paths);
@@ -1232,4 +1291,5 @@ SUITE(architecture_projection) {
     RUN_TEST(projection_oversized_evidence_is_omitted_without_truncating_values);
     RUN_TEST(projection_repeated_behavior_evidence_preserves_base_graph_under_budget);
     RUN_TEST(projection_many_small_components_stay_within_response_budget);
+    RUN_TEST(projection_python_test_files_follow_name_conventions);
 }

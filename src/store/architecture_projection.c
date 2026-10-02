@@ -193,23 +193,38 @@ static bool ap_cluster_edge(int type) {
 }
 
 /* Conservative source conventions supplement the positive indexed is_test
- * flag. Non-test classification means no test evidence, not production use. */
-static bool ap_test_path(const char *path) {
+ * flag. Non-test classification means no test evidence, not production use.
+ * Python discovers tests by file name (test_*.py, *_test.py, tests.py,
+ * conftest.py). A singular test/ directory there is often a shipped package
+ * (django/test/ is Django's public testing API), so for a .py file without a
+ * test name it is no signal on its own. *package then tells the caller that
+ * the indexed flag only repeats that directory rule (cbm_is_test_file) and
+ * must not decide alone either; it keeps one role per file. tests/ and
+ * __tests__/ stay directory signals, and test/ stays one for other files. */
+static bool ap_test_path(const char *path, bool *package) {
     const char *base = path;
+    bool directory = false, singular = false;
     for (const char *p = path;; p++) {
         if (*p == '/' || *p == '\\' || !*p) {
             size_t len = (size_t)(p - base);
-            if ((len == 4 && !strncmp(base, "test", len)) ||
-                (len == 5 && !strncmp(base, "tests", len)) ||
+            if ((len == 5 && !strncmp(base, "tests", len)) ||
                 (len == 9 && !strncmp(base, "__tests__", len)))
-                return true;
+                directory = true;
+            else if (len == 4 && !strncmp(base, "test", len))
+                singular = true;
             if (!*p)
                 break;
             base = p + 1;
         }
     }
-    return !strncmp(base, "test_", 5) || strstr(base, "_test.") || strstr(base, ".test.") ||
-           strstr(base, ".spec.");
+    size_t len = strlen(base);
+    bool python = len > 3 && !strcmp(base + len - 3, ".py");
+    if (directory || !strncmp(base, "test_", 5) || strstr(base, "_test.") ||
+        strstr(base, ".test.") || strstr(base, ".spec.") ||
+        (python && (!strcmp(base, "tests.py") || !strcmp(base, "conftest.py"))))
+        return true;
+    *package = singular && python;
+    return singular && !python;
 }
 
 static int ap_counts(ap_context *c, const char *project) {
@@ -269,7 +284,8 @@ static int ap_load(ap_context *c, const char *project) {
         n->end = sqlite3_column_int(stmt, 6);
         n->entry = sqlite3_column_int(stmt, 7) != 0;
         n->test_property = sqlite3_column_int(stmt, 8) != 0;
-        n->test = n->test_property || ap_test_path(n->file);
+        bool package = false;
+        n->test = ap_test_path(n->file, &package) || (n->test_property && !package);
         n->structural = !strcmp(n->label, "Project") || !strcmp(n->label, "Folder");
         n->declared = !strcmp(n->label, "Module") || !strcmp(n->label, "Package") ||
                       !strcmp(n->label, "Namespace") || !strcmp(n->label, "Class") ||
