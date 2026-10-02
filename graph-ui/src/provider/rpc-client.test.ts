@@ -237,6 +237,16 @@ describe('die Werkzeuge, die erst auf Bitte JSON liefern', () => {
         expect(result.callers).toHaveLength(1);
     });
 
+    it('spricht Richtung und Tiefe in den Woertern des trace_path-Schemas', async () => {
+        const { client: c, rpc } = client([{ tool: 'trace_path', json: { function: 'createUser', direction: 'inbound' } }]);
+        await c.tracePath(RECORDED_PROJECT, 'createUser', { direction: 'inbound', depth: 2 });
+        expect(rpc.calls[0].args).toMatchObject({ function_name: 'createUser', direction: 'inbound', depth: 2 });
+        expect(rpc.calls[0].args).not.toHaveProperty('max_depth');
+        await c.tracePath(RECORDED_PROJECT, 'createUser');
+        expect(rpc.calls[1].args).not.toHaveProperty('direction');
+        expect(rpc.calls[1].args).not.toHaveProperty('depth');
+    });
+
     it('gibt die Ablehnung wegen Mehrdeutigkeit als Antwort weiter, nicht als Fehler', async () => {
         const { client: c } = client([{
             tool: 'trace_path',
