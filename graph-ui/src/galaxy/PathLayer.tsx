@@ -5,8 +5,8 @@
  * Farbe ihrer Art und ohne Tiefentest, damit sie im abgedunkelten Rest nicht
  * verschwinden. Ihre Art steht als Beschriftung daneben, und nur an ihnen:
  * eine Beschriftung an jeder Kante waere bei hundert Kanten kein Text mehr.
- * Der Schritt, auf dem der Leser steht, ist heller und traegt einen Ring an
- * seinem Ziel. Gezeichnet wird an den Positionen, die die Szene wirklich
+ * Der Schritt, auf dem der Leser steht, ist heller und traegt einen Ring samt
+ * Namen an seinem Ziel. Gezeichnet wird an den Positionen, die die Szene wirklich
  * zeichnet, also nach der Trennung auf dem Schirm.
  */
 import { useEffect, useMemo } from 'react';
@@ -60,6 +60,7 @@ export function PathLayer({ nodes, path }: { nodes: readonly GraphNode[]; path: 
                 <Html position={[goal.to.x, goal.to.y, goal.to.z]} zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
                     <span className="atlas-galaxy-path-step" data-testid="atlas-galaxy-path-step" data-node={goal.to.id}>
                         <i aria-hidden="true" />
+                        <b>{goal.to.name}</b>
                     </span>
                 </Html>
             )}

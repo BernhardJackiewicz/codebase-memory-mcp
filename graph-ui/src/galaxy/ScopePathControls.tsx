@@ -18,9 +18,14 @@ export function PathPicker({ nodes, onPick }: { nodes: readonly GraphNode[]; onP
     const details = useRef<HTMLDetailsElement>(null);
     const matches = useMemo(() => {
         const needle = query.trim().toLocaleLowerCase();
+        // Name matches first, as in the node search: exact, prefix, anywhere, then path or qualified name.
+        const rank = (node: GraphNode) => {
+            const name = node.name.toLocaleLowerCase();
+            return name === needle ? 0 : name.startsWith(needle) ? 1 : name.includes(needle) ? 2 : 3;
+        };
         return nodes.filter(node => !needle || [node.name, node.qualified_name, node.file_path]
             .some(value => value?.toLocaleLowerCase().includes(needle)))
-            .sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id);
+            .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name) || a.id - b.id);
     }, [nodes, query]);
     return <details ref={details} className="atlas-graph-path-picker" onKeyDown={closeOnEscape}>
         <summary title={text.pathToTitle}>{text.pathTo}</summary>

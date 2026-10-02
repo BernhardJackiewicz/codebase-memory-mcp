@@ -26,7 +26,8 @@ it('searches only the loaded scope, sorted by name, and closes after a pick', as
     const names = () => [...host.querySelectorAll('li strong')].map(entry => entry.textContent);
     expect(names()).toEqual(['as_sql', 'resolve', 'save']);
     await type(host.querySelector<HTMLInputElement>('input[aria-label="Find a path target"]')!, 'save');
-    expect(names()).toEqual(['resolve', 'save']);
+    // A name match ranks above a match in the file path.
+    expect(names()).toEqual(['save', 'resolve']);
     await type(host.querySelector<HTMLInputElement>('input')!, 'nothing');
     expect(host.textContent).toContain('No matching node in the loaded scope.');
     await type(host.querySelector<HTMLInputElement>('input')!, 'sql');
