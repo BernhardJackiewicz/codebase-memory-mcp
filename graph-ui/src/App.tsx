@@ -4314,8 +4314,8 @@ export default function App(): JSX.Element {
         {
             key: 'projects',
             shortcut: 'p',
-            label: messages.projects.menuLabel,
-            title: messages.menu.projects,
+            label: messages.projects.addIndexLabel,
+            title: messages.projects.addIndexTitle,
             onSelect: () => setProjectsOpen((open) => !open),
         },
         /*

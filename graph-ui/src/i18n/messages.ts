@@ -124,7 +124,7 @@ export const messages = {
         impact: 'atlas: what a change would reach, and what covers it (alt+c)',
         helpOpen: 'help: what this reads, what it cannot do, and every key it listens to (?)',
         helpClose: 'help: close this page (?)',
-        projects: 'Choose a repository folder to index',
+        projects: 'atlas: what this server has indexed, index more, and what the server is doing (alt+p)',
     },
 
     /**
@@ -979,8 +979,11 @@ export const messages = {
         panelLabel: 'projects',
         close: '[esc] close',
         closeLabel: CLOSE,
-        /** The entry in the atlas row; alt+p opens it as well. */
-        menuLabel: 'Add project index',
+        /** The entry in the atlas row. The letter sits in brackets. */
+        menuLabel: '[p]rojects',
+        /** The atlas row entry that opens this panel to index a repository; alt+p opens it as well. */
+        addIndexLabel: 'Add project index',
+        addIndexTitle: 'Choose a repository folder to index',
 
         /* ------------------------------------------------------- the list */
 
