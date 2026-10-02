@@ -117,4 +117,9 @@ export const browserChatText = {
     historyTrimmed: (count: number) => `${count} earlier ${count === 1 ? 'message was' : 'messages were'} left out to fit the input limit.`,
     waitingForScope: 'Waiting for the complete scope before explaining…',
     partialScope: 'This scope did not load completely, so it is not explained automatically.',
+    tokenLimits: (model: string) => `Token limits for ${model}`,
+    inputLimit: 'Input (context)',
+    outputLimit: 'Output (answer)',
+    limitRange: (min: number, max: number) => `${min.toLocaleString('en-US')} to ${max.toLocaleString('en-US')} tokens`,
+    limitsNote: (input: number, output: number) => `Stored in this browser for each model. Automatic explanations use at most ${input.toLocaleString('en-US')} input and ${output.toLocaleString('en-US')} output tokens.`,
 };

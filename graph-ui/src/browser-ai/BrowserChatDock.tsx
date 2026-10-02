@@ -5,8 +5,9 @@ import { BROWSER_MODELS, removeBrowserModelCache } from './model-policy';
 import { buildChatMessages, selectionLocation, snapshotAttachment, snapshotReaderContext, trimChatHistory, type BrowserChatAttachment, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatTurn } from './chat-model';
 import { explanationInput, EXPLANATION_DELAY_MS, type ExplanationInput } from './proactive-selection';
 import { prepareExplanationContext, type PreparedExplanationContext } from './explanation-context';
-import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, CHAT_INPUT_TOKENS, citedInterpretation, parseExplanationResponse, explanationMessages, formatExplanationEvidence } from './explanation-response';
+import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, citedInterpretation, parseExplanationResponse, explanationMessages, formatExplanationEvidence } from './explanation-response';
 import { relationshipAnswer } from './relationship-answer';
+import { clampTokenLimits, tokenLimitBounds, tokenLimitsFor, useAgentPreferences } from './agent-preferences';
 import { browserChatText } from './strings';
 import { isGpuRuntimeFailure, BrowserRuntimeFatalError } from './runtime-fault';
 import ChatMarkdown from './ChatMarkdown';
@@ -82,13 +83,32 @@ function PacketSource({ packet, citation }: { packet: PreparedExplanationContext
     </>;
 }
 
+/** A typed limit applies on blur or Enter, clamped into the model policy. */
+function TokenLimitField({ id, label, value, min, max, onCommit }: { id: string; label: string; value: number; min: number; max: number; onCommit: (value: number) => void }): JSX.Element {
+    const [text, setText] = useState(String(value));
+    useEffect(() => { setText(String(value)); }, [value]);
+    const commit = (): void => {
+        const typed = Number.parseInt(text, 10);
+        const next = Number.isFinite(typed) ? Math.min(max, Math.max(min, typed)) : value;
+        setText(String(next));
+        if (next !== value) onCommit(next);
+    };
+    return <div className="cbm-chat-token-limit">
+        <label htmlFor={id}>{label}</label>
+        <input id={id} type="number" inputMode="numeric" min={min} max={max} step={64} value={text} aria-describedby={`${id}-range`}
+            onChange={event => setText(event.target.value)} onBlur={commit} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commit(); } }} />
+        <small id={`${id}-range`}>{browserChatText.limitRange(min, max)}</small>
+    </div>;
+}
+
 function ContextSnapshot({ context }: { context: BrowserChatContext }): JSX.Element {
     return <details className="cbm-chat-attachment"><summary>{context.label}</summary><pre>{context.text}</pre></details>;
 }
 
 /** Keep mounted when collapsed: state and worker lifetime are independent of visibility. */
 export default function BrowserChatDock({ proactiveSelection, selectionScope = "", historyKey, proactive = true, onAgentStateChange, onAgentModelChange, settingsRequest = 0, open, onClose, showCollapsed = false, onOpen, attachment, readerContext, context = [], pendingContext, onContextConsumed, onContextRemoved, onAttachmentConsumed, onAttachmentRemoved, createRuntime = createBrowserChatRuntime, removeCache = removeBrowserModelCache }: BrowserChatDockProps): JSX.Element {
-    const [automatic, setAutomatic] = useState(true);
+    const { preferences, setPreferences } = useAgentPreferences();
+    const automatic = preferences.automatic;
     const [explanation, setExplanation] = useState<Explanation>();
     const explanations = useRef(new Map<string, Explanation>());
     const [retryExplanation, setRetryExplanation] = useState(0);
@@ -102,8 +122,12 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     const selected = useMemo(() => explanationInput(selectionScope, readerContext, proactiveSelection), [selectionScope, readerContext, proactiveSelection]);
     const selectionRef = useRef(selected); selectionRef.current = selected;
     const settingsSeen = useRef(settingsRequest);
-    const [modelId, setModelId] = useState(initialModel.id);
+    const modelId = preferences.modelId;
     const model = BROWSER_MODELS.find(candidate => candidate.id === modelId) ?? initialModel;
+    const limits = tokenLimitsFor(preferences, model);
+    // Short automatic explanations never exceed the configured limits either.
+    const autoOutput = Math.min(AUTO_OUTPUT_TOKENS, limits.outputTokens);
+    const autoInput = Math.min(AUTO_INPUT_TOKENS, limits.inputTokens, model.contextTokens - autoOutput);
     const [phase, setPhase] = useState<Phase>('off');
     const { draft, setDraft, turns, setTurns, ready: historyReady, historyNotice, clearHistory } = useChatHistory<ChatTurn>(historyKey);
     const [error, setError] = useState<string>();
@@ -214,13 +238,13 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             let request = explanationMessages(packet);
             let count = await currentRuntime.countTokens(request);
             if (!valid()) return;
-            for (let budget = 1900; count > Math.min(AUTO_INPUT_TOKENS, model.contextTokens - AUTO_OUTPUT_TOKENS) && budget >= 300; budget = Math.floor(budget * .6)) {
+            for (let budget = 1900; count > autoInput && budget >= 300; budget = Math.floor(budget * .6)) {
                 packet = prepareExplanationContext(snapshot.reader, snapshot.graph, budget);
                 request = explanationMessages(packet);
                 count = await currentRuntime.countTokens(request);
                 if (!valid()) return;
             }
-            if (!packet.evidence.length || count > Math.min(AUTO_INPUT_TOKENS, model.contextTokens - AUTO_OUTPUT_TOKENS)) {
+            if (!packet.evidence.length || count > autoInput) {
                 setExplanation({ key: snapshot.key, label: snapshot.label, answer: '', status: 'error', packet, error: !packet.evidence.length ? 'No source or graph evidence is available for this selection.' : 'This selection is too large for the local agent. Select a smaller code range and try again.' });
                 return;
             }
@@ -228,7 +252,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             setPhase('generating');
             // Keep an explanation together and ignore output from superseded selections.
             let shortened = false;
-            const answer = await currentRuntime.chat(request, () => {}, { maxOutputTokens: AUTO_OUTPUT_TOKENS, generationProfile: 'automatic-explanation',
+            const answer = await currentRuntime.chat(request, () => {}, { maxOutputTokens: autoOutput, generationProfile: 'automatic-explanation',
                 onComplete: ({ stopReason }) => { shortened = stopReason === 'length'; } });
             if (valid()) {
                 const result = parseExplanationResponse(answer, packet);
@@ -376,7 +400,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         try {
             let count = await currentRuntime.countTokens(request);
             if (epoch.current !== ticket || stopRequested.current) return;
-            const limit = Math.min(CHAT_INPUT_TOKENS, model.contextTokens - model.maxOutputTokens);
+            const limit = Math.min(limits.inputTokens, model.contextTokens - limits.outputTokens);
             // Earlier turns give way first, oldest first; the question and its evidence stay.
             while (!retry && count > limit && history.length) {
                 const characters = request.reduce((sum, message) => sum + message.content.length, 0);
@@ -406,7 +430,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             const output = await currentRuntime.chat(request, chunk => {
                 if (epoch.current !== ticket || stopRequested.current) return;
                 setTurns(previous => previous.map(item => item.id === id ? { ...item, answer: item.answer + chunk } : item));
-            }, { onComplete: ({ stopReason }) => { shortened = stopReason === 'length'; } });
+            }, { maxOutputTokens: limits.outputTokens, onComplete: ({ stopReason }) => { shortened = stopReason === 'length'; } });
             if (epoch.current !== ticket) return;
             setTurns(previous => previous.map(item => item.id === id ? { ...item, answer: stopRequested.current ? item.answer : output, status: stopRequested.current ? 'stopped' : 'complete',
                 ...shortened && !stopRequested.current ? { shortened } : {} } : item));
@@ -449,14 +473,22 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     return <>
         {settingsOpen && <AgentSettingsDialog onClose={() => setSettingsOpen(false)}>
         <section id="cbm-chat-model-settings" className="cbm-chat-settings" aria-label="Local model settings">
-            {proactive && <label><input type="checkbox" checked={automatic} onChange={event => setAutomatic(event.target.checked)} /> Explain selections automatically</label>}
+            {proactive && <label><input type="checkbox" checked={automatic} onChange={event => setPreferences({ automatic: event.target.checked })} /> Explain selections automatically</label>}
             <span className="cbm-chat-status" role="status">{status}</span>
             <label htmlFor="cbm-chat-model">Model</label>
-            <select id="cbm-chat-model" value={modelId} disabled={busy} onChange={event => { release(); explanations.current.clear(); setModelId(event.target.value); setError(undefined); setNotice(undefined); }}>
+            <select id="cbm-chat-model" value={modelId} disabled={busy} onChange={event => { release(); explanations.current.clear(); setPreferences({ modelId: event.target.value }); setError(undefined); setNotice(undefined); }}>
                 {BROWSER_MODELS.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.displayName} · {candidate.availability === 'unsupported' ? 'Requires runtime support' : candidate.id === model.id && phase === 'ready' ? 'Loaded' : downloaded.has(candidate.id) ? 'Downloaded this session' : 'Available'}</option>)}
             </select>
             <p>{sizeLabel(model.bytes)} download · {model.license}. Memory use is higher.</p>
             {model.compatibilityNote && <p>{model.compatibilityNote}</p>}
+            <fieldset className="cbm-chat-token-limits">
+                <legend>{browserChatText.tokenLimits(model.displayName)}</legend>
+                <TokenLimitField id="cbm-chat-input-tokens" label={browserChatText.inputLimit} value={limits.inputTokens} {...tokenLimitBounds(model, limits.outputTokens).input}
+                    onCommit={inputTokens => setPreferences(current => ({ limits: { ...current.limits, [model.id]: clampTokenLimits(model, limits, { inputTokens }) } }))} />
+                <TokenLimitField id="cbm-chat-output-tokens" label={browserChatText.outputLimit} value={limits.outputTokens} {...tokenLimitBounds(model, limits.outputTokens).output}
+                    onCommit={outputTokens => setPreferences(current => ({ limits: { ...current.limits, [model.id]: clampTokenLimits(model, limits, { outputTokens }) } }))} />
+                <p>{browserChatText.limitsNote(autoInput, autoOutput)}</p>
+            </fieldset>
             <p><a href={model.modelCard} target="_blank" rel="noreferrer">Model details</a> · Downloads come from Hugging Face. No model downloads automatically.</p>
             <div className="cbm-chat-model-actions">
                 {phase === 'off' && <button type="button" className="cbm-chat-primary" disabled={model.availability !== 'available'} onClick={() => { void prepare(); }}>{runtimeFailed ? 'Reload model' : downloaded.has(model.id) ? 'Load model' : 'Download & load'}</button>}

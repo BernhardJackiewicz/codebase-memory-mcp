@@ -26,3 +26,9 @@
 .cbm-agent-settings .cbm-chat-status { color: var(--chat-muted); font-size: 12px; }
 .cbm-agent-settings .cbm-chat-loading { padding: 0; }
 .cbm-agent-settings .cbm-chat-error, .cbm-agent-settings .cbm-chat-notice { margin: 0 !important; }
+.cbm-agent-settings .cbm-chat-token-limits { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px 16px; margin: 0; padding: 12px; border: 1px solid var(--chat-border); border-radius: 9px; }
+.cbm-agent-settings .cbm-chat-token-limits legend { padding: 0 6px; font-size: 12px; font-weight: 500; }
+.cbm-agent-settings .cbm-chat-token-limits p { grid-column: 1 / -1; }
+.cbm-agent-settings .cbm-chat-token-limit { display: grid; gap: 4px; }
+.cbm-agent-settings .cbm-chat-token-limit input { width: 100%; font: inherit; color: inherit; border: 1px solid var(--chat-border); background: #0d1612; border-radius: 7px; padding: 7px 10px; }
+.cbm-agent-settings .cbm-chat-token-limit small { color: var(--chat-muted); font-size: 11px; }
