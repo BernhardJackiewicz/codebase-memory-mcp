@@ -415,16 +415,16 @@ export function principalFrame(points: readonly Vector3Like[]): PrincipalFrame {
 }
 
 /**
- * Wie weit eine Kamera entlang ihrer Blickrichtung zuruecktreten muss, damit
- * jeder Punkt mit Rand im Bild liegt.
+ * Wie weit eine Kamera entlang ihrer Blickrichtung treten muss, damit jeder
+ * Punkt mit Rand im Bild liegt und der aeusserste genau am Rand steht.
  *
  * Die Punkte stehen im Blickraum der Kamera (vor ihr ist z negativ). Ein
- * Schritt zurueck aendert ihr x und y nicht, nur ihre Tiefe, also ist die
- * Antwort fuer jeden Punkt geschlossen ausrechenbar: die Tiefe, bei der er
- * genau am Rand steht, weniger der Tiefe, die er hat. Null heisst: alles ist
- * schon im Bild, und die Kamera bleibt, wo sie ist. Sie tritt nie vor.
+ * Schritt entlang der Blickrichtung aendert ihr x und y nicht, nur ihre Tiefe,
+ * also ist die Antwort fuer jeden Punkt geschlossen ausrechenbar: die Tiefe,
+ * bei der er genau am Rand steht, weniger der Tiefe, die er hat. Positiv heisst
+ * zurueck, negativ heisst vor; ohne brauchbare Punkte bleibt sie stehen.
  */
-export function containBackoff(
+export function containShift(
     points: readonly Vector3Like[],
     fovDegrees: number,
     aspect: number,
@@ -434,15 +434,15 @@ export function containBackoff(
     const scale = Number.isFinite(margin) && margin > 0 ? margin : 1;
     const vertical = Math.tan(fov / 2) / scale;
     const horizontal = vertical * (Number.isFinite(aspect) && aspect > 0 ? aspect : 1);
-    let back = 0;
+    let shift = Number.NEGATIVE_INFINITY;
     for (const point of points) {
         if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) {
             continue;
         }
         const needed = Math.max(Math.abs(point.x) / horizontal, Math.abs(point.y) / vertical);
-        back = Math.max(back, needed + point.z);
+        shift = Math.max(shift, needed + point.z);
     }
-    return back;
+    return Number.isFinite(shift) ? shift : 0;
 }
 
 /** Wo die Kamera steht, damit die ganze Wolke im Bild ist. */

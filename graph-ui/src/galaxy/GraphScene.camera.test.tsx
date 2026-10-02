@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PerspectiveCamera, Vector3 } from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { CameraAnimator, FitContainment, type CameraTarget } from './GraphScene';
+import { FRAME_MARGIN, FRAME_MIN_DISTANCE } from './camera-frame';
 import type { GraphNode } from './types';
 
 const fiber = vi.hoisted(() => ({ frames: [] as ((state: unknown, delta: number) => void)[] }));
@@ -52,29 +53,35 @@ describe('FitContainment', () => {
     const render = (nodes: GraphNode[], target: CameraTarget | null) => act(() => root.render(
         <FitContainment nodes={nodes} target={target} controlsRef={controlsRef} moved={moved} enabled />));
 
-    it('steps back along the view direction after a fit until added nodes are inside, keeping the direction', () => {
+    const half = Math.tan(25 * Math.PI / 180);
+    /** How much of the half-height the outermost node uses, margin included. */
+    const reach = (y: number) => y * FRAME_MARGIN / (scene.camera.position.z * half);
+
+    it('frames the next picture along the kept view direction: back for a larger one, forward for a smaller one', () => {
         moved.current = false;
         const fit = fitTo(800);
-        scene.camera.position.copy(fit.position);
-        render([node(1, 0, 0)], fit);
-        expect(scene.camera.position.z).toBe(800);
         render([node(1, 0, 0), node(2, 0, 900)], fit);
         expect(scene.camera.position.x).toBe(0); expect(scene.camera.position.y).toBe(0);
         expect(scene.camera.position.z).toBeGreaterThan(800);
-        const half = Math.tan(25 * Math.PI / 180);
-        expect(900 / (scene.camera.position.z * half)).toBeLessThan(1);
+        expect(reach(900)).toBeCloseTo(1, 4);
+        render([node(1, 0, 0), node(2, 0, 300)], fit);
+        expect(reach(300)).toBeCloseTo(1, 4);
+        // Never closer to the pivot than any fit would stand.
+        render([node(1, 0, 0)], fit);
+        expect(scene.camera.position.z).toBeCloseTo(FRAME_MIN_DISTANCE, 6);
     });
 
     it('leaves the camera alone after the reader moved it or after a fly-to', () => {
         moved.current = false;
         const fit = fitTo(800);
-        render([node(1, 0, 0)], fit);
+        render([node(1, 0, 0), node(2, 0, 300)], fit);
+        const framed = scene.camera.position.z;
         moved.current = true;
         render([node(1, 0, 0), node(2, 0, 900)], fit);
-        expect(scene.camera.position.z).toBe(800);
+        expect(scene.camera.position.z).toBe(framed);
         const fly = flyTo(0);
         render([node(1, 0, 0), node(2, 0, 900)], fly);
         render([node(1, 0, 0), node(2, 0, 1900)], fly);
-        expect(scene.camera.position.z).toBe(800);
+        expect(scene.camera.position.z).toBe(framed);
     });
 });

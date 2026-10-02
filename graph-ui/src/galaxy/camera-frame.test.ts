@@ -15,7 +15,7 @@ import {
     FLAT_MIN_ZOOM,
     FRAME_MARGIN,
     FRAME_MIN_DISTANCE,
-    containBackoff,
+    containShift,
     fitCamera,
     flatBounds,
     frameDistance,
@@ -333,37 +333,43 @@ describe('fitCamera', () => {
 });
 
 /*
- * Was nach einer Einpassung dazukommt (Review-Befund G1).
+ * Das naechste Bild desselben Scopes (Review-Befund G1).
  *
- * Ein Expand passt nicht neu ein; die Kamera tritt nur so weit zurueck, dass
- * die neuen Knoten mit Rand ins Bild kommen. Gerechnet im Blickraum: vor der
- * Kamera ist z negativ.
+ * Ein Expand und die Antwort nach einer Vorschau passen nicht neu ein; die
+ * Kamera tritt entlang ihrer Blickrichtung nur so weit zurueck oder vor, dass
+ * der aeusserste Knoten mit Rand am Bildrand steht. Gerechnet im Blickraum:
+ * vor der Kamera ist z negativ.
  */
-describe('containBackoff', () => {
+describe('containShift', () => {
     const ASPECT = 1.5;
     const half = Math.tan((FOV * Math.PI) / 360);
 
-    it('bleibt stehen, solange jeder Punkt mit Rand im Bild liegt', () => {
-        const points = [{ x: 0, y: 0, z: -400 }, { x: 100, y: -80, z: -500 }];
-        expect(containBackoff(points, FOV, ASPECT)).toBe(0);
-    });
-
     it('tritt genau so weit zurueck, dass der aeusserste Punkt am Rand steht', () => {
         const point = { x: 0, y: 300, z: -200 };
-        const back = containBackoff([point], FOV, ASPECT);
-        const depth = 200 + back;
-        expect((point.y * FRAME_MARGIN) / (depth * half)).toBeCloseTo(1, 6);
+        const back = containShift([point], FOV, ASPECT);
+        expect(back).toBeGreaterThan(0);
+        expect((point.y * FRAME_MARGIN) / ((200 + back) * half)).toBeCloseTo(1, 6);
+    });
+
+    it('tritt vor, wenn ein kleineres Bild mit viel Rand dasteht', () => {
+        const points = [{ x: 0, y: 0, z: -400 }, { x: 100, y: -80, z: -500 }];
+        const shift = containShift(points, FOV, ASPECT);
+        expect(shift).toBeLessThan(0);
+        const fills = points.map((point) => Math.max(
+            (Math.abs(point.x) * FRAME_MARGIN) / ((-point.z + shift) * half * ASPECT),
+            (Math.abs(point.y) * FRAME_MARGIN) / ((-point.z + shift) * half)));
+        expect(Math.max(...fills)).toBeCloseTo(1, 6);
     });
 
     it('rechnet die Breite mit dem Seitenverhaeltnis und holt auch Punkte hinter der Kamera', () => {
         const wide = { x: 600, y: 0, z: -100 };
-        const back = containBackoff([wide], FOV, ASPECT);
+        const back = containShift([wide], FOV, ASPECT);
         expect((wide.x * FRAME_MARGIN) / ((100 + back) * half * ASPECT)).toBeCloseTo(1, 6);
-        expect(containBackoff([{ x: 0, y: 0, z: 50 }], FOV, ASPECT)).toBeCloseTo(50, 6);
+        expect(containShift([{ x: 0, y: 0, z: 50 }], FOV, ASPECT)).toBeCloseTo(50, 6);
     });
 
-    it('uebergeht unbrauchbare Zahlen statt NaN zu liefern', () => {
-        expect(containBackoff([{ x: Number.NaN, y: 0, z: -1 }], FOV, ASPECT)).toBe(0);
-        expect(containBackoff([], FOV, ASPECT)).toBe(0);
+    it('bleibt ohne brauchbare Punkte stehen, statt NaN zu liefern', () => {
+        expect(containShift([{ x: Number.NaN, y: 0, z: -1 }], FOV, ASPECT)).toBe(0);
+        expect(containShift([], FOV, ASPECT)).toBe(0);
     });
 });

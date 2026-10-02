@@ -769,12 +769,10 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     }, [scope.result, scope.scope, organicKey, scope.depth]);
     const organicTask = useOrganicLayout(scope.scope ? scope.result?.data : undefined, organicOptions);
     const organic = organicTask.result;
-    // Jedes gezeichnete Bild desselben Scopes haelt seine Punkte fest, auch die
-    // Vorschau: sonst springt die Wolke beim Wechsel zur vollstaendigen Antwort.
     useEffect(() => {
-        if (organic) organicHistory.current = { key: organicKey, depth: scope.result?.depth ?? scope.depth, data: organic.data };
+        if (scope.complete && organic) organicHistory.current = { key: organicKey, depth: scope.depth, data: organic.data };
         if (!scope.scope) organicHistory.current = undefined;
-    }, [scope.scope, scope.result, organic, organicKey, scope.depth]);
+    }, [scope.complete, scope.scope, organic, organicKey, scope.depth]);
     const data = scope.scope ? organic?.data : layout;
     /*
      * Was die Szene zeigt, solange das naechste Bild noch angeordnet wird.
@@ -1462,8 +1460,9 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
      * Kantenarten) und nicht sein Bild: ein Expand, eine Vorschau und die
      * vollstaendige Antwort danach sind derselbe Ausschnitt, und eine Kamera,
      * die bei jedem davon neu einpasst, stellt den Leser jedes Mal anders hin
-     * (Review-Befund G1). Was dabei neu hinzukommt, holt die Szene selbst ins
-     * Bild, solange der Leser die Kamera nicht bewegt hat (GraphScene,
+     * (Review-Befund G1). Wie weit die Kamera fuer das neue Bild stehen muss,
+     * stellt die Szene selbst nach, entlang derselben Blickrichtung und nur,
+     * solange der Leser die Kamera nicht bewegt hat (GraphScene,
      * `FitContainment`).
      */
     const fitScope = mode === 'galaxy' && props.workspaceExpanded && scope.scope ? organicKey : undefined;

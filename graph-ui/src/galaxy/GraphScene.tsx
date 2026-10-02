@@ -87,9 +87,9 @@
  * 14. Neu (Review-Call 2026-10-02): CameraAnimator spielt einen Anflug, der
  *     schon vor dem Aufsetzen der Szene gesetzt war, nicht nach. Er gehoert
  *     zum Bild davor; eine Einpassung gilt weiter.
- * 15. Neu (Review-Call 2026-10-02): `FitContainment` holt Knoten, die nach
- *     einer Einpassung dazukommen, ins Bild, indem die Kamera entlang ihrer
- *     Blickrichtung zuruecktritt, solange der Leser sie nicht bewegt hat.
+ * 15. Neu (Review-Call 2026-10-02): `FitContainment` rahmt das naechste Bild
+ *     eines Scopes, ohne neu einzupassen: die Kamera tritt entlang ihrer
+ *     Blickrichtung zurueck oder vor, solange der Leser sie nicht bewegt hat.
  * 16. Neu (Review-Call 2026-10-02): die OrbitControls zoomen zum Mauszeiger
  *     (`zoomToCursor`), nicht mehr in die Bildmitte.
  */
@@ -107,7 +107,7 @@ import { EdgeLines } from './EdgeLines';
 import { NodeLabels } from './NodeLabels';
 import { ScreenNodeSeparation } from './ScreenNodeSeparation';
 import type { LabelBox } from './NodeLabels';
-import { containBackoff, fitCamera, flatBounds, frameDistance, orthographicZoom } from './camera-frame';
+import { FRAME_MIN_DISTANCE, containShift, fitCamera, flatBounds, frameDistance, orthographicZoom } from './camera-frame';
 import type { CameraFit, FrameBox } from './camera-frame';
 import { FRAME_WINDOW_MS, recordFrameWindow, recordSceneFacts } from './frame-rate';
 import { springStep } from '../agents/agent-motion';
@@ -340,17 +340,18 @@ export function CameraAnimator({
 }
 
 /*
- * Aenderung 15: was nach einer Einpassung dazukommt, kommt ins Bild.
+ * Aenderung 15: das naechste Bild eines Scopes wird gerahmt, nicht eingepasst.
  *
  * Ein Expand und die vollstaendige Antwort nach einer Vorschau passen nicht
  * neu ein (Review-Befund G1): eine neue Einpassung stellte die Kamera jedes
- * Mal anders hin. Die neuen Knoten liegen aber oft ausserhalb des alten
- * Rahmens, und die Trennung auf dem Schirm schiebt Knoten nach aussen. Also
- * tritt die Kamera entlang ihrer Blickrichtung genau so weit zurueck, dass
- * jeder gezeichnete Knoten mit Rand im Bild liegt (`containBackoff`). Richtung,
- * Oben und Drehpunkt bleiben. Das gilt nur, solange die letzte Lage eine
- * Einpassung war und der Leser die Kamera seitdem nicht bewegt hat: wer
- * hineingezoomt hat, wollte genau diesen Ausschnitt.
+ * Mal anders hin. Das neue Bild ist aber groesser oder kleiner als das alte,
+ * und die Trennung auf dem Schirm schiebt Knoten nach aussen. Also tritt die
+ * Kamera entlang ihrer Blickrichtung so weit zurueck oder vor, dass der
+ * aeusserste gezeichnete Knoten mit Rand am Bildrand steht (`containShift`).
+ * Richtung, Oben und Drehpunkt bleiben, und naeher als jede Einpassung
+ * (`FRAME_MIN_DISTANCE`) kommt sie dem Drehpunkt nicht. Das gilt nur, solange
+ * die letzte Lage eine Einpassung war und der Leser die Kamera seitdem nicht
+ * bewegt hat: wer gezoomt hat, wollte genau diesen Ausschnitt.
  */
 export function FitContainment({
     nodes,
@@ -368,30 +369,32 @@ export function FitContainment({
 }): null {
     const camera = useThree((state) => state.camera);
     const size = useThree((state) => state.size);
-    const armed = useRef(false);
+    const armed = useRef<CameraTarget | null>(null);
 
     useEffect(() => {
         if (target === null) {
             return;
         }
-        armed.current = target.immediate === true;
+        armed.current = target.immediate === true ? target : null;
         moved.current = false;
     }, [target, moved]);
 
     useEffect(() => {
-        if (!enabled || !armed.current || moved.current || size.height <= 0
+        const fit = armed.current;
+        if (!enabled || fit === null || moved.current || nodes.length === 0 || size.height <= 0
             || !(camera instanceof THREE.PerspectiveCamera)) {
             return;
         }
         camera.updateMatrixWorld();
         const view = nodes.map((node) =>
             new THREE.Vector3(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse));
-        const back = containBackoff(view, camera.fov, size.width / size.height);
-        if (!(back > 0.001)) {
+        const shift = Math.max(containShift(view, camera.fov, size.width / size.height),
+            FRAME_MIN_DISTANCE - camera.position.distanceTo(fit.lookAt));
+        if (!(Math.abs(shift) > 0.5)) {
             return;
         }
         const direction = camera.getWorldDirection(new THREE.Vector3());
-        camera.position.addScaledVector(direction, -back);
+        camera.position.addScaledVector(direction, -shift);
         camera.updateMatrixWorld();
         controlsRef.current?.update();
     }, [nodes, enabled, camera, size, controlsRef, moved]);
