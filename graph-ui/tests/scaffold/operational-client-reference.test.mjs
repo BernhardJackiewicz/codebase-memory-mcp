@@ -23,6 +23,17 @@ test('permits only operational client terms in the exact setup source/test files
     assert.equal(operationalClientReference('README.md', instruction + `; written by ${client}`), false);
 });
 
+test('the configuration reference may name only the client configuration variable', () => {
+    const variable = `${client.toUpperCase()}_CONFIG_DIR`;
+    const file = 'src/settings/ConfigReference.tsx';
+    assert.equal(operationalClientReference(file, `['${variable} · CODEX_HOME · KIRO_HOME', 'Agent integration locations.'],`), true);
+    for (const line of [`${client} Code`, `.${client}/settings.json`, `--install-${client}`, `${variable} for ${client}`,
+        `${variable}; written by ${client}`, `${variable}_EXTRA`]) {
+        assert.equal(operationalClientReference(file, line), false, line);
+    }
+    assert.equal(operationalClientReference('src/settings/SettingsPanel.tsx', variable), false);
+});
+
 test('authorship claims stay forbidden even beside an otherwise valid protocol reference', () => {
     for (const text of [`written by ${client}`, `Co-authored-by: ${client}`,
         `generated with ${client}`, `${client} authored this`, `@${client}`]) {

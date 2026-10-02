@@ -4314,8 +4314,8 @@ export default function App(): JSX.Element {
         {
             key: 'projects',
             shortcut: 'p',
-            label: 'Add project index',
-            title: 'Choose a repository folder to index',
+            label: messages.projects.menuLabel,
+            title: messages.menu.projects,
             onSelect: () => setProjectsOpen((open) => !open),
         },
         /*
@@ -4574,7 +4574,7 @@ export default function App(): JSX.Element {
             onSelectShadowNode={(node) => {
                 setGalaxySelection(undefined);
                 onSelectionEvidence(selectionEvidenceContext({ project, view: 'galaxy-coverage', source: '/api/layout missed_graph',
-                    label: `Coverage · ${node.name}`, selected: { id: node.sourceId, name: node.name, path: node.file_path, kind: node.label },
+                    label: messages.galaxy.coverageSelection(node.name), selected: { id: node.sourceId, name: node.name, path: node.file_path, kind: node.label },
                     limitations: 'Coverage metadata only, not a code symbol. Detailed reasons, source ranges, relationships and freshness are unavailable.' }));
             }}
             onLayout={onLayout}

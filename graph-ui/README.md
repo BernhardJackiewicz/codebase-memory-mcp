@@ -161,10 +161,10 @@ flag, activity polling is disabled and an old Agents workspace selection opens
 Explore. Browser-local chat is independent of this feature.
 
 This is recorded tool activity from configured adapters, not automatic agent
-observability. The bundled adapter supports Claude Code PostToolUse; other
-clients need their own adapter. The flag does not install hooks or delete any
-existing events in the daemon's SQLite store. Even in an enabled build, the
-reader must turn activity on before the browser polls for events.
+observability. The bundled adapter supports the PostToolUse hook installed
+below; other clients need their own adapter. The flag does not install hooks or
+delete any existing events in the daemon's SQLite store. Even in an enabled
+build, the reader must turn activity on before the browser polls for events.
 
 Arbeiten KI-Agenten in demselben Repository, kann die Galaxie sie zeigen: je
 Agent ein kleiner leuchtender Koerper, der den Symbolknoten umkreist, an dem er

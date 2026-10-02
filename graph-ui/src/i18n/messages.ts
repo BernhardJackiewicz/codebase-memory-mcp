@@ -124,7 +124,7 @@ export const messages = {
         impact: 'atlas: what a change would reach, and what covers it (alt+c)',
         helpOpen: 'help: what this reads, what it cannot do, and every key it listens to (?)',
         helpClose: 'help: close this page (?)',
-        projects: 'atlas: what this server has indexed, index more, and what the server is doing (alt+p)',
+        projects: 'Choose a repository folder to index',
     },
 
     /**
@@ -678,6 +678,8 @@ export const messages = {
     /** Was die Statusleiste ueber das Graph-Panel sagt. */
     galaxy: {
         noLayout: 'no layout',
+        /** The label of a coverage-only selection: a file the graph knows about, not a symbol. */
+        coverageSelection: (name: string): string => `Coverage · ${name}`,
         nodeCount: (nodes: number, hidden: boolean): string =>
             `${nodes} nodes${hidden ? ' (hidden)' : ''}`,
     },
@@ -977,8 +979,8 @@ export const messages = {
         panelLabel: 'projects',
         close: '[esc] close',
         closeLabel: CLOSE,
-        /** The entry in the atlas row. The letter sits in brackets. */
-        menuLabel: '[p]rojects',
+        /** The entry in the atlas row; alt+p opens it as well. */
+        menuLabel: 'Add project index',
 
         /* ------------------------------------------------------- the list */
 
@@ -1049,6 +1051,7 @@ export const messages = {
         /* -------------------------------------------------------- the adr */
 
         adrTitle: 'Decision record',
+        adrOpen: 'Open ADR',
         adrIntro: (project: string): string =>
             `The architecture decision record the server keeps for ${project}, as markdown. Saving `
             + 'stores it in the project index; a reindex keeps it.',
