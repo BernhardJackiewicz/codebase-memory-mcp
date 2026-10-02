@@ -314,6 +314,13 @@ static int ap_load(ap_context *c, const char *project) {
         if (source < 0 || target < 0)
             continue;
         c->edges[c->m++] = (ap_edge){sqlite3_column_int64(stmt, 0), source, target, type};
+        /* Web code enters through route handlers, not main: HANDLES runs from
+         * a Function/Method to its Route (atlas_flows.c scores them alike).
+         * Handlers in test code are fixtures, not entry points. */
+        ap_node *handler = &c->nodes[source];
+        if (type == AP_HANDLES && !strcmp(c->nodes[target].label, "Route") && !handler->test &&
+            (!strcmp(handler->label, "Function") || !strcmp(handler->label, "Method")))
+            handler->entry = true;
         if (ap_dependency(type)) {
             c->nodes[source].degree++;
             c->nodes[target].degree++;

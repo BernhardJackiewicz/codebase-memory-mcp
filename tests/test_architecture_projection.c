@@ -1265,6 +1265,46 @@ TEST(projection_python_test_files_follow_name_conventions) {
     PASS();
 }
 
+/* Django views are never named main; their HANDLES edge is the entry evidence. */
+TEST(projection_route_handlers_are_entry_points) {
+    cbm_store_t *store = projection_store();
+    ASSERT_NOT_NULL(store);
+    int64_t route = projection_node(store, "Route", "projection.__route__GET__/orders", "", false);
+    int64_t view =
+        projection_node(store, "Function", "projection.shop.views.orders", "shop/views.py", false);
+    int64_t method =
+        projection_node(store, "Method", "projection.shop.api.Orders.get", "shop/api.py", false);
+    int64_t fixture =
+        projection_node(store, "Function", "projection.tests.urls.orders", "tests/urls.py", false);
+    int64_t query =
+        projection_node(store, "Function", "projection.shop.query.orders", "shop/query.py", false);
+    projection_node(store, "Function", "projection.shop.views.unrouted", "shop/views.py", false);
+    projection_edge(store, view, route, "HANDLES");
+    projection_edge(store, method, route, "HANDLES");
+    projection_edge(store, fixture, route, "HANDLES");
+    projection_edge(store, view, query, "CALLS");
+    char *json = NULL;
+    ASSERT_EQ(cbm_store_architecture_projection(store, "projection", NULL, &json), CBM_STORE_OK);
+    yyjson_doc *doc = yyjson_read(json, strlen(json), 0);
+    ASSERT_NOT_NULL(doc);
+    yyjson_val *entries = projection_field(doc, "entrypoints");
+    ASSERT_EQ(yyjson_arr_size(entries), 2);
+    ASSERT_EQ(yyjson_get_sint(yyjson_obj_get(yyjson_arr_get(entries, 0), "id")), view);
+    ASSERT_EQ(yyjson_get_sint(yyjson_obj_get(yyjson_arr_get(entries, 1), "id")), method);
+    ASSERT_EQ(yyjson_get_int(yyjson_obj_get(projection_field(doc, "totals"), "entrypoints")), 2);
+    yyjson_val *paths = projection_field(doc, "paths");
+    ASSERT_EQ(yyjson_arr_size(paths), 1);
+    yyjson_val *path = yyjson_arr_get(paths, 0);
+    ASSERT_EQ(yyjson_get_sint(yyjson_obj_get(path, "entrypoint_id")), view);
+    ASSERT_EQ(
+        yyjson_get_sint(yyjson_obj_get(yyjson_arr_get(yyjson_obj_get(path, "nodes"), 1), "id")),
+        query);
+    yyjson_doc_free(doc);
+    free(json);
+    cbm_store_close(store);
+    PASS();
+}
+
 SUITE(architecture_projection) {
     RUN_TEST(projection_accounts_for_isolated_nodes_and_files);
     RUN_TEST(projection_preserves_typed_edges_and_contiguous_paths);
@@ -1292,4 +1332,5 @@ SUITE(architecture_projection) {
     RUN_TEST(projection_repeated_behavior_evidence_preserves_base_graph_under_budget);
     RUN_TEST(projection_many_small_components_stay_within_response_budget);
     RUN_TEST(projection_python_test_files_follow_name_conventions);
+    RUN_TEST(projection_route_handlers_are_entry_points);
 }
