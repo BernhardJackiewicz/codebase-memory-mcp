@@ -42,7 +42,7 @@ export interface BrowserChatDockProps {
 
 type Phase = 'off' | 'preparing' | 'ready' | 'counting' | 'generating' | 'removing';
 type ChatTurn = BrowserChatTurn & { evidence?: PreparedExplanationContext };
-type Explanation = { key: string; label: string; answer: string; status: string; error?: string; packet?: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; mode?: 'interpretation'; shortened?: boolean };
+type Explanation = { key: string; label: string; answer: string; status: string; error?: string; packet?: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; mode?: 'interpretation'; shortened?: boolean; evidence?: string };
 /** Finished explanations per selection, so returning to one does not run the model again. */
 const EXPLANATION_CACHE_SIZE = 32;
 const initialModel = BROWSER_MODELS.find(model => model.availability === 'available')!;
@@ -213,19 +213,25 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         }
     }, [selected?.key, automatic, proactive]);
     useEffect(() => {
-        // Returning to an explained selection shows what was already written.
+        // Returning to an explained selection shows what was already written, unless its
+        // complete scope now carries other evidence, as after a re-index.
         const cached = selected && explanations.current.get(selected.key);
         if (!cached) return;
+        if (selected.evidence && cached.evidence !== selected.evidence) {
+            explanations.current.delete(selected.key); lastAttempt.current = undefined;
+            setExplanation(previous => previous?.key === selected.key ? undefined : previous);
+            return;
+        }
         lastAttempt.current = cached.key;
         setExplanation(previous => previous?.key === cached.key ? previous : cached);
-    }, [selected?.key]);
+    }, [selected?.key, selected?.evidence]);
     useEffect(() => {
         if (!historyReady || !proactive || !automatic || !selected || selected.waiting || phase !== 'ready' || manualRequest.current || pending.current
             || lastAttempt.current === selected.key || explanations.current.has(selected.key)) return;
         const snapshot = selected;
         const timer = setTimeout(() => { void explain(snapshot); }, EXPLANATION_DELAY_MS);
         return () => clearTimeout(timer);
-    }, [selected?.key, selected?.waiting, phase, automatic, proactive, retryExplanation, historyReady]);
+    }, [selected?.key, selected?.waiting, selected?.evidence, phase, automatic, proactive, retryExplanation, historyReady]);
     const remember = (entry: Explanation): void => {
         const cache = explanations.current;
         cache.delete(entry.key); cache.set(entry.key, entry);
@@ -269,7 +275,8 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 const result = parseExplanationResponse(answer, packet);
                 if (!followExplanation.current) setNewExplanation(true);
                 if (result.status === 'generated') {
-                    const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: result.markdown, status: 'complete', mode: 'interpretation', packet, citation: result.citation, ...shortened ? { shortened } : {} };
+                    const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: result.markdown, status: 'complete', mode: 'interpretation', packet, citation: result.citation,
+                        ...shortened ? { shortened } : {}, ...snapshot.evidence ? { evidence: snapshot.evidence } : {} };
                     remember(complete); setExplanation(complete);
                 } else setExplanation({ key: snapshot.key, label: snapshot.label, answer: '', status: 'error', packet, error: result.reason });
             }

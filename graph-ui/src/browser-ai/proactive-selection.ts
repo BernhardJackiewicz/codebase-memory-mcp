@@ -11,6 +11,8 @@ export interface ExplanationInput {
     graph?: BrowserChatContext;
     /** A Galaxy scope that is not complete yet is shown, never explained. */
     waiting?: 'loading' | 'partial';
+    /** The complete scope's evidence: a cached explanation of other evidence (a re-index) is stale. */
+    evidence?: string;
 }
 
 /** Snapshot exact evidence; generated UI event IDs are not selection identity. */
@@ -26,7 +28,7 @@ export function explanationInput(scope: string, reader?: BrowserChatReaderContex
     if (galaxy) {
         // The selection and how its scope is drawn; counts and loading state change while it loads.
         const key = JSON.stringify([scope, 'galaxy', galaxy.identity, galaxy.direction, galaxy.edgeTypes, galaxy.depth]);
-        return { key, label: graph.label, graph: { ...graph }, ...galaxy.state === 'complete' ? {} : { waiting: galaxy.state } };
+        return { key, label: graph.label, graph: { ...graph }, ...galaxy.state === 'complete' ? { evidence: graph.id } : { waiting: galaxy.state } };
     }
     return { key: JSON.stringify([scope, graph.label, graph.text]), label: graph.label, graph: { ...graph } };
 }

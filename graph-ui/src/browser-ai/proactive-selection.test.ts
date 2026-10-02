@@ -22,6 +22,15 @@ describe('selection identity for explanations', () => {
         expect(key('django-demo:galaxy', { id: 'o', label: 'OrderableAggMixin', text: JSON.stringify(other) })).not.toBe(base);
     });
 
+    it('fingerprints the evidence of a complete scope only, so a re-index can retire a cached explanation', () => {
+        const complete = explanationInput('p:galaxy', undefined, jsonbAggEvidence())!;
+        expect(complete.evidence).toBe(jsonbAggEvidence().id);
+        expect(explanationInput('p:galaxy', undefined, jsonbAggEvidence({ state: 'loading-partial-preview' }))?.evidence).toBeUndefined();
+        const reindexed = explanationInput('p:galaxy', undefined, jsonbAggEvidence({ edges: jsonbAggScope().edges.slice(2) }))!;
+        expect(reindexed.key).toBe(complete.key);
+        expect(reindexed.evidence).not.toBe(complete.evidence);
+    });
+
     it('marks incomplete Galaxy scopes as waiting and leaves other graph evidence unchanged', () => {
         expect(explanationInput('p:galaxy', undefined, jsonbAggEvidence())?.waiting).toBeUndefined();
         expect(explanationInput('p:galaxy', undefined, jsonbAggEvidence({ state: 'loading-partial-preview' }))?.waiting).toBe('loading');

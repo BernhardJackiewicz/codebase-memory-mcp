@@ -1049,6 +1049,22 @@ describe('per-selection explanation cache', () => {
         await settleSelection(); expect(runtime.chat).toHaveBeenCalledOnce();
     });
 
+    it('explains again when a returning selection now carries other evidence, as after a re-index', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        runtime.chat.mockResolvedValueOnce('Before the re-index.').mockResolvedValueOnce('Two layers.').mockResolvedValueOnce('After the re-index.');
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence() }); await click('Download & load');
+        await settleSelection(); expect(card()).toContain('Before the re-index.');
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence({ depth: 2 }) }); await settleSelection();
+        // The same selection, loading and then complete, after a re-index removed a caller.
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence({ state: 'loading-partial-preview' }) });
+        expect(card()).toContain('Before the re-index.');
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence({ edges: jsonbAggScope().edges.slice(2) }) });
+        expect(card()).not.toContain('Before the re-index.');
+        await settleSelection();
+        expect(runtime.chat).toHaveBeenCalledTimes(3);
+        expect(card()).toContain('After the re-index.');
+    });
+
     it('regenerates on request and keeps the cache bounded', async () => {
         vi.useFakeTimers(); const { props, runtime } = fixture();
         let calls = 0; runtime.chat.mockImplementation(async () => `Explanation number ${++calls}.`);
