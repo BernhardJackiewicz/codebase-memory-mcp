@@ -90,6 +90,8 @@
  * 15. Neu (Review-Call 2026-10-02): `FitContainment` holt Knoten, die nach
  *     einer Einpassung dazukommen, ins Bild, indem die Kamera entlang ihrer
  *     Blickrichtung zuruecktritt, solange der Leser sie nicht bewegt hat.
+ * 16. Neu (Review-Call 2026-10-02): die OrbitControls zoomen zum Mauszeiger
+ *     (`zoomToCursor`), nicht mehr in die Bildmitte.
  */
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -1020,6 +1022,14 @@ export function GraphScene({
                 dampingFactor={0.08}
                 rotateSpeed={0.5}
                 zoomSpeed={1.5}
+                /*
+                 * Aenderung 16: das Mausrad zoomt dorthin, wo der Zeiger steht,
+                 * und nicht in die Bildmitte (Review-Befund G3). three-stdlib
+                 * versetzt dabei auch den Drehpunkt; die Einpassung und jeder
+                 * Anflug setzen ihn ohnehin selbst, und die Grenzen der
+                 * Entfernung gelten fuer den neuen Abstand genauso.
+                 */
+                zoomToCursor
                 minDistance={Math.max(5, sceneRadius * 0.02)}
                 maxDistance={Math.max(sceneRadius, orbitReach) * 4}
                 autoRotateSpeed={0.4}
