@@ -150,3 +150,15 @@ export function sourceBrickHeight(lines: number | undefined, referenceLines: num
     const reference = Number.isFinite(referenceLines) ? Math.max(1, referenceLines) : 1;
     return 1.5 + 12.5 * Math.sqrt(Math.min(1, lines / reference));
 }
+
+/**
+ * Brick heights compare the bricks of one scope with each other. Root files
+ * are the flat baseline; outside areas are context and stay flat as well, so
+ * neither sets the scale.
+ */
+export function scopeBrickHeights(nodes: SemanticNode[], lines: (node: SemanticNode) => number | undefined): Map<string, number> {
+    const rootFiles = (node: SemanticNode) => node.kind === 'area' && node.areaPath === '(root)';
+    const bricks = nodes.filter(node => (node.kind === 'area' || node.kind === 'file') && !node.external);
+    const reference = Math.max(1, ...bricks.filter(node => !rootFiles(node)).map(node => lines(node) ?? 0));
+    return new Map(bricks.map(node => [node.id, rootFiles(node) ? 0.35 : sourceBrickHeight(lines(node), reference)]));
+}

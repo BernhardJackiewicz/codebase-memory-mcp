@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GraphData, GraphNode } from '../galaxy/types';
 import { buildSemanticGraph } from './semantic-graph';
-import { collectSourceMetrics, measureSourceNode, sourceBrickHeight, sourceLanguage, languageColor, sourceNodeSizePercent } from './source-metrics';
+import { collectSourceMetrics, measureSourceNode, scopeBrickHeights, sourceBrickHeight, sourceLanguage, languageColor, sourceNodeSizePercent } from './source-metrics';
 
 const node = (id: number, file_path: string, label: string, start_line?: number, end_line?: number): GraphNode => ({
     id, file_path, label, start_line, end_line, name: `node${id}`, x: 0, y: 0, z: 0, size: 1, color: '',
@@ -77,6 +77,24 @@ describe('source size and language encoding', () => {
         expect(heights[1] - heights[0]).toBeGreaterThan(2);
         expect(heights[2] - heights[1]).toBeGreaterThan(8);
         expect(sourceBrickHeight(0, 10000)).toBe(1.5);
+    });
+    it('scales brick heights within the opened scope, with root files and outside areas flat', () => {
+        const input: GraphData = { nodes: [node(1, 'django/db/models.py', 'Module', 1, 1000), node(2, 'django/utils/text.py', 'Module', 1, 250),
+            node(3, 'django/shortcuts.py', 'Module', 1, 50), node(4, 'tests/runtests.py', 'Module', 1, 90000), node(5, 'setup.py', 'Module', 1, 50000)],
+        edges: [{ source: 4, target: 1, type: 'CALLS' }, { source: 5, target: 2, type: 'IMPORTS' }], total_nodes: 5 };
+        const catalog = collectSourceMetrics(input);
+        const model = buildSemanticGraph(input, { view: 'overview', areaPath: 'django' });
+        const heights = scopeBrickHeights(model.nodes, item => measureSourceNode(item, catalog)?.lines);
+        // The largest part inside 'django' is full height, though the outside 'tests' area is far larger.
+        expect(heights.get('area:django/db')).toBe(14);
+        expect(heights.get('area:django/utils')).toBe(1.5 + 12.5 * Math.sqrt(0.25));
+        expect(heights.get('file:django/shortcuts.py')).toBe(1.5 + 12.5 * Math.sqrt(0.05));
+        expect(model.nodes.filter(item => item.external).map(item => [item.id, heights.get(item.id)])).toEqual([['area:(root)', undefined], ['area:tests', undefined]]);
+        const root = buildSemanticGraph(input, { view: 'overview' });
+        const rootHeights = scopeBrickHeights(root.nodes, item => measureSourceNode(item, catalog)?.lines);
+        expect(rootHeights.get('area:(root)')).toBe(0.35);
+        expect(rootHeights.get('area:tests')).toBe(14);
+        expect(rootHeights.get('area:django')).toBe(1.5 + 12.5 * Math.sqrt(1300 / 90000));
     });
     it('uses the largest non-root folder as 100 percent despite large root-direct files', () => {
         const input: GraphData = { nodes: [node(1, 'root.ts', 'Module', 1, 1000000), node(2, 'other.ts', 'Module', 1, 2000000),

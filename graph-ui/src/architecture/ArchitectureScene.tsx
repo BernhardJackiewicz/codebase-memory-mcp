@@ -4,7 +4,7 @@ import { Edges, Html, OrbitControls, OrthographicCamera } from '@react-three/dre
 import { Box3, Color, CubicBezierCurve3, MOUSE, TOUCH, OrthographicCamera as ThreeOrthographicCamera, QuadraticBezierCurve3, Vector2, Vector3 } from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import type { SemanticEdge, SemanticGraph, SemanticNode, SemanticPlatform } from './semantic-graph';
-import { languageColor, measureSourceNode, sourceBrickHeight, sourceLanguage, sourceNodeSizePercent, type SourceCatalog, type SourceMeasure } from './source-metrics';
+import { languageColor, measureSourceNode, scopeBrickHeights, sourceLanguage, sourceNodeSizePercent, type SourceCatalog, type SourceMeasure } from './source-metrics';
 import { gravityPercent, gravityStrength, hotspotsForNode, type HotspotCatalog, type HotspotGroup } from './hotspot-map';
 import { labelEdges, labelInset, labelRect, labelsCollide, type LabelBox, type LabelRect } from './label-space';
 import { edgeColor, isDirectedEdge } from '../graph/edge-style';
@@ -285,11 +285,7 @@ function FitArchitecture({ model, planar, resetKey, controls, active }: {
 export function ArchitectureScene({ model: graphModel, selectedId, selectedEdgeId, onSelect, onSelectEdge, onOpen, onClearSelection, active = true, planar = false, resetKey = 0, catalog, heightMetric = 'uniform', colorMetric = 'kind', hotspots, showHotspots = true, adaptiveLabels = false }: ArchitectureSceneProps) {
     const model: RenderGraph = useMemo(() => {
         const measures = new Map(graphModel.nodes.map(node => [node.id, catalog ? measureSourceNode(node, catalog) : undefined]));
-        // Heights compare the bricks of this scope with each other. Root files are
-        // the flat baseline; outside areas are context and stay flat as well.
-        const rootFiles = (node: SemanticNode) => node.kind === 'area' && node.areaPath === '(root)';
-        const reference = Math.max(1, ...graphModel.nodes.filter(node => ['area', 'file'].includes(node.kind) && !node.external && !rootFiles(node))
-            .map(node => measures.get(node.id)?.lines ?? 0));
+        const heights = catalog && heightMetric === 'lines' ? scopeBrickHeights(graphModel.nodes, node => measures.get(node.id)?.lines) : undefined;
         return { ...graphModel, nodes: graphModel.nodes.map(node => {
             const measure = measures.get(node.id);
             const sizePercent = catalog ? sourceNodeSizePercent(node, catalog) : undefined;
@@ -297,7 +293,7 @@ export function ArchitectureScene({ model: graphModel, selectedId, selectedEdgeI
             const hotspot = showHotspots && hotspots ? hotspotsForNode(node, hotspots) : undefined;
             return { ...node, measure, sizePercent, hotspot, gravity: hotspot && hotspots ? gravityStrength(hotspot.maxFanIn, hotspots.maxFanIn) : 0,
                 gravityPercent: hotspot && hotspots ? gravityPercent(hotspot.maxFanIn, hotspots.maxFanIn) : undefined,
-                height: catalog && heightMetric === 'lines' && ['area', 'file'].includes(node.kind) && !node.external ? rootFiles(node) ? 0.35 : sourceBrickHeight(measure?.lines, reference) : undefined,
+                height: heights?.get(node.id),
                 tint: node.tint ?? (colorMetric === 'language' && node.kind !== 'route' ? languageColor(language ?? 'Unknown') : undefined) };
         }) };
     }, [graphModel, catalog, heightMetric, colorMetric, hotspots, showHotspots]);
