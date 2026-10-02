@@ -2215,7 +2215,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                         <option value="both">Both directions</option><option value="inbound">Incoming</option><option value="outbound">Outgoing</option>
                     </select></label>}
                     {props.workspaceExpanded && <TraceEdgeFilter kinds={traceKinds} availableTypes={kinds.map(kind => kind.type)} selected={traceTypes} onChange={changeTraceTypes} />}
-                    <button type="button" disabled={scope.depth <= (!props.workspaceExpanded && props.focusFilePath ? 1 : 0) || scope.loading}
+                    <button type="button" disabled={scope.depth <= scope.minDepth || scope.loading}
                         onClick={() => scope.setDepth(scope.depth - 1)} aria-label="Remove graph layer">−</button>
                     <span>{scope.depth} {scope.depth === 1 ? 'layer' : 'layers'}</span>
                     <button type="button" disabled={scope.loading || scope.result?.exhausted}

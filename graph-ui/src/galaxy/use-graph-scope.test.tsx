@@ -127,3 +127,27 @@ it('does not display excluded prior-layer nodes while the filtered request is pe
     await act(async () => root.render(<Probe types={[]} />));
     expect(host.textContent).toBe('1:pending');
 });
+
+it('opens node and symbol scopes one layer deep and keeps them there, while clusters start at their members', async () => {
+    (globalThis as unknown as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+    const host = document.createElement('div'); document.body.append(host); const root = createRoot(host);
+    dispose = async () => { await act(async () => root.unmount()); host.remove(); };
+    state.load.mockImplementation(async (...args: unknown[]) => scoped([1], Number(args[2])));
+    let latest: ReturnType<typeof useGraphScope> | undefined;
+    function Probe() { latest = useGraphScope({ project: 'p' }); return null; }
+    await act(async () => root.render(<Probe />));
+    await act(async () => latest!.select({ kind: 'node', id: 1, name: 'n1', qualifiedName: 'p.n1' }));
+    expect(latest!.depth).toBe(1); expect(latest!.minDepth).toBe(1);
+    expect(state.load.mock.calls.at(-1)![2]).toBe(1);
+    await act(async () => latest!.setDepth(0));
+    expect(latest!.depth).toBe(1);
+    expect(state.load).toHaveBeenCalledTimes(1);
+    await act(async () => latest!.select({ kind: 'symbol', qualifiedName: 'p.n2', name: 'n2' }));
+    expect(latest!.depth).toBe(1);
+    expect(state.load.mock.calls.at(-1)![2]).toBe(1);
+    await act(async () => latest!.select({ kind: 'folder', path: 'src', name: 'src/' }));
+    expect(latest!.depth).toBe(0); expect(latest!.minDepth).toBe(0);
+    expect(state.load.mock.calls.at(-1)![2]).toBe(0);
+    await act(async () => latest!.select({ kind: 'file', path: 'src/a.ts', name: 'a.ts' }));
+    expect(latest!.depth).toBe(0);
+});
