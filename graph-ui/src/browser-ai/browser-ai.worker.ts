@@ -158,11 +158,11 @@ async function generate(id: number, messages: readonly BrowserChatMessage[], opt
         throw new Error(`This conversation uses ${count.toLocaleString()} input tokens. The browser limit is ${selected.contextTokens.toLocaleString()}, including ${outputTokens} reserved for the answer. Remove earlier messages or attach a smaller selection; no code was truncated.`);
     }
     stopping.reset();
-    let answer = '', generated = 0;
+    let answer = '', generated = 0, last: bigint | undefined;
     const streamer = new TextStreamer(tokenizer!, {
         skip_prompt: true,
         callback_function: chunk => { answer += chunk; post({ id, kind: 'token', output: chunk }); },
-        token_callback_function: () => { generated += 1; },
+        token_callback_function: tokens => { generated += 1; last = tokens?.at(-1); },
     });
     const controls = REPETITION_CONTROLS[automaticExplanation ? 'automatic-explanation' : 'chat'];
     const logitsProcessor = new LogitsProcessorList();
@@ -181,8 +181,11 @@ async function generate(id: number, messages: readonly BrowserChatMessage[], opt
     }
     if (fatalFailure) throw fatalFailure;
     if (!answer.trim() && !stopping.interrupted) throw new Error('The model returned no answer.');
-    // A stopped answer is reported as stopped; a full output budget means the answer was cut.
-    return { output: answer, stopReason: stopping.interrupted ? 'interrupted' : generated >= outputTokens ? 'length' : 'eos' };
+    // A stopped answer is reported as stopped; a full output budget means the answer was cut,
+    // unless its last token was the end of sequence (the streamer also receives that token).
+    const ends = [model!.generation_config?.eos_token_id ?? [], tokenizer!.eos_token_id ?? []].flat().map(token => BigInt(token));
+    const ended = last !== undefined && ends.includes(last);
+    return { output: answer, stopReason: stopping.interrupted ? 'interrupted' : generated >= outputTokens && !ended ? 'length' : 'eos' };
 }
 
 self.onmessage = async (event: MessageEvent<BrowserWorkerRequest>) => {

@@ -22,8 +22,8 @@ vi.mock('@huggingface/transformers', () => ({
     },
     TextStreamer: class {
         callback: (chunk: string) => void;
-        token: () => void;
-        constructor(_tokenizer: unknown, options: { callback_function: (chunk: string) => void; token_callback_function: () => void }) {
+        token: (tokens?: bigint[]) => void;
+        constructor(_tokenizer: unknown, options: { callback_function: (chunk: string) => void; token_callback_function: (tokens?: bigint[]) => void }) {
             this.callback = options.callback_function; this.token = options.token_callback_function;
         }
     },
@@ -133,10 +133,11 @@ describe('browser generation worker', () => {
     });
 
     it('reports whether an answer ended at the output limit, at the end of sequence, or on Stop', async () => {
+        fake.modelLoad.mockResolvedValue({ generate: fake.generate, generation_config: { eos_token_id: [2, 3] } });
         await send({ id: 1, kind: 'prepare' });
         const messages = [{ role: 'user' as const, content: 'List' }];
-        const emit = (tokens: number) => async ({ streamer }: { streamer: { callback: (chunk: string) => void; token: () => void } }) => {
-            for (let index = 0; index < tokens; index++) { streamer.token(); streamer.callback('x'); }
+        const emit = (tokens: number, last = 7n) => async ({ streamer }: { streamer: { callback: (chunk: string) => void; token: (tokens?: bigint[]) => void } }) => {
+            for (let index = 0; index < tokens; index++) { streamer.token([index + 1 === tokens ? last : 9n]); streamer.callback('x'); }
         };
         fake.generate.mockImplementationOnce(emit(64));
         await send({ id: 2, kind: 'chat', messages, maxOutputTokens: 64 });
@@ -144,6 +145,10 @@ describe('browser generation worker', () => {
         fake.generate.mockImplementationOnce(emit(10));
         await send({ id: 3, kind: 'chat', messages, maxOutputTokens: 64 });
         expect(replies().at(-1)).toEqual({ id: 3, kind: 'answer', output: 'x'.repeat(10), stopReason: 'eos' });
+        // The streamer also receives the end-of-sequence token; ending on the last allowed token is not a cut.
+        fake.generate.mockImplementationOnce(emit(64, 3n));
+        await send({ id: 4, kind: 'chat', messages, maxOutputTokens: 64 });
+        expect(replies().at(-1)).toEqual({ id: 4, kind: 'answer', output: 'x'.repeat(64), stopReason: 'eos' });
     });
 
     it('rejects unknown profiles and oversized automatic answers without invalidating the model', async () => {
