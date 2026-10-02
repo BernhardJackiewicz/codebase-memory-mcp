@@ -22,6 +22,8 @@ export interface SystemArchitectureProps {
 /** Ranked call-graph flows (route handlers, call-graph roots) from /api/flows. */
 export type FlowsLoader = (project: string) => Promise<FlowSummary[]>;
 const loadFlows: FlowsLoader = project => new AtlasApi().flows(project);
+/** Below this many classified entry points the Behavior start list also offers ranked flows. */
+const FEW_ENTRY_POINTS = 8;
 
 /** Starting operations from flows, once each. The projection supplies qualified name and component on request. */
 export function flowEntries(flows: FlowSummary[]): SystemSymbol[] {
@@ -147,8 +149,10 @@ export default function SystemArchitecture({ project, generation, view, filter, 
     const structureData = useMemo(() => data ? { ...data, dependencies: data.dependencies.filter(edge => connectionAllowed(edge.type, connectionView)) } : undefined, [data, connectionView]);
     const error = current?.error ?? (current?.response?.status === 'failed' ? current.response.error ?? 'Architecture analysis failed.' : undefined);
     const chosenEntries = entryChoices?.project === project && entryChoices.generation === generation ? entryChoices.entries : data?.entrypoints ?? [];
-    // Without classified entry points (limited projections, Python without main) the ranked flows offer the starts.
-    const needsFlows = view === 'behavior' && active && Boolean(data) && !data?.entrypoints.length;
+    // With no or only a handful of classified entry points (limited projections, Python without main, a few
+    // route handlers) the ranked flows add their starts after the classified ones.
+    const fewEntries = (data?.entrypoints.length ?? 0) < FEW_ENTRY_POINTS;
+    const needsFlows = view === 'behavior' && active && Boolean(data) && fewEntries;
     useEffect(() => {
         if (!needsFlows || (flows?.project === project && flows.generation === generation)) return;
         let live = true;
@@ -156,8 +160,12 @@ export default function SystemArchitecture({ project, generation, view, filter, 
         return () => { live = false; };
     }, [needsFlows, flows, project, generation, flowsLoader]);
     const flowStarts = useMemo(() => flows?.project === project && flows.generation === generation ? flows.entries : [], [flows, project, generation]);
-    const entries = useMemo(() => data?.entrypoints.length || !flowStarts.length ? chosenEntries
-        : [...new Map([...flowStarts, ...chosenEntries].map(item => [item.id, item])).values()], [data, flowStarts, chosenEntries]);
+    const entries = useMemo(() => {
+        if (!fewEntries || !flowStarts.length) return chosenEntries;
+        const merged = new Map(chosenEntries.map(item => [item.id, item]));
+        for (const item of flowStarts) if (!merged.has(item.id)) merged.set(item.id, item);
+        return [...merged.values()];
+    }, [fewEntries, flowStarts, chosenEntries]);
     useEffect(() => {
         if (view !== 'behavior' || !data || (entryChoice?.project === project && entryChoice.generation === generation)) return;
         const suggested = data.entrypoints.length ? suggestedBehaviorEntry(data.entrypoints) : suggestedBehaviorEntry(flowStarts, true);

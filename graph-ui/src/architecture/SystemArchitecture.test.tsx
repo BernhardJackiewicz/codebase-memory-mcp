@@ -569,10 +569,22 @@ describe('system architecture workspace', () => {
         expect(loader.mock.calls.at(-1)?.[0].entryNodeId).toBe(9);
         expect([...start.options].map(option => option.value)).toEqual(['', '9', '36163']);
     });
-    it('does not ask for flows while the projection classifies entry points', async () => {
+    it('does not ask for flows once the projection classifies enough entry points', async () => {
         const flowsLoader = vi.fn<FlowsLoader>().mockResolvedValue([]);
-        await render(vi.fn<SystemArchitectureLoader>().mockResolvedValue(response()), { view: 'behavior', flowsLoader });
+        const many = fixture(); many.entrypoints = [1, 2, 3, 4, 5, 6, 7, 8].map(id => symbol(id, 'api', `entry${id}`));
+        await render(vi.fn<SystemArchitectureLoader>().mockResolvedValue(response(many)), { view: 'behavior', flowsLoader });
         expect(flowsLoader).not.toHaveBeenCalled();
+    });
+    it('adds ranked flows after a handful of classified entry points, once each', async () => {
+        const flowsLoader = vi.fn<FlowsLoader>().mockResolvedValue([
+            { id: 0, label: 'handle → tick', entry: { id: 36163, name: 'handle', filePath: 'django/core/management/commands/runserver.py' }, terminal: { id: 44340, name: 'tick' }, steps: 40 },
+            { id: 1, label: 'handle → save', entry: { id: 2, name: 'handle', filePath: 'src/service.ts' }, terminal: { id: 3, name: 'save' }, steps: 2 },
+        ]);
+        await render(vi.fn<SystemArchitectureLoader>().mockResolvedValue(response()), { view: 'behavior', flowsLoader });
+        expect(flowsLoader).toHaveBeenCalledExactlyOnceWith('sample');
+        const start = container.querySelector<HTMLSelectElement>('[aria-label="Behavior entry point"]')!;
+        // The two classified entry points come first; the flow that repeats one of them is not listed twice.
+        expect([...start.options].map(option => option.value)).toEqual(['', '1', '2', '36163']);
     });
     it('shows failures without retrying continuously', async () => {
         vi.useFakeTimers(); const loader = vi.fn<SystemArchitectureLoader>().mockResolvedValue({ status: 'failed', generation: 'g1', error: 'Analysis budget exceeded.' });
