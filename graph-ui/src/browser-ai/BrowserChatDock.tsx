@@ -78,7 +78,7 @@ function PacketSource({ packet, citation }: { packet: PreparedExplanationContext
     return <>
         {packet.limitations.map((limit, index) => <p className="cbm-chat-evidence-note" key={index}>{limit}</p>)}
         {citation ? <pre>{citation.quote}</pre> : packet.evidence.slice(0, 3).map(item => <div key={item.id}>
-            {item.location && <small>{item.location.path}:{item.location.startLine}–{item.location.endLine}</small>}<pre>{item.text}</pre>
+            {item.location && <small>{item.location.path}:{item.location.startLine}-{item.location.endLine}</small>}<pre>{item.text}</pre>
         </div>)}
     </>;
 }

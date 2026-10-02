@@ -337,7 +337,7 @@ describe('persistent local browser chat', () => {
 
     it('keeps ready reader source out of the composer without downloading or offering removal', async () => {
         const { props } = fixture();
-        const context = reader('Loaded excerpt'); context.source!.partial = 'Only lines 20–80 are loaded.';
+        const context = reader('Loaded excerpt'); context.source!.partial = 'Only lines 20-80 are loaded.';
         await render({ ...props, readerContext: context, attachment: { ...selection, text: 'IGNORED_MANUAL_CODE' } });
         expect(props.createRuntime).not.toHaveBeenCalled();
         expect(container.querySelector('[aria-label="Source for next message"]')).toBeNull();
@@ -733,7 +733,7 @@ describe('live-browser regressions', () => {
     afterEach(() => vi.useRealTimers());
     it('keeps a compact composer and places frozen source beside the manual answer speaker', async () => {
         const { props, runtime } = fixture();
-        const original = reader('ORIGINAL_SOURCE'); original.source!.partial = 'Only lines 3–4 were loaded.';
+        const original = reader('ORIGINAL_SOURCE'); original.source!.partial = 'Only lines 3-4 were loaded.';
         const pendingContext = { id: 'graph-source', label: 'Callers', text: 'entry calls original' };
         await render({ ...props, readerContext: original, pendingContext }); await click('Download & load');
         const textarea = container.querySelector('textarea')!;
@@ -748,7 +748,7 @@ describe('live-browser regressions', () => {
         expect(response.firstElementChild).toBe(source);
         expect(source.open).toBe(false);
         expect(source.querySelector('summary')?.textContent).toContain('Agentⓘ Source');
-        expect(source.textContent).toContain('Only lines 3–4 were loaded.');
+        expect(source.textContent).toContain('Only lines 3-4 were loaded.');
         expect(source.textContent).toContain('entry calls original');
         await act(async () => source.querySelector('summary')!.click());
         expect(source.open).toBe(true);
