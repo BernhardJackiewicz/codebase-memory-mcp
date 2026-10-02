@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { arrangeScopedGraph, graphEdgeTypesKey, limitGraphRender, loadGraphScope, readGraphPages, scopedHierarchy, type GraphQueryClient } from './graph-scope';
+import { arrangeScopedGraph, graphEdgeTypesKey, limitGraphRender, loadGraphScope, readGraphPages, scenePictureFor, scopedHierarchy, type GraphQueryClient } from './graph-scope';
 import type { QueryGraphResult } from '../provider/rpc-schemas';
-import type { GraphNode } from './types';
+import type { GraphData, GraphNode } from './types';
 
 const node = (id: number, file = 'src/a.ts', start = 1, end = 10): GraphNode => ({ id, name: `n${id}`, qualified_name: `p.n${id}`, file_path: file,
     label: 'Function', start_line: start, end_line: end, x: id, y: 0, z: 0, color: '#abcabc', size: 3 });
@@ -227,4 +227,15 @@ it('retains simple columns for small hierarchy levels', () => {
     const nodes = [{ ...node(1), z: 0 }, { ...node(2), z: -18 }, { ...node(3), z: -18 }];
     const result = scopedHierarchy({ data: { nodes, edges: [], total_nodes: 3 }, roots: new Set([1]), depth: 1, exhausted: false }, 'small');
     expect(result.data.nodes.map(node => [node.x, node.y])).toEqual([[0, 0], [160, 16], [160, -16]]);
+});
+
+it('keeps the whole graph on screen while the first scope picture is still empty', () => {
+    const graph = (count: number): GraphData => ({ nodes: Array.from({ length: count }, (_, id) => ({ id, name: `n${id}`, label: 'Function', x: 0, y: 0, z: 0, size: 1, color: '#999999' })), edges: [], total_nodes: count });
+    const layout = graph(5), stale = graph(2), current = graph(3), empty = graph(0);
+    // An empty preview of a symbol outside the loaded layout is no picture.
+    expect(scenePictureFor(empty, undefined, layout)).toBe(layout);
+    expect(scenePictureFor(undefined, empty, layout)).toBe(layout);
+    expect(scenePictureFor(empty, stale, layout)).toBe(stale);
+    expect(scenePictureFor(current, stale, layout)).toBe(current);
+    expect(scenePictureFor(undefined, stale, layout)).toBe(stale);
 });

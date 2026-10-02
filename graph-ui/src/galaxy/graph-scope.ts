@@ -198,6 +198,17 @@ export async function loadGraphScope(project: string, scope: GraphScope, depth: 
     return { data: arrangeScopedGraph([...nodes.values()], [...edges.values()], roots, levels), roots, depth: reachedDepth, exhausted: edgeTypes?.length === 0 || (depth > 0 && frontier.length === 0), frontier, levels, traversalKey };
 }
 
+/** Was die Galaxie zeigt, waehrend ein Scope angeordnet wird: das aktuelle
+ * Bild, sonst die letzte Anordnung, sonst den ganzen Graphen. Eine Anordnung
+ * ohne Knoten ist kein Bild. Liegt das gewaehlte Symbol ausserhalb des
+ * geladenen Layouts, ist die erste Vorschau leer, und als Platzhalter stand
+ * dann eine leere Flaeche statt des Graphen, der gerade noch zu sehen war. */
+export function scenePictureFor(current: GraphData | undefined, stale: GraphData | undefined, layout: GraphData | undefined): GraphData | undefined {
+    if (current && current.nodes.length > 0) return current;
+    if (stale && stale.nodes.length > 0) return stale;
+    return layout;
+}
+
 export function limitGraphRender(data: GraphData, nodeLimit: number, edgeLimit: number, required: ReadonlySet<number> = new Set()): GraphData {
     const nodes = [...data.nodes.filter(node => required.has(node.id)), ...data.nodes.filter(node => !required.has(node.id))]
         .slice(0, Math.max(0, Math.floor(nodeLimit)));

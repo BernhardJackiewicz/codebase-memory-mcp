@@ -143,7 +143,7 @@ import { galaxyPathText, galaxyToolbarText } from './galaxy-strings';
 import { useOrganicLayout } from './use-organic-layout';
 import RenderProgress from './RenderProgress';
 import { useGraphScope } from './use-graph-scope';
-import { limitGraphRender, scopedHierarchy } from './graph-scope';
+import { limitGraphRender, scenePictureFor, scopedHierarchy } from './graph-scope';
 import './graph-exploration.css';
 import { layoutNodeForSelection } from './selected-node';
 import { galaxyScopeEvidence, useSelectionEvidence, type SelectionEvidenceListener } from './selection-evidence';
@@ -790,7 +790,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
      * der ganze Graph, der gerade noch zu sehen war. `data` bleibt dabei das
      * AKTUELLE Bild: Einpassung, Legende und Zaehler rechnen nie mit dem alten.
      */
-    const sceneData = scope.scope ? (organic ?? organicTask.stale)?.data ?? layout : layout;
+    const sceneData = scope.scope ? scenePictureFor(organic?.data, organicTask.stale?.data, layout) : layout;
     const sceneScoped = Boolean(scope.scope) && sceneData !== layout;
     const scopedRoot = scope.result?.roots.size === 1
         ? scope.result.data.nodes.find(node => scope.result!.roots.has(node.id)) : undefined;
