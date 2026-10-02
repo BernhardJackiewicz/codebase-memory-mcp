@@ -19,7 +19,14 @@ enum {
     AP_ARGUMENT_LIMIT = 8,
     AP_SIGNATURE_BYTES = 4096,
     AP_VALUE_BYTES = 1024,
-    AP_PARAMETER_LIMIT = 64
+    AP_PARAMETER_LIMIT = 64,
+    /* Overview entries carry a full representative symbol (about 1.3 KB of
+     * mutable JSON each). Django 5.2.7 has 12,700 components: listing all of
+     * them took half of AP_JSON_BUDGET before any other section. Keep it at
+     * least the max_components ceiling (512) plus 64 groups * AP_GROUP_ENTRIES
+     * so displayed parts and every group's share always fit. */
+    AP_OVERVIEW_COMPONENTS = 4096,
+    AP_GROUP_ENTRIES = 16
 };
 enum { AP_EVIDENCE_CONTEXT, AP_EVIDENCE_CORRIDOR, AP_EVIDENCE_PATH, AP_EVIDENCE_SCOPES };
 
@@ -68,13 +75,13 @@ static const char *const ap_types[] = {
     "IMPLEMENTS", "INHERITS",   "CONFIGURES", "WRITES",         "READS",          "USAGE",
     "PUBLISHES",  "SUBSCRIBES", "DEFINES",    "DEFINES_METHOD", "CONTAINS",       "EMITS",
     "LISTENS_ON", "HANDLES",    "DATA_FLOWS", "INFRA_MAPS"};
-enum { AP_DEFINES = 14, AP_METHOD = 15, AP_CONTAINS = 16 };
+enum { AP_CALLS = 1, AP_DEFINES = 14, AP_METHOD = 15, AP_CONTAINS = 16, AP_HANDLES = 19 };
 
 typedef struct {
     int64_t id;
     char *name, *qn, *file, *label;
     int line, end, atom, component, degree;
-    bool entry, structural, declared, test, test_property;
+    bool entry, handler, route, callable, structural, declared, test, test_property;
 } ap_node;
 typedef struct {
     int64_t id;
@@ -89,6 +96,7 @@ typedef struct {
 typedef struct {
     int root, members, files, atoms, representative, degree, displayed;
     int overview_group;
+    bool listed;
     char *directory;
     int samples[AP_REPRESENTATIVES], sample_count;
 } ap_component;
@@ -186,22 +194,47 @@ static bool ap_cluster_edge(int type) {
     return type == 1 || type == 5 || type == 11;
 }
 
+static bool ap_named(const char *text, size_t length, const char *name) {
+    return length == strlen(name) && !strncmp(text, name, length);
+}
+
+static bool ap_suffix(const char *text, const char *suffix) {
+    size_t length = strlen(text);
+    size_t tail = strlen(suffix);
+    return length > tail && !strcmp(text + length - tail, suffix);
+}
+
 /* Conservative source conventions supplement the positive indexed is_test
- * flag. Non-test classification means no test evidence, not production use. */
-static bool ap_test_path(const char *path) {
+ * flag. Non-test classification means no test evidence, not production use.
+ * tests/ and __tests__/ are test directories anywhere, and so is a top-level
+ * test/. Python discovers tests by file name (test_*.py, *_test.py, tests.py,
+ * conftest.py); a nested test/ there is often a shipped package (django/test/
+ * is Django's public testing API), so for a .py file without a test name it
+ * is no signal on its own. *package then tells the caller that the indexed
+ * flag only repeats that directory rule (cbm_is_test_file) and must not
+ * decide alone either; it keeps one role per file. */
+static bool ap_test_path(const char *path, bool *package) {
     const char *base = path;
+    bool nested = false;
     for (const char *p = path;; p++) {
         if (*p == '/' || *p == '\\' || !*p) {
             size_t len = (size_t)(p - base);
-            if ((len == 4 && !strncmp(base, "test", len)) ||
-                (len == 5 && !strncmp(base, "tests", len)) ||
-                (len == 9 && !strncmp(base, "__tests__", len)))
+            bool singular = ap_named(base, len, "test");
+            if ((singular && base == path) || ap_named(base, len, "tests") ||
+                ap_named(base, len, "__tests__"))
                 return true;
+            nested = nested || singular;
             if (!*p)
                 break;
             base = p + 1;
         }
     }
+    if (ap_suffix(base, ".py")) {
+        if (!strcmp(base, "tests.py") || !strcmp(base, "conftest.py"))
+            return true;
+        *package = nested;
+    } else if (nested)
+        return true;
     return !strncmp(base, "test_", 5) || strstr(base, "_test.") || strstr(base, ".test.") ||
            strstr(base, ".spec.");
 }
@@ -230,6 +263,35 @@ static int ap_counts(ap_context *c, const char *project) {
         c->limited = "Graph exceeds the node budget; no sampled architecture was inferred.";
     else if (c->total_edges > c->options.max_edges)
         c->limited = "Graph exceeds the edge budget; no sampled architecture was inferred.";
+    return CBM_STORE_OK;
+}
+
+/* Web code enters through route handlers, not main: HANDLES runs from a
+ * Function/Method to its Route (atlas_flows.c scores them alike). A CALLS edge
+ * into a Route is the call that registered it, as pass_route_nodes.c reads it.
+ * Handlers in test code are fixtures, and so are the handlers of routes that
+ * only test code registers: test-client calls like self.client.get("/x/") are
+ * indexed as registrations. Routes without a registration call (decorators)
+ * keep their handlers. Indexed entry points stay ahead of handlers. */
+static int ap_route_handlers(ap_context *c) {
+    enum { AP_PRODUCTION_REGISTRAR = 1, AP_TEST_REGISTRAR = 2 };
+    unsigned char *registrars = calloc((size_t)c->n + 1, sizeof(*registrars));
+    if (!registrars)
+        return CBM_STORE_ERR;
+    for (int i = 0; i < c->m; i++) {
+        const ap_edge *e = &c->edges[i];
+        if (e->type == AP_CALLS && c->nodes[e->target].route)
+            registrars[e->target] |=
+                c->nodes[e->source].test ? AP_TEST_REGISTRAR : AP_PRODUCTION_REGISTRAR;
+    }
+    for (int i = 0; i < c->m; i++) {
+        const ap_edge *e = &c->edges[i];
+        ap_node *handler = &c->nodes[e->source];
+        if (e->type == AP_HANDLES && c->nodes[e->target].route && handler->callable &&
+            !handler->test && !handler->entry && registrars[e->target] != AP_TEST_REGISTRAR)
+            handler->handler = true;
+    }
+    free(registrars);
     return CBM_STORE_OK;
 }
 
@@ -263,11 +325,14 @@ static int ap_load(ap_context *c, const char *project) {
         n->end = sqlite3_column_int(stmt, 6);
         n->entry = sqlite3_column_int(stmt, 7) != 0;
         n->test_property = sqlite3_column_int(stmt, 8) != 0;
-        n->test = n->test_property || ap_test_path(n->file);
+        bool package = false;
+        n->test = ap_test_path(n->file, &package) || (n->test_property && !package);
         n->structural = !strcmp(n->label, "Project") || !strcmp(n->label, "Folder");
         n->declared = !strcmp(n->label, "Module") || !strcmp(n->label, "Package") ||
                       !strcmp(n->label, "Namespace") || !strcmp(n->label, "Class") ||
                       !strcmp(n->label, "Struct") || !strcmp(n->label, "Interface");
+        n->route = !strcmp(n->label, "Route");
+        n->callable = !strcmp(n->label, "Function") || !strcmp(n->label, "Method");
         n->atom = c->n - 1;
         n->component = -1;
     }
@@ -299,7 +364,7 @@ static int ap_load(ap_context *c, const char *project) {
         }
     }
     sqlite3_finalize(stmt);
-    return step == SQLITE_DONE ? CBM_STORE_OK : CBM_STORE_ERR;
+    return step == SQLITE_DONE ? ap_route_handlers(c) : CBM_STORE_ERR;
 }
 
 /* Ownership is grounded in declared module/type names and explicit definition
@@ -1259,6 +1324,29 @@ done:
     return rc;
 }
 
+/* Overview entries are bounded; groups still carry every id and count. The
+ * displayed components are listed first, then each group's own top-ranked
+ * components up to AP_GROUP_ENTRIES, so that every group can be opened, and
+ * the global rank fills the remaining entries. */
+static void ap_list_overview(ap_context *c, const ap_rank *ranks) {
+    enum { AP_LIST_DISPLAYED, AP_LIST_GROUPS, AP_LIST_RANK, AP_LIST_PASSES };
+    int group_entries[sizeof(c->groups) / sizeof(c->groups[0])] = {0};
+    int listed = 0;
+    for (int i = 0; i < c->component_count; i++)
+        c->components[i].listed = false;
+    for (int pass = 0; pass < AP_LIST_PASSES; pass++)
+        for (int pick = 0; pick < c->component_count && listed < AP_OVERVIEW_COMPONENTS; pick++) {
+            ap_component *part = &c->components[ranks[pick].index];
+            int *entries = &group_entries[part->overview_group];
+            if (part->listed || (pass == AP_LIST_DISPLAYED && part->displayed < 0) ||
+                (pass == AP_LIST_GROUPS && *entries >= AP_GROUP_ENTRIES))
+                continue;
+            part->listed = true;
+            (*entries)++;
+            listed++;
+        }
+}
+
 static const char *ap_component_basis(const ap_context *c, int i) {
     const ap_component *p = &c->components[i];
     return p->atoms > 1                           ? "interaction_community"
@@ -1279,6 +1367,7 @@ static int ap_overview(ap_context *c, yyjson_mut_doc *doc, yyjson_mut_val *root)
     yyjson_mut_obj_add_val(doc, overview, "totals", totals);
     yyjson_mut_obj_add_val(doc, overview, "limits", limits);
     int connection_count = 0, shown = 0;
+    int omitted_entries = 0;
     if (!c->limited) {
         for (int g = 0; g < c->group_count; g++) {
             ap_overview_group *group = &c->groups[g];
@@ -1309,8 +1398,14 @@ static int ap_overview(ap_context *c, yyjson_mut_doc *doc, yyjson_mut_val *root)
             if (ap_stopped(c))
                 return CBM_STORE_ERR;
         }
+        /* Groups above keep every component id and count; only the detailed
+         * entries are bounded (ap_list_overview). */
         for (int i = 0; i < c->component_count; i++) {
             ap_component *part = &c->components[i];
+            if (!part->listed) {
+                omitted_entries++;
+                continue;
+            }
             yyjson_mut_val *value = yyjson_mut_obj(doc), *reps = yyjson_mut_arr(doc);
             char id[48];
             ap_component_id(c, i, id);
@@ -1369,12 +1464,14 @@ static int ap_overview(ap_context *c, yyjson_mut_doc *doc, yyjson_mut_val *root)
         }
         free(edges);
     }
-    yyjson_mut_obj_add_bool(doc, overview, "complete", !c->limited && shown == connection_count);
+    yyjson_mut_obj_add_bool(doc, overview, "complete",
+                            !c->limited && shown == connection_count && !omitted_entries);
     yyjson_mut_obj_add_int(doc, totals, "groups", c->limited ? 0 : c->group_count);
     yyjson_mut_obj_add_int(doc, totals, "components", c->limited ? 0 : c->component_count);
     yyjson_mut_obj_add_int(doc, totals, "accounted_nodes", c->limited ? 0 : c->accounted);
     yyjson_mut_obj_add_int(doc, totals, "connections", connection_count);
     yyjson_mut_obj_add_int(doc, limits, "omitted_connections", connection_count - shown);
+    yyjson_mut_obj_add_int(doc, limits, "omitted_component_entries", omitted_entries);
     return CBM_STORE_OK;
 }
 
@@ -1732,13 +1829,10 @@ static int ap_render(ap_context *c, const char *project, char **out_json) {
     bool paths_truncated = false;
     int rc = CBM_STORE_OK;
     ap_dep *deps = NULL;
-    if (ap_overview(c, doc, root) != CBM_STORE_OK) {
-        rc = CBM_STORE_ERR;
-        goto done;
-    }
     if (!c->limited) {
         /* Prefer the largest connected candidates, retaining deterministic IDs.
-         * Never relabel discarded components as a single invented component. */
+         * Never relabel discarded components as a single invented component.
+         * The same rank picks the overview entries, before they render. */
         ap_rank *ranks = malloc(((size_t)c->component_count + 1) * sizeof(*ranks));
         if (!ranks) {
             rc = CBM_STORE_ERR;
@@ -1751,11 +1845,18 @@ static int ap_render(ap_context *c, const char *project, char **out_json) {
         qsort(ranks, (size_t)c->component_count, sizeof(*ranks), ap_rank_compare);
         for (int pick = 0; pick < c->options.max_components && pick < c->component_count; pick++)
             c->components[ranks[pick].index].displayed = shown++;
+        ap_list_overview(c, ranks);
         free(ranks);
         if (ap_stopped(c)) {
             rc = CBM_STORE_ERR;
             goto done;
         }
+    }
+    if (ap_overview(c, doc, root) != CBM_STORE_OK) {
+        rc = CBM_STORE_ERR;
+        goto done;
+    }
+    if (!c->limited) {
         for (int i = 0; i < c->component_count; i++) {
             ap_component *p = &c->components[i];
             if (p->displayed < 0)
@@ -1831,11 +1932,16 @@ static int ap_render(ap_context *c, const char *project, char **out_json) {
             rc = CBM_STORE_ERR;
             goto done;
         }
-        for (int i = 0; i < c->n; i++) {
-            ap_node *node = &c->nodes[i];
-            if (node->component < 0)
-                continue;
-            if (node->entry) {
+        /* Indexed entry points first, then route handlers, each in id order:
+         * paths take their slots in this order, so many handlers cannot crowd
+         * main out of the default paths. */
+        enum { AP_ENTRY_INDEXED, AP_ENTRY_HANDLER, AP_ENTRY_PASSES };
+        for (int pass = AP_ENTRY_INDEXED; pass < AP_ENTRY_PASSES; pass++)
+            for (int i = 0; i < c->n; i++) {
+                ap_node *node = &c->nodes[i];
+                if (node->component < 0 ||
+                    !(pass == AP_ENTRY_HANDLER ? node->handler : node->entry))
+                    continue;
                 entry_total++;
                 if (entry_count < AP_ENTRYPOINTS) {
                     entry_indexes[entry_count++] = i;
@@ -1845,7 +1951,6 @@ static int ap_render(ap_context *c, const char *project, char **out_json) {
                     c->evidence_scope = AP_EVIDENCE_CONTEXT;
                 }
             }
-        }
         c->evidence_scope = AP_EVIDENCE_PATH;
         if (c->options.target_node_id) {
             /* The target query produces exact endpoint witnesses below. */
