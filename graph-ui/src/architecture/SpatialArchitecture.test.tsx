@@ -93,6 +93,21 @@ it('cancels a route request on generation change and ignores its late result', a
     expect(host.textContent).not.toContain('STALE RESPONSE');
     expect(loadRouteGraph).toHaveBeenCalledTimes(2);
 });
+it('groups endpoints, hides test routes by default and narrows a group through the filter', async () => {
+    const route = (id: number, name: string, file_path: string): GraphNode => ({ id, label: 'Route', name, qualified_name: `sample.route.${id}`, file_path, x: 0, y: 0, z: 0, size: 1, color: '' });
+    const input: GraphData = { nodes: [node, route(2, '/accounts/login/', 'app/urls.py'), route(3, '/accounts/logout/', 'app/urls.py'), route(4, '/fixture/', 'tests/urls.py')], edges: [], total_nodes: 4 };
+    const onFilter = vi.fn();
+    await act(async () => root.render(<SpatialArchitecture project="sample" graph={input} overview={overview} view="routes" filter="" active onNavigate={vi.fn()} onView={vi.fn()} onFilter={onFilter} />));
+    const scene = () => [...host.querySelectorAll('[data-testid="scene"] [data-node]')].map(item => item.textContent);
+    expect(scene()).toEqual(['/accounts · 2']);
+    const toggle = [...host.querySelectorAll('label')].find(label => label.textContent?.startsWith('Include test routes'))!;
+    expect(toggle.textContent).toBe('Include test routes (1 hidden)');
+    await click('/accounts · 2'); await click('Show these 2 routes →');
+    expect(onFilter).toHaveBeenCalledExactlyOnceWith('/accounts');
+    await act(async () => toggle.querySelector('input')!.click());
+    expect(scene()).toEqual(['/accounts · 2', '/fixture/']);
+    expect(toggle.textContent).toBe('Include test routes');
+});
 it('does not load route evidence while the workspace is hidden', async () => {
     await act(async () => root.render(<SpatialArchitecture project="sample" graph={graph} overview={overview} view="routes" filter="" active={false} onNavigate={vi.fn()} onView={vi.fn()} />));
     expect(loadRouteGraph).not.toHaveBeenCalled();

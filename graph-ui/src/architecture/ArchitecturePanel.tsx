@@ -112,6 +112,7 @@ function Findings({ view, data, empty, onNavigate }: {
 
 function ArchitectureWorkspace({ projectName, overview, loading = false, error, onRefresh, onNavigate, graph, selectionPanel, onSelect, onClearSelection, onSelectionEvidence, graphNote, graphGeneration, active = true, coverage, systemArchitectureLoader }: ArchitecturePanelProps): JSX.Element {
     const storage = useMemo(browserStorage, []);
+    // A filter is a search for this visit: one saved by an earlier session would silently hide routes.
     const [config, setConfig] = useState(() => ({ ...readArchitectureConfig(storage, projectName), filter: '' }));
     useEffect(() => { saveArchitectureConfig(storage, projectName, config); }, [config, projectName, storage]);
     // A cached summary from another project must never appear here.
@@ -122,20 +123,26 @@ function ArchitectureWorkspace({ projectName, overview, loading = false, error, 
         if (active && (!projectName || (!systemView && (!ready || !graph)))) onSelectionEvidence?.(undefined);
     }, [active, projectName, systemView, ready, graph, onSelectionEvidence]);
     const SpatialView = config.view === 'routes' ? RoutesArchitecture : SpatialArchitecture;
+    // Only the Routes view offers the filter, so no other view may receive a stale one.
+    const filter = config.view === 'routes' ? config.filter : '';
+    const setFilter = (value: string) => setConfig(current => ({ ...current, filter: value }));
     return <section className="atlas-architecture" data-testid="atlas-architecture" data-system-view={systemView} aria-label={text.title} aria-busy={!systemView && loading}>
         <nav className="atlas-arch-tabs" aria-label={text.navigation}>{ARCHITECTURE_VIEWS.map(view =>
             <button className="atlas-arch-tab" key={view} aria-pressed={config.view === view || (view === 'overview' && ['dependencies', 'entryPoints'].includes(config.view))} data-view={view}
                 onClick={() => { if (view !== config.view) onSelectionEvidence?.(undefined); setConfig(current => ({ ...current, view })); }}>{text.views[view]}</button>)}</nav>
         {systemView && projectName ? <Suspense fallback={<div role="status"><Empty>Preparing system analysis…</Empty></div>}><SystemArchitecture
-            project={projectName} generation={graphGeneration} view={systemView} filter={config.filter} active={active}
+            project={projectName} generation={graphGeneration} view={systemView} filter={filter} active={active}
             graph={graph} onSelect={onSelect} onClearSelection={onClearSelection} onSelectionEvidence={onSelectionEvidence} onNavigate={onNavigate} loader={systemArchitectureLoader} /></Suspense> : null}
         {!systemView && (!projectName ? <Empty>{text.chooseProject}</Empty> : loading ? <div role="status"><Empty>{text.loading}</Empty></div>
             : error ? <div role="alert" className="atlas-arch-empty" data-error="true"><p>{text.loadFailed}</p><p className="atlas-arch-error-detail">{error}</p>
                 {onRefresh && <button className="atlas-arch-action" onClick={onRefresh}>{text.retry}</button>}</div>
                 : !data ? <Empty>{text.unavailable}</Empty> : null)}
         {systemView && !projectName && <Empty>{text.chooseProject}</Empty>}
+        {!systemView && ready && data && graph && config.view === 'routes' && <div className="atlas-arch-toolbar"><label className="atlas-arch-filter">
+            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="6.5" cy="6.5" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.4" /><path d="m10 10 4 4" stroke="currentColor" strokeWidth="1.4" /></svg>
+            <input aria-label={text.filter} placeholder={text.filterPlaceholder} type="search" value={config.filter} onChange={event => setFilter(event.target.value)} /></label></div>}
         {!systemView && ready && data && graph && <SpatialView project={projectName} generation={graphGeneration} graph={graph} overview={data}
-            view={config.view === 'dependencies' || config.view === 'structure' || config.view === 'behavior' ? 'overview' : config.view} filter={config.filter} active={active}
+            view={config.view === 'dependencies' || config.view === 'structure' || config.view === 'behavior' ? 'overview' : config.view} filter={filter} onFilter={setFilter} active={active}
             graphNote={graphNote} coverage={coverage} onSelect={onSelect} onClearSelection={onClearSelection} onSelectionEvidence={onSelectionEvidence} selectionPanel={selectionPanel} onNavigate={onNavigate} onView={view => { onSelectionEvidence?.(undefined); setConfig(current => ({ ...current, view: view === 'dependencies' ? 'overview' : view })); }} />}
         {!systemView && ready && data && !graph && <div className="atlas-arch-content" data-testid="atlas-architecture-content">
             <p className="atlas-arch-fallback-summary">{data.files.length.toLocaleString()} files · {data.groups.length.toLocaleString()} source areas · {data.boundaries.length.toLocaleString()} cross-area connections</p>

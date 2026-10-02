@@ -24,6 +24,8 @@ export interface SemanticNode {
     kindLabel?: string;
     /** An area outside the opened area or file; it keeps to its own lane. */
     external?: boolean;
+    /** The first path segment shared by the routes of a route group. */
+    routePrefix?: string;
 }
 export interface SemanticEvidence {
     source: GraphNode;
@@ -68,6 +70,8 @@ export interface SemanticGraph {
     omittedNodes: number;
     omittedEdges: number;
     warnings: string[];
+    /** Routes view only: routes left out because all of their evidence lies in test code. */
+    hiddenRoutes?: number;
 }
 export interface SemanticGraphOptions {
     view: SemanticView;
@@ -85,12 +89,18 @@ export interface SemanticGraphOptions {
     /** File inventory is independent of the dependency graph and its row cap. */
     knownFiles?: string[];
     visibleFiles?: ReadonlySet<string>;
+    /** Routes view: fold routes sharing a first path segment into one counted group while no filter is set. */
+    groupRoutes?: boolean;
+    /** Routes view: leave out routes whose registration, handlers and callers all lie in test code. */
+    hideTestRoutes?: boolean;
 }
 
 const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
 const identity = (node: GraphNode) => `${node.label}:${node.qualified_name || `#${node.id}`}@${node.file_path ?? ''}`;
 const nodeOrder = (a: GraphNode, b: GraphNode) => compare(identity(a), identity(b));
 const symbolId = (node: GraphNode) => `symbol:${identity(node)}`;
+/** Conventional test locations: a test directory, or a test_*, tests.*, *_test, *.test or *.spec file. */
+const TEST_SOURCE = /(^|\/)(tests?|__tests__|specs?)\/|(^|\/)(test_[^/]*|tests?\.[^/.]+|[^/]+[._-](test|spec)\.[^/.]+)$/i;
 const sourceNode = (node: GraphNode) => Boolean(node.file_path && node.file_path !== '{}'
     && !['Project', 'Folder', 'Package', 'Branch', 'Route'].includes(node.label));
 const symbolNode = (node: GraphNode): SemanticNode => ({ id: symbolId(node),
@@ -292,6 +302,7 @@ export function buildSemanticGraph(graph: GraphData, options: SemanticGraphOptio
     let positionMeaning = 'Nested platforms follow source folders; areas outside the opened one wait in their own lane. Boxes represent source grouping, not deployed services.';
     const depth = bounded(options.depth, 3, 8);
     let rootId: string | undefined;
+    let hiddenRoutes = 0;
 
     if (options.view === 'entryPoints') {
         const entries = semanticEntryPoints(graph, options.entryQualifiedNames);
@@ -325,11 +336,31 @@ export function buildSemanticGraph(graph: GraphData, options: SemanticGraphOptio
         positionMeaning = 'Left to right: shortest static call distance from the entry point. This is possible reachability, not runtime execution order.';
     } else if (options.view === 'routes') {
         const currentByIdentity = new Map(graph.nodes.map(node => [identity(node), node]));
-        const routeEvidence = evidence.filter(edge => ['HTTP_CALLS', 'ASYNC_CALLS', 'HANDLES'].includes(edge.type));
+        const recorded = evidence.filter(edge => ['HTTP_CALLS', 'ASYNC_CALLS', 'HANDLES'].includes(edge.type));
         for (const relationship of options.routeSnapshot?.relationships ?? []) {
             const remap = (node: GraphNode) => node.qualified_name ? currentByIdentity.get(identity(node)) ?? node : node;
-            routeEvidence.push({ ...relationship, source: remap(relationship.source), target: remap(relationship.target) });
+            recorded.push({ ...relationship, source: remap(relationship.source), target: remap(relationship.target) });
         }
+        // A route is test code only when every located piece of its evidence is:
+        // its own registration, its handlers and its callers.
+        const verdicts = new Map<string, boolean[]>();
+        const record = (route: GraphNode, node: GraphNode) => {
+            const file = node.file_path && !['{}', '-'].includes(node.file_path) ? node.file_path : undefined;
+            if (!file && node.status !== 'test') return;
+            const list = verdicts.get(identity(route)) ?? []; list.push(node.status === 'test' || TEST_SOURCE.test(file!)); verdicts.set(identity(route), list);
+        };
+        for (const node of graph.nodes) if (node.label === 'Route') record(node, node);
+        for (const edge of recorded) {
+            const route = edge.target.label === 'Route' ? edge.target : edge.source.label === 'Route' ? edge.source : undefined;
+            if (route) { record(route, route); record(route, route === edge.target ? edge.source : edge.target); }
+        }
+        const hidden = new Set<string>();
+        const shown = (route: GraphNode) => {
+            const list = verdicts.get(identity(route));
+            if (!options.hideTestRoutes || !list?.length || !list.every(Boolean)) return true;
+            hidden.add(identity(route)); return false;
+        };
+        const routeEvidence = recorded.filter(edge => [edge.source, edge.target].every(node => node.label !== 'Route' || shown(node)));
         const routeNodes = new Map<string, SemanticNode>();
         const currentNodes = new Set(graph.nodes);
         const routeKey = (node: GraphNode, edge?: SemanticEvidence): string => {
@@ -354,7 +385,7 @@ export function buildSemanticGraph(graph: GraphData, options: SemanticGraphOptio
             return id;
         };
         edges = aggregate(routeEvidence, (node, edge) => routeKey(node, edge));
-        for (const node of graph.nodes.filter(node => node.label === 'Route')) routeKey(node);
+        for (const node of graph.nodes.filter(node => node.label === 'Route' && shown(node))) routeKey(node);
         for (const route of options.routes ?? []) {
             const alreadyRepresented = graph.nodes.some(node => node.label === 'Route'
                 && [route.path, `${route.method ?? ''} ${route.path}`.trim()].includes(node.name)
@@ -363,9 +394,38 @@ export function buildSemanticGraph(graph: GraphData, options: SemanticGraphOptio
             if (alreadyRepresented) continue;
             // A textual registration is useful navigation, but cannot establish an edge or handler identity.
             const id = `registration:${route.method ?? ''}:${route.path}@${route.filePath ?? ''}:${route.line ?? ''}`;
+            if (options.hideTestRoutes && route.filePath && TEST_SOURCE.test(route.filePath)) { hidden.add(id); continue; }
             routeNodes.set(id, { id, kind: 'route', label: `${route.method ? `${route.method} ` : ''}${route.path}`,
                 detail: `${route.origin === 'source' ? 'Source' : 'Index'} registration · handler relationship not resolved`,
                 position: [0, 0, 0], count: 1, filePath: route.filePath, line: route.line, members: [] });
+        }
+        hiddenRoutes = hidden.size;
+        // Without a filter, routes sharing a first path segment become one counted
+        // group; a filter lists the matching routes one by one again.
+        const grouped = new Map<string, string>();
+        if (options.groupRoutes && !options.filter?.trim()) {
+            const prefixes = new Map<string, SemanticNode[]>();
+            for (const node of routeNodes.values()) if (node.kind === 'route') {
+                const prefix = `/${node.label.replace(/^[A-Z]+\s+/, '').split('/').filter(Boolean)[0] ?? ''}`;
+                prefixes.set(prefix, [...prefixes.get(prefix) ?? [], node]);
+            }
+            for (const [prefix, routes] of prefixes) if (routes.length > 1) {
+                const id = `route-group:${prefix}`;
+                routeNodes.set(id, { id, kind: 'route', kindLabel: 'Route group', routePrefix: prefix, label: `${prefix} · ${routes.length}`,
+                    detail: `${routes.length} routes whose path starts with ${prefix}`, position: [0, 0, 0], count: routes.length,
+                    members: routes.flatMap(route => route.members) });
+                for (const route of routes) { grouped.set(route.id, id); routeNodes.delete(route.id); }
+            }
+        }
+        if (grouped.size) {
+            const merged = new Map<string, SemanticEdge>();
+            for (const edge of edges) {
+                const source = grouped.get(edge.source) ?? edge.source, target = grouped.get(edge.target) ?? edge.target;
+                const id = `${source}→${edge.type}→${target}`;
+                const into = merged.get(id) ?? { ...edge, id, source, target, count: 0, evidence: [] };
+                into.count += edge.count; into.evidence.push(...edge.evidence); merged.set(id, into);
+            }
+            edges = [...merged.values()].sort((a, b) => compare(a.id, b.id));
         }
         nodes = [...routeNodes.values()];
         for (const node of nodes) node.members.sort(nodeOrder);
@@ -529,5 +589,5 @@ export function buildSemanticGraph(graph: GraphData, options: SemanticGraphOptio
     return { view: options.view, scopeKey: `${options.view}:${options.areaPath ?? ''}:${options.filePath ?? ''}:${rootId ?? ''}:${filter ?? ''}`,
         title, positionMeaning, nodes, ...(platforms ? { platforms: pruneHierarchyPlatforms(platforms, nodes) } : {}),
         edges, totalNodes, totalEdges, omittedNodes: totalNodes - nodes.length,
-        omittedEdges: totalEdges - edges.length, warnings: [...new Set(warnings)] };
+        omittedEdges: totalEdges - edges.length, warnings: [...new Set(warnings)], ...(options.view === 'routes' ? { hiddenRoutes } : {}) };
 }

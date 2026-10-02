@@ -6,6 +6,7 @@ import { ArchitectureScene } from './ArchitectureScene';
 import { buildSemanticGraph, semanticEntryPoints, type SemanticNode, type SemanticView } from './semantic-graph';
 import { loadRouteGraph, type RouteGraphSnapshot } from './route-graph-source';
 import { areaLevels } from './repository-map';
+import { architectureText as text } from './strings';
 import { collectSourceMetrics, measureSourceNode } from './source-metrics';
 import SourceMetricsDetails from './SourceMetricsDetails';
 import type { CoverageIndex } from '../app/tree-model';
@@ -20,6 +21,8 @@ interface Props {
     onSelect?: (node: GraphNode) => void; onClearSelection?: () => void; selectionPanel?: ReactNode;
     onSelectionEvidence?: SelectionEvidenceListener;
     onView: (view: SemanticView) => void;
+    /** Routes view: narrows the endpoints, for example to the routes of one group. */
+    onFilter?: (filter: string) => void;
     onNavigate: (path: string, line?: number, name?: string) => void;
     coverage?: CoverageIndex;
 }
@@ -41,7 +44,7 @@ const viewNotes: Record<SemanticView, string> = {
 };
 const relationKinds = ['CALLS', 'IMPORTS', 'USAGE', 'INHERITS', 'IMPLEMENTS', 'DATA_FLOWS'];
 
-export default function SpatialArchitecture({ project, generation, graph, overview, view, filter, active, graphNote, onSelect, onClearSelection, onSelectionEvidence, selectionPanel, onNavigate, onView, coverage }: Props) {
+export default function SpatialArchitecture({ project, generation, graph, overview, view, filter, active, graphNote, onSelect, onClearSelection, onSelectionEvidence, selectionPanel, onNavigate, onView, onFilter, coverage }: Props) {
     const [areaPath, setAreaPath] = useState<string>();
     const [filePath, setFilePath] = useState<string>();
     const [entryChoice, setEntryChoice] = useState<{ node: GraphNode; generation?: string }>();
@@ -57,6 +60,7 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
     const [routeReading, setRouteReading] = useState<{ key: string; snapshot?: RouteGraphSnapshot; error?: string }>();
     const [routeRevision, setRouteRevision] = useState(0);
     const [memberLimit, setMemberLimit] = useState(5);
+    const [includeTestRoutes, setIncludeTestRoutes] = useState(false);
     useEffect(() => { setHotspotArea(undefined); }, [project, generation]);
     const routeKey = `${project}:${generation ?? ''}:${routeRevision}`;
     useEffect(() => {
@@ -86,8 +90,8 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
     const focusedHotspots = useMemo(() => hotspotArea ? collectHotspots(hotspotCatalog.byArea.get(hotspotArea)?.findings ?? [], graph) : hotspotCatalog, [hotspotArea, hotspotCatalog, graph]);
     const model = useMemo(() => view === 'hotspots' ? buildHotspotGraph(graph, focusedHotspots, filter) : buildSemanticGraph(graph, {
         view, areaPath, filePath, entryId: currentEntry?.id, entryQualifiedNames: overview.entryPoints.flatMap(entry => entry.qualifiedName ? [entry.qualifiedName] : []), depth, filter, relations,
-        routes: overview.routes, routeSnapshot, knownFiles: [...catalog.files.keys()], visibleFiles,
-    }), [graph, view, areaPath, filePath, currentEntry?.id, depth, filter, relations, overview.routes, overview.entryPoints, routeSnapshot, catalog, visibleFiles, focusedHotspots]);
+        routes: overview.routes, routeSnapshot, knownFiles: [...catalog.files.keys()], visibleFiles, groupRoutes: true, hideTestRoutes: !includeTestRoutes,
+    }), [graph, view, areaPath, filePath, currentEntry?.id, depth, filter, relations, overview.routes, overview.entryPoints, routeSnapshot, catalog, visibleFiles, focusedHotspots, includeTestRoutes]);
     const hasSourceBricks = model.nodes.some(node => node.kind === 'area' || node.kind === 'file');
     const scope = `${project}:${generation ?? ''}:${model.scopeKey}:${view}:${filter}:${hotspotArea ?? ''}`;
     const selectedNode = selection?.scope === scope ? model.nodes.find(node => node.id === selection.node) : undefined;
@@ -147,6 +151,7 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
             </select></label><label>Call depth <select aria-label="Call depth" value={depth} onChange={event => setDepth(Number(event.target.value))}>{[1, 2, 3, 4].map(value => <option key={value}>{value}</option>)}</select></label></>}
             {view === 'hotspots' && hotspotArea && <nav aria-label="Hotspot area"><button onClick={clearScope}>All hotspots</button><span>/ {hotspotArea}</span></nav>}
             {view === 'routes' && <button onClick={() => setRouteRevision(value => value + 1)}>Refresh connections</button>}
+            {view === 'routes' && <label className="spatial-gravity-toggle"><input type="checkbox" checked={includeTestRoutes} onChange={event => { setIncludeTestRoutes(event.target.checked); setSelection(undefined); }} />{text.includeTestRoutes(model.hiddenRoutes ?? 0)}</label>}
             {filePath && (view === 'overview' || view === 'dependencies') && <button onClick={() => onNavigate(filePath, 1)}>Read this file</button>}
             {(view === 'overview' || view === 'dependencies') && <div className="spatial-relations" role="group" aria-label="Relationship types">
                 <button aria-pressed={!relations.length} onClick={() => setRelations([])}>All</button>{relationKinds.map(type => <button key={type} aria-pressed={relations.includes(type)} onClick={() => setRelations(current => current.includes(type) ? current.filter(item => item !== type) : [...current, type])}>{type.replaceAll('_', ' ').toLowerCase()}</button>)}
@@ -162,8 +167,8 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
         <div className="spatial-map-layout">
             <div className="spatial-map"><SceneBoundary key={project}>
                 {model.nodes.length ? <ArchitectureScene model={model} selectedId={selectedNode?.id} selectedEdgeId={selectedEdge?.id} onSelect={selectNode}
-                    onSelectEdge={id => { setSelection({ scope, edge: id }); setMemberLimit(5); }} onOpen={id => { const node = nodesById.get(id); if (node && (node.kind === 'area' || node.kind === 'file')) openGroup(node); }} onClearSelection={clearScope} active={active} planar={planar} resetKey={resetKey} catalog={catalog} heightMetric={heightMetric} colorMetric={colorMetric} hotspots={hotspotCatalog} showHotspots={showHotspots}
-                    adaptiveLabels={view === 'overview' || view === 'dependencies'} />
+                    onSelectEdge={id => { setSelection({ scope, edge: id }); setMemberLimit(5); }} onOpen={id => { const node = nodesById.get(id); if (node?.routePrefix) onFilter?.(node.routePrefix); else if (node && (node.kind === 'area' || node.kind === 'file')) openGroup(node); }} onClearSelection={clearScope} active={active} planar={planar} resetKey={resetKey} catalog={catalog} heightMetric={heightMetric} colorMetric={colorMetric} hotspots={hotspotCatalog} showHotspots={showHotspots}
+                    adaptiveLabels={view === 'overview' || view === 'dependencies' || view === 'routes'} />
                     : <div className="spatial-unavailable">{filter ? 'No matching graph evidence. Try a broader filter.' : view === 'hotspots' ? 'No ranked hotspot measurements are available in this snapshot.' : view === 'entryPoints' ? 'No indexed entry points in this snapshot.' : view === 'routes' ? 'No endpoint evidence is available in this snapshot.' : filePath ? 'No indexed symbols in this file. Use “Read this file” to inspect its source.' : 'No source nodes are available in this repository snapshot.'}</div>}
             </SceneBoundary><div className="spatial-map-caption"><span title={model.positionMeaning}>{view === 'hotspots' ? 'Gravity: incoming references' : view === 'entryPoints' ? 'Static call paths' : 'Source folders and indexed relationships'}</span><span>Drag to orbit · scroll to zoom · select to inspect</span></div></div>
             <aside className="spatial-inspector" aria-label="Architecture inspector">
@@ -179,6 +184,7 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
                     {selectedMeasure && <details className="spatial-selection-details"><summary>{selectedMeasure.files.toLocaleString()} files · {selectedMeasure.lines?.toLocaleString() ?? "Unknown"} indexed lines</summary><SourceMetricsDetails measure={selectedMeasure} catalog={catalog} /></details>}
                     {selectedHotspots && <details className="spatial-hotspot-details"><summary>{selectedHotspots.findings.length} hotspot findings · peak fan-in {selectedHotspots.maxFanIn ?? 'unknown'}</summary><p>Static incoming references, not runtime frequency.</p>{selectedHotspots.findings.slice(0, memberLimit).map(finding => <article key={hotspotIdentity(finding)}><button disabled={!finding.filePath} onClick={() => onNavigate(finding.filePath!, finding.line, finding.name)}>{finding.name}</button><div>{hotspotSignals(finding).map(signal => <span key={signal}>{signal}</span>)}</div></article>)}{selectedHotspots.findings.length > memberLimit && <button onClick={() => setMemberLimit(value => value + 16)}>More hotspot findings</button>}</details>}
                     {(selectedNode.kind === 'area' || selectedNode.kind === 'file') && <button className="spatial-primary" onClick={() => openGroup(selectedNode)}>Open {selectedNode.kind === 'area' ? 'area' : 'file symbols'} →</button>}
+                    {selectedNode.routePrefix && onFilter && <button className="spatial-primary" onClick={() => onFilter(selectedNode.routePrefix!)}>{text.showRoutes(selectedNode.count)}</button>}
                     {selectedNode.filePath && <button onClick={() => onNavigate(selectedNode.filePath!, selectedNode.line, selectedNode.label)}>Open source</button>}
                     {!!selectedNode.members.length && <details className="spatial-selection-details"><summary>Source members · {selectedNode.members.length}</summary><div className="spatial-members">{selectedNode.members.slice(0, memberLimit).map(node => <button key={`${node.qualified_name}:${node.id}`} onClick={() => inspectMember(node)}>{node.name}<small>{node.file_path}{node.start_line ? `:${node.start_line}` : ''}</small></button>)}</div>
                         {selectedNode.members.length > memberLimit && <button onClick={() => setMemberLimit(value => value + 16)}>More members</button>}</details>}

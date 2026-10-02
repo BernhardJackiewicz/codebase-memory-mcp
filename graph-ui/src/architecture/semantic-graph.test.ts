@@ -315,6 +315,43 @@ describe('route identities and service evidence', () => {
         expect(model.edges).toHaveLength(0);
         expect(model.omittedNodes).toBe(1);
     });
+    it('groups endpoints by their first path segment with counts and lists them again under a filter', () => {
+        const routes = ['/accounts/login/', '/accounts/logout/', '/admin/', '/'].map((name, index) => ({ ...route, id: 300 + index, name, qualified_name: `fixture.route.${index}` }));
+        const caller = node(1, 'services/gateway/client.ts', 'request');
+        const graph: GraphData = { nodes: [caller, ...routes], edges: [], total_nodes: 5 };
+        const routeSnapshot = { truncated: false, warnings: [], relationships: routes.map(target => ({ source: caller, target, type: 'HTTP_CALLS' as const })) };
+        const model = buildSemanticGraph(graph, { view: 'routes', groupRoutes: true, routeSnapshot });
+        expect(model.nodes.filter(item => item.kind === 'route').map(item => item.label).sort()).toEqual(['/', '/accounts · 2', '/admin/']);
+        const group = model.nodes.find(item => item.routePrefix === '/accounts')!;
+        expect(group).toMatchObject({ id: 'route-group:/accounts', count: 2, kindLabel: 'Route group' });
+        expect(group.members.map(item => item.name)).toEqual(['/accounts/login/', '/accounts/logout/']);
+        const calls = model.edges.find(edge => edge.target === group.id)!;
+        expect(calls).toMatchObject({ source: 'caller-area:services/gateway', type: 'HTTP_CALLS', count: 2 });
+        expect(calls.evidence.map(item => item.target)).toEqual([routes[0], routes[1]]);
+        expect(buildSemanticGraph({ ...graph, nodes: [...graph.nodes].reverse() }, { view: 'routes', groupRoutes: true, routeSnapshot })).toEqual(model);
+        const filtered = buildSemanticGraph(graph, { view: 'routes', groupRoutes: true, filter: '/accounts', routeSnapshot });
+        expect(filtered.nodes.filter(item => item.kind === 'route').map(item => item.label)).toEqual(['/accounts/login/', '/accounts/logout/']);
+    });
+    it('hides routes whose evidence lies only in test code and keeps test callers of other routes', () => {
+        const testCaller = node(2, 'tests/admin_views/tests.py', 'test_login');
+        const handler = node(3, 'django/contrib/admin/actions.py', 'delete_selected');
+        const testOnly = { ...route, id: 310, name: '/malformed_post/', qualified_name: 'fixture.route.test' };
+        const shared = { ...route, id: 311, name: '/{pk}/delete_selected', qualified_name: 'fixture.route.admin' };
+        const graph: GraphData = { nodes: [testCaller, handler, testOnly, shared], edges: [], total_nodes: 4 };
+        const options = { view: 'routes' as const, routes: [{ method: 'GET', path: '/fixture/', filePath: 'tests/urls.py', line: 3, origin: 'source' as const },
+            { method: 'GET', path: '/shop/', filePath: 'shop/urls.py', line: 4, origin: 'source' as const }],
+        routeSnapshot: { truncated: false, warnings: [], relationships: [
+            { source: testCaller, target: testOnly, type: 'HTTP_CALLS' as const }, { source: testCaller, target: shared, type: 'HTTP_CALLS' as const },
+            { source: handler, target: shared, type: 'HANDLES' as const }] } };
+        const all = buildSemanticGraph(graph, options);
+        expect(all.nodes.filter(item => item.kind === 'route')).toHaveLength(4);
+        expect(all.hiddenRoutes).toBe(0);
+        const shown = buildSemanticGraph(graph, { ...options, hideTestRoutes: true });
+        expect(shown.nodes.filter(item => item.kind === 'route').map(item => item.label).sort()).toEqual(['/{pk}/delete_selected', 'GET /shop/']);
+        expect(shown.hiddenRoutes).toBe(2);
+        expect(shown.edges.map(edge => [edge.source, edge.type])).toEqual([['caller-area:tests', 'HTTP_CALLS'], ['handler-area:django', 'HANDLES']]);
+        expect(buildSemanticGraph(graph, { view: 'overview' }).hiddenRoutes).toBeUndefined();
+    });
     it('packs large route lanes into compact deterministic bands without overlap', () => {
         const routes = Array.from({ length: 35 }, (_, id) => ({ ...route, id: 100 + id, name: `/api/${id}`, qualified_name: `fixture.route.${id}` }));
         const caller = node(1, 'services/gateway/client.ts', 'request');
