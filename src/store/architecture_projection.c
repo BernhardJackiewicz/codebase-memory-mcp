@@ -221,8 +221,9 @@ static bool ap_test_path(const char *path, bool *package) {
             size_t len = (size_t)(p - base);
             bool singular = ap_named(base, len, "test");
             if ((singular && base == path) || ap_named(base, len, "tests") ||
-                ap_named(base, len, "__tests__"))
+                ap_named(base, len, "__tests__")) {
                 return true;
+            }
             nested = nested || singular;
             if (!*p)
                 break;
@@ -230,11 +231,13 @@ static bool ap_test_path(const char *path, bool *package) {
         }
     }
     if (ap_suffix(base, ".py")) {
-        if (!strcmp(base, "tests.py") || !strcmp(base, "conftest.py"))
+        if (!strcmp(base, "tests.py") || !strcmp(base, "conftest.py")) {
             return true;
+        }
         *package = nested;
-    } else if (nested)
+    } else if (nested) {
         return true;
+    }
     return !strncmp(base, "test_", 5) || strstr(base, "_test.") || strstr(base, ".test.") ||
            strstr(base, ".spec.");
 }
@@ -276,23 +279,38 @@ static int ap_counts(ap_context *c, const char *project) {
 static int ap_route_handlers(ap_context *c) {
     enum { AP_PRODUCTION_REGISTRAR = 1, AP_TEST_REGISTRAR = 2 };
     unsigned char *registrars = calloc((size_t)c->n + 1, sizeof(*registrars));
-    if (!registrars)
+    if (!registrars) {
         return CBM_STORE_ERR;
+    }
     for (int i = 0; i < c->m; i++) {
         const ap_edge *e = &c->edges[i];
-        if (e->type == AP_CALLS && c->nodes[e->target].route)
+        if (e->type == AP_CALLS && c->nodes[e->target].route) {
             registrars[e->target] |=
                 c->nodes[e->source].test ? AP_TEST_REGISTRAR : AP_PRODUCTION_REGISTRAR;
+        }
     }
     for (int i = 0; i < c->m; i++) {
         const ap_edge *e = &c->edges[i];
         ap_node *handler = &c->nodes[e->source];
         if (e->type == AP_HANDLES && c->nodes[e->target].route && handler->callable &&
-            !handler->test && !handler->entry && registrars[e->target] != AP_TEST_REGISTRAR)
+            !handler->test && !handler->entry && registrars[e->target] != AP_TEST_REGISTRAR) {
             handler->handler = true;
+        }
     }
     free(registrars);
     return CBM_STORE_OK;
+}
+
+/* The roles a node plays in the projection, from its label, path and flags. */
+static void ap_classify(ap_node *n) {
+    bool package = false;
+    n->test = ap_test_path(n->file, &package) || (n->test_property && !package);
+    n->structural = !strcmp(n->label, "Project") || !strcmp(n->label, "Folder");
+    n->declared = !strcmp(n->label, "Module") || !strcmp(n->label, "Package") ||
+                  !strcmp(n->label, "Namespace") || !strcmp(n->label, "Class") ||
+                  !strcmp(n->label, "Struct") || !strcmp(n->label, "Interface");
+    n->route = !strcmp(n->label, "Route");
+    n->callable = !strcmp(n->label, "Function") || !strcmp(n->label, "Method");
 }
 
 static int ap_load(ap_context *c, const char *project) {
@@ -325,14 +343,7 @@ static int ap_load(ap_context *c, const char *project) {
         n->end = sqlite3_column_int(stmt, 6);
         n->entry = sqlite3_column_int(stmt, 7) != 0;
         n->test_property = sqlite3_column_int(stmt, 8) != 0;
-        bool package = false;
-        n->test = ap_test_path(n->file, &package) || (n->test_property && !package);
-        n->structural = !strcmp(n->label, "Project") || !strcmp(n->label, "Folder");
-        n->declared = !strcmp(n->label, "Module") || !strcmp(n->label, "Package") ||
-                      !strcmp(n->label, "Namespace") || !strcmp(n->label, "Class") ||
-                      !strcmp(n->label, "Struct") || !strcmp(n->label, "Interface");
-        n->route = !strcmp(n->label, "Route");
-        n->callable = !strcmp(n->label, "Function") || !strcmp(n->label, "Method");
+        ap_classify(n);
         n->atom = c->n - 1;
         n->component = -1;
     }
@@ -1332,19 +1343,22 @@ static void ap_list_overview(ap_context *c, const ap_rank *ranks) {
     enum { AP_LIST_DISPLAYED, AP_LIST_GROUPS, AP_LIST_RANK, AP_LIST_PASSES };
     int group_entries[sizeof(c->groups) / sizeof(c->groups[0])] = {0};
     int listed = 0;
-    for (int i = 0; i < c->component_count; i++)
+    for (int i = 0; i < c->component_count; i++) {
         c->components[i].listed = false;
-    for (int pass = 0; pass < AP_LIST_PASSES; pass++)
+    }
+    for (int pass = 0; pass < AP_LIST_PASSES; pass++) {
         for (int pick = 0; pick < c->component_count && listed < AP_OVERVIEW_COMPONENTS; pick++) {
             ap_component *part = &c->components[ranks[pick].index];
             int *entries = &group_entries[part->overview_group];
             if (part->listed || (pass == AP_LIST_DISPLAYED && part->displayed < 0) ||
-                (pass == AP_LIST_GROUPS && *entries >= AP_GROUP_ENTRIES))
+                (pass == AP_LIST_GROUPS && *entries >= AP_GROUP_ENTRIES)) {
                 continue;
+            }
             part->listed = true;
             (*entries)++;
             listed++;
         }
+    }
 }
 
 static const char *ap_component_basis(const ap_context *c, int i) {
@@ -1936,12 +1950,13 @@ static int ap_render(ap_context *c, const char *project, char **out_json) {
          * paths take their slots in this order, so many handlers cannot crowd
          * main out of the default paths. */
         enum { AP_ENTRY_INDEXED, AP_ENTRY_HANDLER, AP_ENTRY_PASSES };
-        for (int pass = AP_ENTRY_INDEXED; pass < AP_ENTRY_PASSES; pass++)
+        for (int pass = AP_ENTRY_INDEXED; pass < AP_ENTRY_PASSES; pass++) {
             for (int i = 0; i < c->n; i++) {
                 ap_node *node = &c->nodes[i];
                 if (node->component < 0 ||
-                    !(pass == AP_ENTRY_HANDLER ? node->handler : node->entry))
+                    !(pass == AP_ENTRY_HANDLER ? node->handler : node->entry)) {
                     continue;
+                }
                 entry_total++;
                 if (entry_count < AP_ENTRYPOINTS) {
                     entry_indexes[entry_count++] = i;
@@ -1951,6 +1966,7 @@ static int ap_render(ap_context *c, const char *project, char **out_json) {
                     c->evidence_scope = AP_EVIDENCE_CONTEXT;
                 }
             }
+        }
         c->evidence_scope = AP_EVIDENCE_PATH;
         if (c->options.target_node_id) {
             /* The target query produces exact endpoint witnesses below. */
