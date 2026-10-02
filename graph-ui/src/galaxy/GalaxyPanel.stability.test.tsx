@@ -77,6 +77,9 @@ it('keeps one scene mounted through selection and expansion and fits once per se
     await settle(() => expect(seam().nodes).toBe(5));
     expect(scene.mounts).toBe(1);
     const fitsBefore = seam().fits;
+    // The whole graph keeps its render limits in the toolbar row.
+    expect(host.querySelector('.atlas-graph-limits')).toBeNull();
+    expect(host.querySelector('select[aria-label="Rendered node limit"]')).not.toBeNull();
 
     await act(async () => { seam().clickNode('sample.n1'); });
     await settle(() => {
@@ -85,6 +88,9 @@ it('keeps one scene mounted through selection and expansion and fits once per se
     });
     expect(scene.mounts).toBe(1); expect(scene.unmounts).toBe(0);
     expect(seam().fits).toBe(fitsBefore + 1);
+    // In a scope the limits step back into a compact menu so the row does not wrap.
+    expect(host.querySelector('details.atlas-graph-limits select[aria-label="Rendered node limit"]')).not.toBeNull();
+    expect(host.querySelector('details.atlas-graph-limits select[aria-label="Rendered edge limit"]')).not.toBeNull();
     // The root is marked, sits at the origin and the fit is centred on it.
     expect([...scene.roots ?? []]).toEqual([1]);
     expect(seam().lastFit?.center?.map(value => value + 0)).toEqual([0, 0, 0]);

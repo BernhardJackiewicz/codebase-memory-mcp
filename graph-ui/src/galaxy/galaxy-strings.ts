@@ -33,3 +33,11 @@ export const galaxyPathText = {
     clearTitle: 'Return to the whole scope (Esc)',
     position: (index: number, total: number) => `${index} of ${total}`,
 };
+
+/** Compact toolbar words, so the scoped toolbar keeps to one row at 1600 px. */
+export const galaxyToolbarText = {
+    groups: (count: number) => `${count.toLocaleString()} groups`,
+    groupsTitle: (count: number) => `${count.toLocaleString()} connection groups. Groups reflect connections in this trace, not inferred architecture components.`,
+    limits: 'Limits',
+    limitsTitle: 'Rendered node and edge limits',
+};

@@ -139,7 +139,7 @@ import GalaxyNavigator from './GalaxyNavigator';
 import { TraceEdgeFilter } from './TraceEdgeFilter';
 import { PathPicker, PathSteps } from './ScopePathControls';
 import { callOrder, pathNodes, shortestScopePath, type ScopePathStep } from './scope-path';
-import { galaxyPathText } from './galaxy-strings';
+import { galaxyPathText, galaxyToolbarText } from './galaxy-strings';
 import { useOrganicLayout } from './use-organic-layout';
 import RenderProgress from './RenderProgress';
 import { useGraphScope } from './use-graph-scope';
@@ -1187,6 +1187,15 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
             return next;
         });
     }, [props.workspaceExpanded, scope.scope, traceTypes, kinds, changeTraceTypes]);
+
+    const renderLimits = <>
+        <label>Nodes <select aria-label="Rendered node limit" value={nodeBudget} onChange={event => setViewPreferences({ galaxyNodes: Number(event.target.value) })}>
+            {GALAXY_NODE_LIMITS.map(value => <option key={value} value={value}>{value.toLocaleString()}</option>)}
+        </select></label>
+        <label>Edges <select aria-label="Rendered edge limit" value={edgeBudget} onChange={event => setViewPreferences({ galaxyEdges: Number(event.target.value) })}>
+            {GALAXY_EDGE_LIMITS.map(value => <option key={value} value={value}>{value.toLocaleString()}</option>)}
+        </select></label>
+    </>;
 
     /*
      * Der Pfad und die Aufrufreihe (Review-Befund G5, nach dem Vorbild von
@@ -2330,15 +2339,22 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                             : 'Partial preview'}</span>
                     {scope.error && <span className="atlas-graph-scope-warning" title={scope.error}>Some relationships could not be loaded. <button type="button" onClick={scope.retry}>Retry</button></span>}
                     {!props.workspaceExpanded && scope.complete && <small>All indexed direct dependencies included.</small>}
-                    {mode === 'galaxy' && organic && organic.groups.length > 1 && <small title="Groups reflect connections in this trace, not inferred architecture components.">{organic.groups.length} connection groups</small>}
+                    {mode === 'galaxy' && organic && organic.groups.length > 1 && <small className="atlas-graph-scope-groups" title={galaxyToolbarText.groupsTitle(organic.groups.length)}>{galaxyToolbarText.groups(organic.groups.length)}</small>}
                 </> : null}
                 {props.workspaceExpanded && <>
-                    <label>Nodes <select aria-label="Rendered node limit" value={nodeBudget} onChange={event => setViewPreferences({ galaxyNodes: Number(event.target.value) })}>
-                        {GALAXY_NODE_LIMITS.map(value => <option key={value} value={value}>{value.toLocaleString()}</option>)}
-                    </select></label>
-                    <label>Edges <select aria-label="Rendered edge limit" value={edgeBudget} onChange={event => setViewPreferences({ galaxyEdges: Number(event.target.value) })}>
-                        {GALAXY_EDGE_LIMITS.map(value => <option key={value} value={value}>{value.toLocaleString()}</option>)}
-                    </select></label>
+                    {/*
+                      * Im Scope tritt der Deckel in ein Aufklappfeld zurueck
+                      * (Review-Befund G7): die Leiste traegt dort Pfad,
+                      * Aufrufreihe und Zaehler, und bei 1600 Pixeln brach die
+                      * Zeile sonst um. Ein Scope liegt fast immer unter dem
+                      * Deckel; im ganzen Graphen bleibt er in der Zeile.
+                      */}
+                    {scope.scope ? <details className="atlas-graph-limits" title={galaxyToolbarText.limitsTitle} onKeyDown={event => {
+                        if (event.key === 'Escape') { event.stopPropagation(); event.currentTarget.open = false; }
+                    }}>
+                        <summary>{galaxyToolbarText.limits}</summary>
+                        <div className="atlas-graph-limits-menu">{renderLimits}</div>
+                    </details> : renderLimits}
                     {mode === 'galaxy' && !scope.scope && <label className="atlas-graph-coverage-filter" title="Show files and folders with indexing gaps">
                         <input type="checkbox" aria-label="Show coverage graph" checked={showCoverage} onChange={event => setViewPreferences({ coverageShadow: event.target.checked })} />
                         Coverage
