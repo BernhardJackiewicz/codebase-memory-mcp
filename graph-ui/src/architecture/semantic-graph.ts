@@ -99,8 +99,12 @@ const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
 const identity = (node: GraphNode) => `${node.label}:${node.qualified_name || `#${node.id}`}@${node.file_path ?? ''}`;
 const nodeOrder = (a: GraphNode, b: GraphNode) => compare(identity(a), identity(b));
 const symbolId = (node: GraphNode) => `symbol:${identity(node)}`;
-/** Conventional test locations: a test directory, or a test_*, tests.*, *_test, *.test or *.spec file. */
-const TEST_SOURCE = /(^|\/)(tests?|__tests__|specs?)\/|(^|\/)(test_[^/]*|tests?\.[^/.]+|[^/]+[._-](test|spec)\.[^/.]+)$/i;
+/**
+ * Conventional test locations: a tests, __tests__ or spec directory, a test
+ * root (test/ or src/test/), or a test_*, tests.*, *_test, *.test or *.spec
+ * file. A nested test/ package such as django/test/ is product code.
+ */
+const TEST_SOURCE = /(^|\/)(tests|__tests__|specs?)\/|^(src\/)?test\/|(^|\/)(test_[^/]*|tests?\.[^/.]+|[^/]+[._-](test|spec)\.[^/.]+)$/i;
 const sourceNode = (node: GraphNode) => Boolean(node.file_path && node.file_path !== '{}'
     && !['Project', 'Folder', 'Package', 'Branch', 'Route'].includes(node.label));
 const symbolNode = (node: GraphNode): SemanticNode => ({ id: symbolId(node),

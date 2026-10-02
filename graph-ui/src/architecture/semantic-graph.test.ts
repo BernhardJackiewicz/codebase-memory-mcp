@@ -332,6 +332,14 @@ describe('route identities and service evidence', () => {
         const filtered = buildSemanticGraph(graph, { view: 'routes', groupRoutes: true, filter: '/accounts', routeSnapshot });
         expect(filtered.nodes.filter(item => item.kind === 'route').map(item => item.label)).toEqual(['/accounts/login/', '/accounts/logout/']);
     });
+    it('keeps routes of a product test package and hides those of test roots', () => {
+        const at = (id: number, name: string, file_path: string): GraphNode => ({ ...route, id, name, qualified_name: `fixture.route.${id}`, file_path });
+        const graph: GraphData = { nodes: [at(500, '/client/', 'django/test/client.py'), at(501, '/fixture/', 'tests/urls.py'),
+            at(502, '/java/', 'src/test/java/RoutesTest.java'), at(503, '/root/', 'test/urls.js'), at(504, '/spec/', 'web/__tests__/routes.ts')], edges: [], total_nodes: 5 };
+        const model = buildSemanticGraph(graph, { view: 'routes', hideTestRoutes: true });
+        expect(model.nodes.map(item => item.label)).toEqual(['/client/']);
+        expect(model.hiddenRoutes).toBe(4);
+    });
     it('hides routes whose evidence lies only in test code and keeps test callers of other routes', () => {
         const testCaller = node(2, 'tests/admin_views/tests.py', 'test_login');
         const handler = node(3, 'django/contrib/admin/actions.py', 'delete_selected');
