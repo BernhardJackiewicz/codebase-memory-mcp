@@ -7,22 +7,41 @@ const line = (markdown: string, type: string) => markdown.split('\n').find(item 
 
 describe('caller and callee questions', () => {
     it.each([
-        ['Who calls JSONBAgg?', ['incoming'], 'en'],
-        ['Who calls JSONBAgg? List every caller and the edge type.', ['incoming'], 'en'],
-        ['List the callers of this class', ['incoming'], 'en'],
-        ['Where is it called from? Show what calls it.', ['incoming'], 'en'],
-        ['What is JSONBAgg called by?', ['incoming'], 'en'],
-        ['What does JSONBAgg call?', ['outgoing'], 'en'],
-        ['Show the callees', ['outgoing'], 'en'],
-        ['Wer ruft JSONBAgg auf?', ['incoming'], 'de'],
-        ['Welche Aufrufer hat die Klasse?', ['incoming'], 'de'],
-        ['Was ruft JSONBAgg auf?', ['outgoing'], 'de'],
-        ['Who calls it and what does it call?', ['incoming', 'outgoing'], 'en'],
-    ] as const)('recognizes %s', (prompt, sides, language) => {
-        expect(relationshipQuestion(prompt)).toEqual({ sides, language });
+        ['Who calls JSONBAgg?', ['incoming'], 'en', 'JSONBAgg'],
+        ['Who calls JSONBAgg? List every caller and the edge type.', ['incoming'], 'en', 'JSONBAgg'],
+        ['List the callers of this class', ['incoming'], 'en', undefined],
+        ['Where is it called from? Show what calls it.', ['incoming'], 'en', undefined],
+        ['What is JSONBAgg called by?', ['incoming'], 'en', 'JSONBAgg'],
+        ['Which functions call JSONBAgg?', ['incoming'], 'en', 'JSONBAgg'],
+        ['What functions call JSONBAgg?', ['incoming'], 'en', 'JSONBAgg'],
+        ['Where is JSONBAgg called?', ['incoming'], 'en', 'JSONBAgg'],
+        ['How many callers does JSONBAgg have?', ['incoming'], 'en', undefined],
+        ['What does JSONBAgg call?', ['outgoing'], 'en', 'JSONBAgg'],
+        ['Which functions does the JSONBAgg class call?', ['outgoing'], 'en', 'JSONBAgg'],
+        ['Show the functions called by JSONBAgg', ['outgoing'], 'en', 'JSONBAgg'],
+        ['Show the callees', ['outgoing'], 'en', undefined],
+        ['Wer ruft JSONBAgg auf?', ['incoming'], 'de', 'JSONBAgg'],
+        ['Wer ruft die Funktion auf?', ['incoming'], 'de', undefined],
+        ['Welche Aufrufer hat die Klasse?', ['incoming'], 'de', undefined],
+        ['Welche Funktion ruft JSONBAgg auf?', ['incoming'], 'de', 'JSONBAgg'],
+        ['Welche Funktionen rufen JSONBAgg auf?', ['incoming'], 'de', 'JSONBAgg'],
+        ['Welche Tests rufen JSONBAgg auf?', ['incoming'], 'de', 'JSONBAgg'],
+        ['Wo wird JSONBAgg aufgerufen?', ['incoming'], 'de', 'JSONBAgg'],
+        ['Von wem wird JSONBAgg aufgerufen?', ['incoming'], 'de', 'JSONBAgg'],
+        ['Was ruft JSONBAgg auf?', ['outgoing'], 'de', 'JSONBAgg'],
+        ['Welche Funktionen ruft JSONBAgg auf?', ['outgoing'], 'de', 'JSONBAgg'],
+        ['Was wird von JSONBAgg aufgerufen?', ['outgoing'], 'de', 'JSONBAgg'],
+        ['Who calls it and what does it call?', ['incoming', 'outgoing'], 'en', undefined],
+        ['Who calls get_queryset?', ['incoming'], 'en', 'get_queryset'],
+        ['Wer ruft as_sql auf?', ['incoming'], 'de', 'as_sql'],
+        ['What does handle call?', ['outgoing'], 'en', 'handle'],
+    ] as const)('recognizes %s', (prompt, sides, language, subject) => {
+        expect(relationshipQuestion(prompt)).toEqual({ sides, language, ...subject ? { subject } : {} });
     });
 
-    it.each(['Explain JSONBAgg', 'What does this class do?', 'Was macht diese Klasse?', 'Write a test for JSONBAgg'])('leaves %s to the model', prompt => {
+    it.each(['Explain JSONBAgg', 'What does this class do?', 'Was macht diese Klasse?', 'Write a test for JSONBAgg',
+        'Explain how the callers use JSONBAgg', 'Why does the caller pass distinct=True?', 'What would break for callers if I rename JSONBAgg?',
+        'Who calls JSONBAgg and why?', 'Warum ruft der Test JSONBAgg auf?', 'Wie wird JSONBAgg von den Tests aufgerufen?'])('leaves %s to the model', prompt => {
         expect(relationshipQuestion(prompt)).toBeUndefined();
     });
 });
@@ -92,7 +111,10 @@ describe('listed relationship answers', () => {
     });
 
     it('leaves questions about another symbol, attached non-Galaxy evidence and other questions to the model', () => {
-        expect(relationshipAnswer('Who calls BaseCommand?', [jsonbAggEvidence()])).toBeUndefined();
+        for (const prompt of ['Who calls BaseCommand?', 'Who calls get_queryset?', 'Wer ruft as_sql auf?', 'Who calls Aggregate?', 'What does handle call?',
+            'How many callers does get_queryset have?']) expect(relationshipAnswer(prompt, [jsonbAggEvidence()])).toBeUndefined();
+        expect(relationshipAnswer('Who calls the JSONBAgg class?', [jsonbAggEvidence()])).toBeDefined();
+        expect(relationshipAnswer('Wer ruft django.contrib.postgres.aggregates.general.JSONBAgg auf?', [jsonbAggEvidence()])).toBeDefined();
         expect(relationshipAnswer('Who calls JSONBAgg?', [{ id: 'g', label: 'Callers', text: '{"kind":"graph-context-snapshot"}' }])).toBeUndefined();
         expect(relationshipAnswer('Explain JSONBAgg', [jsonbAggEvidence()])).toBeUndefined();
         expect(relationshipAnswer('Who calls it?', [jsonbAggEvidence()])).toBeDefined();

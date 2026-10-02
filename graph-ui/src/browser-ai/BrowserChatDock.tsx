@@ -361,7 +361,9 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const nextContext = selectedGraph ? [...selectedContext.filter(item => item.id !== selectedGraph.id), selectedGraph] : selectedContext;
         const extra = (retry ? retry.context ?? [] : nextContext).map(item => ({ ...item }));
         let packet = retry?.evidence;
-        const currentGraph = !reader && proactiveSelection ? [{ ...proactiveSelection }] : [];
+        // A listed answer asked again goes to the model: the same question and evidence in a fresh request.
+        const ask = retry?.answeredFrom === 'graph';
+        const currentGraph = !retry && !reader && proactiveSelection ? [{ ...proactiveSelection }] : [];
         const consume = (): void => {
             setDraft(previous => previous === prompt ? '' : previous);
             setSelectedContext(previous => previous.filter(item => !extra.some(sent => sent.id === item.id && sent.text === item.text)));
@@ -378,10 +380,11 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             consume();
             return;
         }
-        let history: ChatTurn[] = turns;
+        const earlier = ask ? turns.filter(item => item.id !== retry.id) : turns;
+        let history: ChatTurn[] = earlier;
         const makeRequest = () => buildChatMessages(history, prompt, source, extra, reader, currentGraph, packet ? formatExplanationEvidence(packet) : undefined);
         if (!retry && ((reader?.source?.text.length ?? 0) > 5000 || currentGraph.length)) packet = prepareExplanationContext(reader, currentGraph, 3200);
-        let request = retry ? retry.request.map(message => ({ ...message })) : makeRequest();
+        let request = retry && !ask ? retry.request.map(message => ({ ...message })) : makeRequest();
         const queued = { cancelled: false }; manualRequest.current = queued;
         const waitingEpoch = epoch.current;
         if (automaticRun) {
@@ -402,7 +405,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             if (epoch.current !== ticket || stopRequested.current) return;
             const limit = Math.min(limits.inputTokens, model.contextTokens - limits.outputTokens);
             // Earlier turns give way first, oldest first; the question and its evidence stay.
-            while (!retry && count > limit && history.length) {
+            while ((!retry || ask) && count > limit && history.length) {
                 const characters = request.reduce((sum, message) => sum + message.content.length, 0);
                 history = trimChatHistory(history, Math.ceil((count - limit) * characters / Math.max(1, count)));
                 request = makeRequest(); count = await currentRuntime.countTokens(request);
@@ -418,8 +421,8 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 return;
             }
             const id = retry?.id ?? `local-turn-${crypto.randomUUID()}`;
-            const historyOmitted = retry ? retry.historyOmitted
-                : turns.filter(item => item.status !== 'error' && item.status !== 'generating' && !history.includes(item)).length;
+            const historyOmitted = retry && !ask ? retry.historyOmitted
+                : earlier.filter(item => item.status !== 'error' && item.status !== 'generating' && !history.includes(item)).length;
             const turn: ChatTurn = { id, prompt, attachment: source, readerContext: reader, context: extra, evidence: packet, modelId: model.id, request, answer: '', status: 'generating',
                 ...historyOmitted ? { historyOmitted } : {} };
             activeTurn.current = id;
@@ -553,7 +556,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                     {turn.status === 'stopped' && turn.answer && <small>Stopped · partial answer</small>}
                     {turn.status !== 'generating' && turn.answeredFrom !== 'graph' && <AnswerNotes shortened={turn.shortened} packet={turn.evidence} model={BROWSER_MODELS.find(candidate => candidate.id === turn.modelId)?.displayName ?? turn.modelId} historyOmitted={turn.historyOmitted} />}
                     {turn.status === 'error' && <p className="cbm-chat-turn-error" role="alert">{turn.error}</p>}
-                    {index === turns.length - 1 && turn.status !== 'generating' && turn.answeredFrom !== 'graph' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { void send(turn); }}>Retry</button>}
+                    {index === turns.length - 1 && turn.status !== 'generating' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { void send(turn); }}>{turn.answeredFrom === 'graph' ? browserChatText.askModel : 'Retry'}</button>}
                 </div>
             </article>)}
         </div>}

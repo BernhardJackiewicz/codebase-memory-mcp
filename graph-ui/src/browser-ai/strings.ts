@@ -116,6 +116,8 @@ export const relationshipWords: { en: RelationshipWords; de: RelationshipWords }
 /** Notes of the local chat dock about how an answer was produced or bounded. */
 export const browserChatText = {
     shortened: 'Shortened (token limit)',
+    /** Offered under a listed answer, which the model did not write. */
+    askModel: 'Ask the model',
     capacity: (nodes: number, edges: number, model: string, shown: number) =>
         `${nodes} nodes / ${edges} edges: too large for the local ${model} model; showing ${shown}`,
     historyTrimmed: (count: number) => `${count} earlier ${count === 1 ? 'message was' : 'messages were'} left out to fit the input limit.`,
