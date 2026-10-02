@@ -194,39 +194,48 @@ static bool ap_cluster_edge(int type) {
     return type == 1 || type == 5 || type == 11;
 }
 
+static bool ap_named(const char *text, size_t length, const char *name) {
+    return length == strlen(name) && !strncmp(text, name, length);
+}
+
+static bool ap_suffix(const char *text, const char *suffix) {
+    size_t length = strlen(text), tail = strlen(suffix);
+    return length > tail && !strcmp(text + length - tail, suffix);
+}
+
 /* Conservative source conventions supplement the positive indexed is_test
  * flag. Non-test classification means no test evidence, not production use.
- * Python discovers tests by file name (test_*.py, *_test.py, tests.py,
- * conftest.py). A singular test/ directory there is often a shipped package
- * (django/test/ is Django's public testing API), so for a .py file without a
- * test name it is no signal on its own. *package then tells the caller that
- * the indexed flag only repeats that directory rule (cbm_is_test_file) and
- * must not decide alone either; it keeps one role per file. tests/ and
- * __tests__/ stay directory signals, and test/ stays one for other files. */
+ * tests/ and __tests__/ are test directories anywhere, and so is a top-level
+ * test/. Python discovers tests by file name (test_*.py, *_test.py, tests.py,
+ * conftest.py); a nested test/ there is often a shipped package (django/test/
+ * is Django's public testing API), so for a .py file without a test name it
+ * is no signal on its own. *package then tells the caller that the indexed
+ * flag only repeats that directory rule (cbm_is_test_file) and must not
+ * decide alone either; it keeps one role per file. */
 static bool ap_test_path(const char *path, bool *package) {
     const char *base = path;
-    bool directory = false, singular = false;
+    bool nested = false;
     for (const char *p = path;; p++) {
         if (*p == '/' || *p == '\\' || !*p) {
             size_t len = (size_t)(p - base);
-            if ((len == 5 && !strncmp(base, "tests", len)) ||
-                (len == 9 && !strncmp(base, "__tests__", len)))
-                directory = true;
-            else if (len == 4 && !strncmp(base, "test", len))
-                singular = true;
+            bool singular = ap_named(base, len, "test");
+            if ((singular && base == path) || ap_named(base, len, "tests") ||
+                ap_named(base, len, "__tests__"))
+                return true;
+            nested = nested || singular;
             if (!*p)
                 break;
             base = p + 1;
         }
     }
-    size_t len = strlen(base);
-    bool python = len > 3 && !strcmp(base + len - 3, ".py");
-    if (directory || !strncmp(base, "test_", 5) || strstr(base, "_test.") ||
-        strstr(base, ".test.") || strstr(base, ".spec.") ||
-        (python && (!strcmp(base, "tests.py") || !strcmp(base, "conftest.py"))))
+    if (ap_suffix(base, ".py")) {
+        if (!strcmp(base, "tests.py") || !strcmp(base, "conftest.py"))
+            return true;
+        *package = nested;
+    } else if (nested)
         return true;
-    *package = singular && python;
-    return singular && !python;
+    return !strncmp(base, "test_", 5) || strstr(base, "_test.") || strstr(base, ".test.") ||
+           strstr(base, ".spec.");
 }
 
 static int ap_counts(ap_context *c, const char *project) {

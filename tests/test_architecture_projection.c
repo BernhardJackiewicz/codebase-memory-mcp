@@ -1248,8 +1248,10 @@ TEST(projection_python_test_files_follow_name_conventions) {
     projection_node(store, "Class", "projection.app.tests.ViewTests", "app/tests.py", false);
     projection_node(store, "Function", "projection.app.models_test.check", "app/models_test.py",
                     false);
-    projection_node(store, "Function", "projection.conftest.fixture", "test/conftest.py", false);
+    projection_node(store, "Function", "projection.app.conftest.fixture", "app/conftest.py", false);
     projection_node(store, "Function", "projection.check", "test/check.c", false);
+    /* A top-level test/ is a test suite, also for helpers without a test name. */
+    projection_node(store, "Function", "projection.test.helpers.build", "test/helpers.py", false);
     projection_node(store, "Function", "projection.app.views.index", "app/views.py", false);
     /* django/test/ ships Django's testing API. The extractor flags its
      * functions from the directory alone; the class carries no flag. */
@@ -1268,7 +1270,8 @@ TEST(projection_python_test_files_follow_name_conventions) {
     yyjson_doc *doc = yyjson_read(json, strlen(json), 0);
     ASSERT_NOT_NULL(doc);
     const char *tests[] = {"projection.app.tests.ViewTests", "projection.app.models_test.check",
-                           "projection.conftest.fixture", "projection.check"};
+                           "projection.app.conftest.fixture", "projection.check",
+                           "projection.test.helpers.build"};
     for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); i++) {
         yyjson_val *part = projection_component_of(doc, tests[i]);
         ASSERT_NOT_NULL(part);
@@ -1283,7 +1286,7 @@ TEST(projection_python_test_files_follow_name_conventions) {
     ASSERT_NOT_NULL(api);
     ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(api, "role")), "non_test");
     ASSERT_EQ(yyjson_get_int(yyjson_obj_get(api, "member_count")), 2);
-    ASSERT_EQ(yyjson_arr_size(projection_field(doc, "components")), 6);
+    ASSERT_EQ(yyjson_arr_size(projection_field(doc, "components")), 7);
     yyjson_doc_free(doc);
     free(json);
     cbm_store_close(store);
