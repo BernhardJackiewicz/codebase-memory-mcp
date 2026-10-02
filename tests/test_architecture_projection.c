@@ -1144,19 +1144,28 @@ TEST(projection_repeated_behavior_evidence_preserves_base_graph_under_budget) {
  * the node and edge budgets): one full overview entry per component used to
  * exceed the 32 MB response budget, so the whole projection came back
  * limited and empty. The overview now lists a bounded, ranked subset and
- * still accounts for every component through its groups and totals. */
+ * still accounts for every component through its groups and totals. A group
+ * whose components all rank last, like Django's @no-source, still gets its
+ * own share of entries so that it can be opened. */
 TEST(projection_many_small_components_stay_within_response_budget) {
     cbm_store_t *store = projection_store();
     ASSERT_NOT_NULL(store);
-    enum { parts = 14000 };
+    enum { bulk = 14000, late = 20, parts = bulk + late, entries = 4096, share = 16 };
     char padding[161];
     memset(padding, 'x', sizeof(padding) - 1);
     padding[sizeof(padding) - 1] = '\0';
     ASSERT_EQ(cbm_store_begin(store), CBM_STORE_OK);
-    for (int i = 0; i < parts; i++) {
+    for (int i = 0; i < bulk; i++) {
         char qn[256], file[256];
         snprintf(qn, sizeof(qn), "projection.area%d.%s%05d.Part", i % 8, padding, i);
         snprintf(file, sizeof(file), "src/area%d/%.*s%05d.py", i % 8, 120, padding, i);
+        ASSERT_TRUE(projection_node(store, "Class", qn, file, false) > 0);
+    }
+    /* Equal rank otherwise, so the later ids of this group rank last. */
+    for (int i = 0; i < late; i++) {
+        char qn[64], file[64];
+        snprintf(qn, sizeof(qn), "projection.late.Part%02d", i);
+        snprintf(file, sizeof(file), "late/part%02d.py", i);
         ASSERT_TRUE(projection_node(store, "Class", qn, file, false) > 0);
     }
     ASSERT_EQ(cbm_store_commit(store), CBM_STORE_OK);
@@ -1175,12 +1184,11 @@ TEST(projection_many_small_components_stay_within_response_budget) {
                *listed = yyjson_obj_get(overview, "components"),
                *groups = yyjson_obj_get(overview, "groups");
     size_t listed_count = yyjson_arr_size(listed);
-    ASSERT_TRUE(listed_count >= 512);
-    ASSERT_TRUE(listed_count < parts);
+    ASSERT_EQ(listed_count, entries);
     ASSERT_FALSE(yyjson_get_bool(yyjson_obj_get(overview, "complete")));
-    ASSERT_EQ(
-        yyjson_get_int(yyjson_obj_get(yyjson_obj_get(overview, "limits"), "omitted_components")),
-        parts - (int)listed_count);
+    ASSERT_EQ(yyjson_get_int(
+                  yyjson_obj_get(yyjson_obj_get(overview, "limits"), "omitted_component_entries")),
+              parts - entries);
     ASSERT_EQ(yyjson_get_int(yyjson_obj_get(yyjson_obj_get(overview, "totals"), "components")),
               parts);
     /* Every displayed component keeps its overview entry. */
@@ -1195,8 +1203,25 @@ TEST(projection_many_small_components_stay_within_response_budget) {
     int members = 0;
     for (size_t i = 0; i < yyjson_arr_size(groups); i++) {
         yyjson_val *group = yyjson_arr_get(groups, i);
-        membership += yyjson_arr_size(yyjson_obj_get(group, "component_ids"));
+        yyjson_val *ids = yyjson_obj_get(group, "component_ids");
+        membership += yyjson_arr_size(ids);
         members += yyjson_get_int(yyjson_obj_get(group, "member_count"));
+        /* Equal ranks fall back to component order, so each group must list
+         * a prefix of its ids, and at least its share of them. */
+        const char *group_id = yyjson_get_str(yyjson_obj_get(group, "id"));
+        size_t count = yyjson_arr_size(ids), shown = 0, at, maximum;
+        yyjson_val *entry;
+        yyjson_arr_foreach(listed, at, maximum, entry) {
+            if (strcmp(group_id, yyjson_get_str(yyjson_obj_get(entry, "group_id"))))
+                continue;
+            ASSERT_TRUE(shown < count);
+            ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(entry, "id")),
+                          yyjson_get_str(yyjson_arr_get(ids, shown)));
+            shown++;
+        }
+        ASSERT_TRUE(shown >= (count < share ? count : (size_t)share));
+        if (!strcmp(yyjson_get_str(yyjson_obj_get(group, "label")), "late"))
+            ASSERT_EQ(shown, share);
     }
     ASSERT_EQ(membership, parts);
     ASSERT_EQ(members, parts);
