@@ -2,8 +2,11 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import type { GraphData, GraphNode } from '../galaxy/types';
 import { useSelectionEvidence, type SelectionEvidenceListener } from '../galaxy/selection-evidence';
 import { loadSystemArchitecture, type SystemArchitectureLoader, type SystemArchitectureResponse, type SystemProjection, type SystemSymbol, type SystemWitness, type SystemCallEvidence } from './system-architecture-source';
-import { componentBasis, isContiguousPath, systemOverviewGraph, systemComponents, type SystemSceneEdge, type SystemSceneModel } from './system-architecture-model';
+import { componentBasis, isContiguousPath, projectionLimits, projectionUnavailable, systemOverviewGraph, systemComponents, type SystemSceneEdge, type SystemSceneModel } from './system-architecture-model';
+import { architectureText as text } from './strings';
 import { connectionLoad } from '../graph/connection-load';
+import { AtlasApi } from '../app/atlas-api';
+import type { FlowSummary } from '../traces/trace-schemas';
 import BehaviorJourney from './BehaviorJourney';
 import './system-architecture.css';
 
@@ -14,6 +17,25 @@ export interface SystemArchitectureProps {
     onSelectionEvidence?: SelectionEvidenceListener;
     onNavigate: (path: string, line?: number, name?: string) => void;
     loader?: SystemArchitectureLoader;
+    flowsLoader?: FlowsLoader;
+}
+/** Ranked call-graph flows (route handlers, call-graph roots) from /api/flows. */
+export type FlowsLoader = (project: string) => Promise<FlowSummary[]>;
+const loadFlows: FlowsLoader = project => new AtlasApi().flows(project);
+
+/** Starting operations from flows, once each. The projection supplies qualified name and component on request. */
+export function flowEntries(flows: FlowSummary[]): SystemSymbol[] {
+    const entries = new Map<number, SystemSymbol>();
+    for (const { entry } of flows) if (entry.id !== undefined && entry.id > 0 && !entries.has(entry.id)) {
+        entries.set(entry.id, { id: entry.id, name: entry.name, qualified_name: '', label: '', file_path: entry.filePath, component_id: '' });
+    }
+    return [...entries.values()];
+}
+
+/** A limited or empty projection explains itself with the warnings that limited it. */
+function UnavailableProjection({ limits }: { limits: string[] }) {
+    return <div className="system-scene-empty" role="status" data-limited={limits.length > 0}>
+        <strong>{limits.length ? text.projectionLimited : text.projectionEmpty}</strong>{limits.map(limit => <p key={limit}>{limit}</p>)}</div>;
 }
 
 function EvidenceSource({ symbol, onOpen }: { symbol: SystemSymbol; onOpen: (symbol: SystemSymbol) => void }) {
@@ -21,13 +43,18 @@ function EvidenceSource({ symbol, onOpen }: { symbol: SystemSymbol; onOpen: (sym
         <small>{symbol.file_path ? `${symbol.file_path}${symbol.start_line ? `:${symbol.start_line}` : ''}` : 'Source location unavailable'}</small></div>;
 }
 
-/** Prefer a conventional executable entry when one exists; keep every indexed entry selectable. */
-export function suggestedBehaviorEntry(entries: SystemSymbol[]): SystemSymbol | undefined {
-    return entries.filter(entry => /^(main|Main)$/.test(entry.name)
+/**
+ * Prefer a conventional executable entry when one exists; keep every indexed entry selectable.
+ * Ranked flows are unclassified call-graph roots, so among them a conventional handler name also qualifies.
+ */
+export function suggestedBehaviorEntry(entries: SystemSymbol[], handlers = false): SystemSymbol | undefined {
+    const candidates = entries.filter(entry => (/^(main|Main)$/.test(entry.name) || (handlers && /^(run|start|serve|handle|execute|dispatch)$/i.test(entry.name)))
         && entry.file_path && !/(^|\/)(tests?|__tests__|examples?|fixtures?|vendor|node_modules)(\/|$)/i.test(entry.file_path)
-        && /\.(c|cc|cpp|go|rs|py|java|cs|js|ts)$/.test(entry.file_path))
+        && /\.(c|cc|cpp|go|rs|py|java|cs|js|ts)$/.test(entry.file_path));
+    // Flows arrive ranked by the server, so its first conventional handler is the best of them.
+    return candidates.filter(entry => /^(main|Main)$/.test(entry.name))
         .sort((a, b) => Number(!/^src\/main\./.test(a.file_path!)) - Number(!/^src\/main\./.test(b.file_path!))
-            || a.file_path!.split('/').length - b.file_path!.split('/').length || a.file_path!.localeCompare(b.file_path!))[0];
+            || a.file_path!.split('/').length - b.file_path!.split('/').length || a.file_path!.localeCompare(b.file_path!))[0] ?? candidates[0];
 }
 
 const handoffs = (symbols: SystemSymbol[]) => symbols.slice(1).filter((symbol, index) => symbol.component_id !== symbols[index].component_id).length;
@@ -36,7 +63,7 @@ const connectionAllowed = (type: string, view: ConnectionView) => view === 'all'
     || (view === 'calls' ? ['CALLS', 'IMPORTS', 'HTTP_CALLS', 'ASYNC_CALLS'] : ['INHERITS', 'IMPLEMENTS']).includes(type);
 
 /** Poll only while this view is active. A new request key hides stale results before its effect runs. */
-export default function SystemArchitecture({ project, generation, view, filter, active, graph, onSelect, onClearSelection, onSelectionEvidence, onNavigate, loader = loadSystemArchitecture }: SystemArchitectureProps) {
+export default function SystemArchitecture({ project, generation, view, filter, active, graph, onSelect, onClearSelection, onSelectionEvidence, onNavigate, loader = loadSystemArchitecture, flowsLoader = loadFlows }: SystemArchitectureProps) {
     const [entryChoice, setEntryChoice] = useState<{ project: string; generation?: string; expectedGeneration?: string; id?: number; targetId?: number }>();
     const [entryChoices, setEntryChoices] = useState<{ project: string; generation?: string; analysisGeneration: string; entries: SystemSymbol[] }>();
     const [snapshot, setSnapshot] = useState<{ project: string; generation?: string; analysisGeneration: string; data: SystemProjection }>();
@@ -57,6 +84,7 @@ export default function SystemArchitecture({ project, generation, view, filter, 
     const [focusId, setFocusId] = useState<string>();
     const [stepIndex, setStepIndex] = useState(0);
     const [showConnectionLoad, setShowConnectionLoad] = useState(true);
+    const [flows, setFlows] = useState<{ project: string; generation?: string; entries: SystemSymbol[] }>();
     useEffect(() => { setSelection(undefined); setPathIndex(0); setStepIndex(0); }, [filter, cyclesOnly, includeUnconnected, includeTests, connectionView]);
     const requestedEntry = view === 'behavior' && entryChoice?.project === project && entryChoice.generation === generation ? entryChoice.id : undefined;
     const requestedTarget = requestedEntry === undefined ? undefined : entryChoice?.targetId;
@@ -118,12 +146,23 @@ export default function SystemArchitecture({ project, generation, view, filter, 
     useEffect(() => { setFocusId(undefined); setExpandedGroups([]); setScopeHistory([]); setSelection(undefined); }, [project, generation]);
     const structureData = useMemo(() => data ? { ...data, dependencies: data.dependencies.filter(edge => connectionAllowed(edge.type, connectionView)) } : undefined, [data, connectionView]);
     const error = current?.error ?? (current?.response?.status === 'failed' ? current.response.error ?? 'Architecture analysis failed.' : undefined);
-    const entries = entryChoices?.project === project && entryChoices.generation === generation ? entryChoices.entries : data?.entrypoints ?? [];
+    const chosenEntries = entryChoices?.project === project && entryChoices.generation === generation ? entryChoices.entries : data?.entrypoints ?? [];
+    // Without classified entry points (limited projections, Python without main) the ranked flows offer the starts.
+    const needsFlows = view === 'behavior' && active && Boolean(data) && !data?.entrypoints.length;
+    useEffect(() => {
+        if (!needsFlows || (flows?.project === project && flows.generation === generation)) return;
+        let live = true;
+        void flowsLoader(project).then(flowEntries, () => []).then(entries => { if (live) setFlows({ project, generation, entries }); });
+        return () => { live = false; };
+    }, [needsFlows, flows, project, generation, flowsLoader]);
+    const flowStarts = useMemo(() => flows?.project === project && flows.generation === generation ? flows.entries : [], [flows, project, generation]);
+    const entries = useMemo(() => data?.entrypoints.length || !flowStarts.length ? chosenEntries
+        : [...new Map([...flowStarts, ...chosenEntries].map(item => [item.id, item])).values()], [data, flowStarts, chosenEntries]);
     useEffect(() => {
         if (view !== 'behavior' || !data || (entryChoice?.project === project && entryChoice.generation === generation)) return;
-        const suggested = suggestedBehaviorEntry(data.entrypoints);
+        const suggested = data.entrypoints.length ? suggestedBehaviorEntry(data.entrypoints) : suggestedBehaviorEntry(flowStarts, true);
         if (suggested) setEntryChoice({ project, generation, expectedGeneration: current?.response?.generation ?? snapshot?.analysisGeneration, id: suggested.id });
-    }, [view, data, project, generation, entryChoice, current?.response?.generation, snapshot?.analysisGeneration]);
+    }, [view, data, project, generation, entryChoice, current?.response?.generation, snapshot?.analysisGeneration, flowStarts]);
     const returnedPaths = useMemo(() => {
         const valid = queryData?.paths.filter(path => isContiguousPath(path)) ?? [];
         if (queryData?.behavior && requestedTarget === undefined) return [];
@@ -294,9 +333,11 @@ export default function SystemArchitecture({ project, generation, view, filter, 
                         <div className="system-view-switch" role="group" aria-label="System camera"><button aria-pressed={!planar} onClick={() => setPlanar(false)}>3D</button><button aria-pressed={planar} onClick={() => setPlanar(true)}>Plan</button></div>
                     </div>
                     <div className="system-workspace"><div className="system-map">
+                        {/* The reason for an empty projection outranks any filter that would also find nothing. */}
                         {model.nodes.length ? <Suspense fallback={<div className="system-scene-empty">Preparing 3D view…</div>}><Scene model={model} selectedNode={selectedSceneNode} selectedEdge={selection?.edge}
                             onSelectNode={selectNode} onSelectEdge={selectEdge} onExpandNode={id => { toggleGroup(id); focus(id); }} onClearSelection={clearSelection} highlightedPathIndex={view === 'behavior' ? highlightedPathIndex : undefined} resetKey={resetKey} planar={planar} active={active} showConnectionLoad={showConnectionLoad} /></Suspense>
-                            : <div className="system-scene-empty">{view === 'behavior' ? filter ? 'No source paths match this filter. Clear it to see the entry point’s returned paths.' : 'No connected source path is available for this entry point.' : cyclesOnly ? 'No component cycles match the current filters in the returned analysis.' : filter ? 'No matching components. Try a broader filter or include unconnected components.' : data.components.length && !includeUnconnected ? 'No connected components match the current view. Change the connection filter or include unconnected components.' : 'No component projection is available within this analysis budget.'}</div>}
+                            : view === 'structure' && projectionUnavailable(data) ? <UnavailableProjection limits={projectionLimits(data)} />
+                            : <div className="system-scene-empty">{view === 'behavior' ? filter ? 'No source paths match this filter. Clear it to see the entry point’s returned paths.' : 'No connected source path is available for this entry point.' : cyclesOnly ? 'No component cycles match the current filters in the returned analysis.' : filter ? 'No matching components. Try a broader filter or include unconnected components.' : data.components.length && !includeUnconnected ? 'No connected components match the current view. Change the connection filter or include unconnected components.' : text.projectionEmpty}</div>}
                         <div className="system-map-caption"><span>{view === 'behavior' ? 'Arrows are indexed calls, not an execution timeline.' : 'Select to inspect · expand a group for its members'}{showConnectionLoad ? ' · rings show link load' : ''}</span>
                             <button onClick={() => setResetKey(value => value + 1)}>Fit view</button></div>
                     </div><aside className="system-inspector" aria-label="System evidence inspector">

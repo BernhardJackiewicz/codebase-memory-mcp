@@ -286,7 +286,7 @@ export default function SystemArchitectureScene({ model, selectedNode, selectedE
             <OrbitControls makeDefault enabled={active} enableRotate={!planar} enableDamping={false}
                 mouseButtons={{ LEFT: planar ? MOUSE.PAN : MOUSE.ROTATE, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN }}
                 touches={{ ONE: planar ? TOUCH.PAN : TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }}
-                minZoom={0.15} maxZoom={90} rotateSpeed={0.5} zoomSpeed={0.8} maxPolarAngle={Math.PI / 2.05} />
+                minZoom={0.15} maxZoom={90} rotateSpeed={0.5} zoomSpeed={0.8} maxPolarAngle={Math.PI / 2.05} zoomToCursor />
             <ScopeCamera model={model} resetKey={resetKey} planar={planar} presentation={presentation} />
         </Canvas>
     </div></SceneBoundary>;

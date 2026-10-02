@@ -4,8 +4,9 @@ import { Edges, Html, OrbitControls, OrthographicCamera } from '@react-three/dre
 import { Box3, Color, CubicBezierCurve3, MOUSE, TOUCH, OrthographicCamera as ThreeOrthographicCamera, QuadraticBezierCurve3, Vector2, Vector3 } from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import type { SemanticEdge, SemanticGraph, SemanticNode, SemanticPlatform } from './semantic-graph';
-import { languageColor, measureSourceNode, sourceBrickHeight, sourceLanguage, sourceNodeSizePercent, type SourceCatalog, type SourceMeasure } from './source-metrics';
+import { languageColor, measureSourceNode, scopeBrickHeights, sourceLanguage, sourceNodeSizePercent, type SourceCatalog, type SourceMeasure } from './source-metrics';
 import { gravityPercent, gravityStrength, hotspotsForNode, type HotspotCatalog, type HotspotGroup } from './hotspot-map';
+import { labelEdges, labelInset, labelRect, labelsCollide, type LabelBox, type LabelRect } from './label-space';
 import { edgeColor, isDirectedEdge } from '../graph/edge-style';
 import { EdgePulseLayer } from '../graph/EdgePulseLayer';
 import './architecture-scene.css';
@@ -137,6 +138,8 @@ function ArchitectureNode({ node, selected, highlighted, dimmed, labelVisible = 
     const roofLanguages = node.tint && mixed ? measure!.languages.slice(0, 4) : [];
     const roofTotal = measure?.lines || measure?.files || 1;
     let roofOffset = -size[0] / 2;
+    // Labels name a part relative to the opened area; the tooltip keeps its full path.
+    const path = node.kind === 'area' || node.kind === 'file' ? node.filePath ?? node.areaPath : undefined;
     return <group position={node.position}>
         <mesh position={[0, size[1] / 2, 0]}
             onClick={event => { event.stopPropagation(); onSelect(); }}
@@ -168,7 +171,7 @@ function ArchitectureNode({ node, selected, highlighted, dimmed, labelVisible = 
                 data-node-id={node.id} data-position={node.position.join(',')} data-label-visible={labelVisible}
                 data-lines={measure?.lines} data-height={size[1]} data-language={measure?.languages[0]?.name} data-gravity={node.gravity ?? 0} data-size-percent={node.sizePercent} data-gravity-percent={node.gravityPercent}
                 onPointerEnter={() => onHover(node.id)} onPointerLeave={() => onHover()}
-                title={`${node.label}\n${node.detail}${measure ? `\n${lineText}\n${measure.languages.map(language => language.name).join(', ')} (from file types)` : ''}`}>
+                title={`${node.label}${path && path !== node.label ? `\n${path}` : ''}\n${node.detail}${measure ? `\n${lineText}\n${measure.languages.map(language => language.name).join(', ')} (from file types)` : ''}`}>
                 {selected && <span className="architecture-node-kind"><i style={{ background: color }} />{node.kindLabel ?? (node.kind === 'area' ? 'Source area' : node.kind)}</span>}
                 <span className="architecture-node-title"><strong>{node.hotspot && <span className="architecture-hotspot-mark" title={`${node.hotspot.findings.length} ranked hotspots; strongest measured fan-in ${node.hotspot.maxFanIn ?? 'unavailable'}${node.gravityPercent === undefined ? '' : `; gravity ${Number(node.gravityPercent.toFixed(1))}%`}`}>◉ </span>}{node.label}</strong>{!measure && node.gravityPercent !== undefined && <small className="architecture-node-size" title="Gravity relative to strongest hotspot">{node.gravityPercent > 0 && node.gravityPercent < 0.1 ? '<0.1' : Number(node.gravityPercent.toFixed(1))}%</small>}</span>
                 {selected && measure && <span className="architecture-node-metric"><i style={{ background: color }} />{measure.lines === undefined ? '?' : `${measure.measuredFiles < measure.files ? '≥' : ''}${Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(measure.lines)}`} lines{mixed ? ' · mixed' : ''}</span>}
@@ -178,26 +181,50 @@ function ArchitectureNode({ node, selected, highlighted, dimmed, labelVisible = 
     </group>;
 }
 
-/** Screen-space label density changes with zoom; source positions never do. */
+/**
+ * Screen-space label density changes with zoom; source positions never do.
+ * Label boxes are measured once per model, so culling follows the CSS of the
+ * map that shows them (the compact Overview labels are far smaller than the
+ * service map's); the estimate only covers a label not laid out yet.
+ */
 function HotspotLabels({ model, priorityId, onVisible }: { model: RenderGraph; priorityId?: string; onVisible: (ids: Set<string>) => void }) {
-    const { camera, size } = useThree();
+    const { camera, size, gl, events, invalidate } = useThree();
+    // Html labels mount where drei puts them: the event source, else the canvas parent.
+    const labelHost = (events.connected as HTMLElement | undefined) ?? gl.domElement.parentElement;
     const previous = useRef('');
+    const boxes = useRef(new Map<string, LabelBox>());
+    const attempts = useRef(0);
+    useEffect(() => { boxes.current.clear(); attempts.current = 0; }, [model]);
     useFrame(() => {
-        const occupied: { left: number; right: number; top: number; bottom: number }[] = [];
+        const unmeasured = () => model.nodes.some(node => !boxes.current.has(node.id));
+        if (unmeasured()) labelHost?.querySelectorAll<HTMLElement>('.architecture-node-label[data-node-id]').forEach(label => {
+            // A selected label carries extra rows; it is the priority label and keeps its reserve below.
+            if (!label.offsetWidth || label.classList.contains('is-selected')) return;
+            const [edgeX, edgeY] = labelEdges(getComputedStyle(label));
+            boxes.current.set(label.dataset.nodeId!, { width: label.offsetWidth, height: label.offsetHeight, edgeX, edgeY });
+        });
+        // A measured label may overlap a neighbour by its padding, never by its text.
+        const inset = labelInset(boxes.current.values());
+        const occupied: LabelRect[] = [];
         const ids = new Set<string>();
-        const ordered = [...model.nodes].sort((a, b) => Number(b.id === priorityId) - Number(a.id === priorityId));
+        // Hotspot wells, then larger parts, claim their label space first.
+        const ordered = [...model.nodes].sort((a, b) => Number(b.id === priorityId) - Number(a.id === priorityId)
+            || (b.gravity ?? 0) - (a.gravity ?? 0) || b.count - a.count);
         for (const node of ordered) {
             const point = new Vector3(...node.position).add(new Vector3(0, dimensions(node)[1] + 7, 0)).project(camera);
             const x = (point.x + 1) * size.width / 2; const y = (1 - point.y) * size.height / 2;
-            const width = Math.min(178, Math.max(78, node.label.length * 7 + (node.gravityPercent === undefined ? 26 : 68)));
-            const halfHeight = node.id === priorityId ? 48 : 19;
-            const rect = { left: x - width / 2 - 5, right: x + width / 2 + 5, top: y - halfHeight, bottom: y + halfHeight };
+            const box = boxes.current.get(node.id);
+            const width = box?.width ?? Math.min(178, Math.max(78, node.label.length * 7 + (node.gravityPercent === undefined ? 26 : 68)));
+            const height = node.id === priorityId ? 96 : box?.height ?? 38;
+            const rect = labelRect(x, y, width, height, box ? inset : [-5, 0]);
             if (node.id !== priorityId && (rect.right < 0 || rect.left > size.width || rect.bottom < 0 || rect.top > size.height
-                || occupied.some(other => rect.left < other.right && rect.right > other.left && rect.top < other.bottom && rect.bottom > other.top))) continue;
+                || occupied.some(other => labelsCollide(rect, other)))) continue;
             ids.add(node.id); occupied.push(rect);
         }
         const key = [...ids].sort().join('|');
         if (previous.current !== key) { previous.current = key; onVisible(ids); }
+        // Labels mount a moment after the scene; a few extra frames pick up their real size.
+        if (unmeasured() && attempts.current++ < 8) invalidate();
     });
     return null;
 }
@@ -256,16 +283,20 @@ function FitArchitecture({ model, planar, resetKey, controls, active }: {
 }
 
 export function ArchitectureScene({ model: graphModel, selectedId, selectedEdgeId, onSelect, onSelectEdge, onOpen, onClearSelection, active = true, planar = false, resetKey = 0, catalog, heightMetric = 'uniform', colorMetric = 'kind', hotspots, showHotspots = true, adaptiveLabels = false }: ArchitectureSceneProps) {
-    const model: RenderGraph = useMemo(() => ({ ...graphModel, nodes: graphModel.nodes.map(node => {
-        const measure = catalog ? measureSourceNode(node, catalog) : undefined;
-        const sizePercent = catalog ? sourceNodeSizePercent(node, catalog) : undefined;
-        const language = measure?.languages[0]?.name ?? (node.filePath ? sourceLanguage(node.filePath) : undefined);
-        const hotspot = showHotspots && hotspots ? hotspotsForNode(node, hotspots) : undefined;
-        return { ...node, measure, sizePercent, hotspot, gravity: hotspot && hotspots ? gravityStrength(hotspot.maxFanIn, hotspots.maxFanIn) : 0,
-            gravityPercent: hotspot && hotspots ? gravityPercent(hotspot.maxFanIn, hotspots.maxFanIn) : undefined,
-            height: catalog && heightMetric === 'lines' && ['area', 'file'].includes(node.kind) ? node.kind === 'area' && node.areaPath === '(root)' ? 0.35 : sourceBrickHeight(sizePercent, 100) : undefined,
-            tint: node.tint ?? (colorMetric === 'language' && node.kind !== 'route' ? languageColor(language ?? 'Unknown') : undefined) };
-    }) }), [graphModel, catalog, heightMetric, colorMetric, hotspots, showHotspots]);
+    const model: RenderGraph = useMemo(() => {
+        const measures = new Map(graphModel.nodes.map(node => [node.id, catalog ? measureSourceNode(node, catalog) : undefined]));
+        const heights = catalog && heightMetric === 'lines' ? scopeBrickHeights(graphModel.nodes, node => measures.get(node.id)?.lines) : undefined;
+        return { ...graphModel, nodes: graphModel.nodes.map(node => {
+            const measure = measures.get(node.id);
+            const sizePercent = catalog ? sourceNodeSizePercent(node, catalog) : undefined;
+            const language = measure?.languages[0]?.name ?? (node.filePath ? sourceLanguage(node.filePath) : undefined);
+            const hotspot = showHotspots && hotspots ? hotspotsForNode(node, hotspots) : undefined;
+            return { ...node, measure, sizePercent, hotspot, gravity: hotspot && hotspots ? gravityStrength(hotspot.maxFanIn, hotspots.maxFanIn) : 0,
+                gravityPercent: hotspot && hotspots ? gravityPercent(hotspot.maxFanIn, hotspots.maxFanIn) : undefined,
+                height: heights?.get(node.id),
+                tint: node.tint ?? (colorMetric === 'language' && node.kind !== 'route' ? languageColor(language ?? 'Unknown') : undefined) };
+        }) };
+    }, [graphModel, catalog, heightMetric, colorMetric, hotspots, showHotspots]);
     const [hoveredId, setHoveredId] = useState<string>();
     const [hoveredEdgeId, setHoveredEdgeId] = useState<string>();
     const [visibleHotspotLabels, setVisibleHotspotLabels] = useState<Set<string>>();
@@ -340,7 +371,7 @@ export function ArchitectureScene({ model: graphModel, selectedId, selectedEdgeI
             <OrbitControls ref={controls} makeDefault enabled={active} enableRotate={!planar} enableDamping={false}
                 mouseButtons={{ LEFT: planar ? MOUSE.PAN : MOUSE.ROTATE, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN }}
                 touches={{ ONE: planar ? TOUCH.PAN : TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }}
-                minZoom={0.15} maxZoom={60} rotateSpeed={0.5} zoomSpeed={0.8} maxPolarAngle={Math.PI / 2.05} />
+                minZoom={0.15} maxZoom={60} rotateSpeed={0.5} zoomSpeed={0.8} maxPolarAngle={Math.PI / 2.05} zoomToCursor />
             <FitArchitecture model={model} planar={planar} resetKey={resetKey} controls={controls} active={active} />
             {(adaptiveLabels || model.view === 'hotspots') && <HotspotLabels model={model} priorityId={selectedId ?? hoveredId} onVisible={setVisibleHotspotLabels} />}
         </Canvas>

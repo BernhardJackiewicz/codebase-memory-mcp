@@ -32,7 +32,7 @@ it('drills inferred areas to files and symbols before enabling real-node impact 
     await click('src/api');
     expect(onSelect).not.toHaveBeenCalled();
     expect(host.textContent).not.toContain('Analyze selected symbol');
-    await click('Open area →'); await click('src/api/main.ts'); await click('Open file symbols →'); await click('start');
+    await click('Open area →'); await click('main.ts'); await click('Open file symbols →'); await click('start');
     expect(onSelect).toHaveBeenCalledExactlyOnceWith(node);
     expect(host.textContent).toContain('Analyze selected symbol');
     await click('Open source'); expect(onNavigate).toHaveBeenCalledWith('src/api/main.ts', 12, 'start');
@@ -40,12 +40,26 @@ it('drills inferred areas to files and symbols before enabling real-node impact 
 it('returns from a file symbol to the repository map on empty background', async () => {
     const clear = vi.fn();
     await act(async () => root.render(<SpatialArchitecture project="sample" graph={graph} overview={overview} view="overview" filter="" active onSelect={vi.fn()} onClearSelection={clear} onNavigate={vi.fn()} onView={vi.fn()} selectionPanel={<button>Analyze selected symbol</button>} />));
-    await click('src/api'); await click('Open area →'); await click('src/api/main.ts'); await click('Open file symbols →'); await click('start');
+    await click('src/api'); await click('Open area →'); await click('main.ts'); await click('Open file symbols →'); await click('start');
     expect(host.textContent).toContain('Analyze selected symbol');
     await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Empty background"]')!.click());
     expect(host.querySelector('[data-testid="scene"]')?.textContent).toContain('src/api');
     expect(host.textContent).not.toContain('Analyze selected symbol');
     expect(clear).toHaveBeenCalledOnce();
+});
+it('opens nested areas level by level and walks back through the location trail', async () => {
+    const nested: GraphData = { nodes: [{ ...node, file_path: 'django/contrib/admin/options.py' }, { ...node, id: 2, name: 'render', qualified_name: 'sample.render', file_path: 'django/shortcuts.py' }], edges: [], total_nodes: 2 };
+    await act(async () => root.render(<SpatialArchitecture project="sample" graph={nested} overview={overview} view="overview" filter="" active onNavigate={vi.fn()} onView={vi.fn()} />));
+    const scene = () => [...host.querySelectorAll('[data-testid="scene"] [data-node]')].map(item => item.textContent);
+    const trail = () => [...host.querySelectorAll('[aria-label="Architecture location"] button')].map(item => item.textContent);
+    await click('django'); await click('Open area →');
+    expect(scene()).toEqual(['contrib', 'shortcuts.py']);
+    await click('contrib'); await click('Open area →');
+    expect(scene()).toEqual(['admin']);
+    expect(trail()).toEqual(['sample', 'django', 'contrib']);
+    const django = [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Architecture location"] button')].find(item => item.textContent === 'django')!;
+    await act(async () => django.click());
+    expect(scene()).toEqual(['contrib', 'shortcuts.py']);
 });
 it('publishes source-area evidence without inventing a symbol and clears it on background', async () => {
     const onSelectionEvidence = vi.fn();
@@ -78,6 +92,27 @@ it('cancels a route request on generation change and ignores its late result', a
     await act(async () => finishOld({ relationships: [], truncated: true, warnings: ['STALE RESPONSE'] }));
     expect(host.textContent).not.toContain('STALE RESPONSE');
     expect(loadRouteGraph).toHaveBeenCalledTimes(2);
+});
+it('groups endpoints, hides test routes by default and narrows a group through the filter', async () => {
+    const route = (id: number, name: string, file_path: string): GraphNode => ({ id, label: 'Route', name, qualified_name: `sample.route.${id}`, file_path, x: 0, y: 0, z: 0, size: 1, color: '' });
+    const input: GraphData = { nodes: [node, route(2, '/accounts/login/', 'app/urls.py'), route(3, '/accounts/logout/', 'app/urls.py'), route(4, '/fixture/', 'tests/urls.py'),
+        route(5, '/accounts_old/', 'accounts/urls.py')], edges: [], total_nodes: 5 };
+    const onFilter = vi.fn();
+    const render = (filter: string) => act(async () => root.render(<SpatialArchitecture project="sample" graph={input} overview={overview} view="routes" filter={filter} active onNavigate={vi.fn()} onView={vi.fn()} onFilter={onFilter} />));
+    await render('');
+    const scene = () => [...host.querySelectorAll('[data-testid="scene"] [data-node]')].map(item => item.textContent);
+    expect(scene()).toEqual(['/accounts · 2', '/accounts_old/']);
+    const toggle = [...host.querySelectorAll('label')].find(label => label.textContent?.startsWith('Include test routes'))!;
+    expect(toggle.textContent).toBe('Include test routes (1 hidden)');
+    await click('/accounts · 2'); await click('Show these 2 routes →');
+    expect(onFilter).toHaveBeenCalledExactlyOnceWith('/accounts');
+    // The filter the group hands over shows its two routes, not every route whose text contains it.
+    await render('/accounts');
+    expect(scene()).toEqual(['/accounts/login/', '/accounts/logout/']);
+    await render('');
+    await act(async () => toggle.querySelector('input')!.click());
+    expect(scene()).toEqual(['/accounts · 2', '/fixture/', '/accounts_old/']);
+    expect(toggle.textContent).toBe('Include test routes');
 });
 it('does not load route evidence while the workspace is hidden', async () => {
     await act(async () => root.render(<SpatialArchitecture project="sample" graph={graph} overview={overview} view="routes" filter="" active={false} onNavigate={vi.fn()} onView={vi.fn()} />));

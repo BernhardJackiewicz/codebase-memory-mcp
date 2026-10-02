@@ -101,7 +101,8 @@ function corridorPath(data: SystemProjection, source: number, target: number, hi
 
 /** A focused static journey: positions describe hops, never catalog distance or runtime order. */
 export function behaviorJourney(data: SystemProjection, options: BehaviorJourneyOptions = {}): BehaviorJourney {
-    const entryId = options.entryId ?? data.behavior?.source_id ?? data.entrypoints[0]?.id
+    // The server reports source_id 0 when no operation was requested; node IDs start at 1.
+    const entryId = options.entryId ?? (data.behavior?.source_id || undefined) ?? data.entrypoints[0]?.id
         ?? data.paths.find(validPath)?.entrypoint_id;
     const scopedBehavior = data.behavior?.source_id === entryId ? data.behavior : undefined;
     const dependencies = [...data.dependencies, ...(data.overview?.connections ?? [])];

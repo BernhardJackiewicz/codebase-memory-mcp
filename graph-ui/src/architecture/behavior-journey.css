@@ -65,6 +65,8 @@
 .behavior-immediate-list button { display: flex; align-items: center; gap: 12px; width: 100%; border-bottom: 1px solid #91a6bb12; }
 .behavior-immediate-list small { margin-left: auto; color: #849aaf; font-size: 9px; white-space: nowrap; }
 .behavior-loading { min-height: 310px; display: flex; align-items: center; justify-content: center; color: #829bb2; font-size: 12px; padding: 25px; text-align: center; }
+.behavior-limited { display: grid; gap: 8px; max-width: 560px; }
+.behavior-limited strong { color: #c4d6e6; font-weight: 500; }
 .system-architecture .system-scene .system-scene-node-label[data-presentation=journey] { width: 116px; height: 58px; gap: 3px; padding: 7px; background: #14212ef2; border-radius: 8px; }
 .system-architecture .system-scene .system-scene-node-label[data-presentation=journey] small { font-size: 8px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .system-architecture .system-scene .system-scene-node-label[data-presentation=journey] strong { font-size: 10px; }

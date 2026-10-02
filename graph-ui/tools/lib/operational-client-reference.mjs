@@ -1,8 +1,9 @@
 import { ATTRIBUTION_PATTERNS, NAME_PATTERN, WATCHED_NAMES } from './forbidden-names.mjs';
 
 /** A real integration must identify its client and configuration protocol.
- * This exemption is limited to four operational source/test files and the
- * README's exact installation instructions. Two named local verification JSON
+ * This exemption is limited to four operational source/test files, the
+ * configuration reference's name of the client's own environment variable, and
+ * the README's exact installation instructions. Two named local verification JSON
  * files permit only configuration-path/setup-command fields; the named download
  * artifact must equal the canonical hook. Authorship claims remain forbidden.
  * Names use the guard's existing codepoint source, avoiding self-matches here.
@@ -24,6 +25,10 @@ const README_LINES = new Set([
     `Installation is explicit and local: it preserves unrelated ${client[0].toUpperCase() + client.slice(1)} settings,`,
     `adds a PostToolUse entry to \`.${client}/settings.local.json\`, and copies the hook`,
     `into \`.${client}/hooks/\`. It refuses conflicting hooks, symlinks and malformed`,
+]);
+/** The installer reads this variable, so the configuration reference must name it exactly. */
+const ENVIRONMENT_REFERENCES = new Map([
+    ['src/settings/ConfigReference.tsx', new RegExp(`\\b${client.toUpperCase()}_CONFIG_DIR\\b`, 'g')],
 ]);
 const REFERENCES = [
     new RegExp(`\\b${client} Code\\b`, 'gi'),
@@ -50,9 +55,11 @@ export function operationalClientReference(path, line, evidence = {}) {
         && evidence.artifact instanceof Uint8Array && evidence.canonicalHook.length > 0
         && evidence.artifact.length === evidence.canonicalHook.length
         && evidence.artifact.every((byte, index) => byte === evidence.canonicalHook[index]);
-    if ((!FILES.has(path) && !setupInstruction && !canonicalDownload && !setupEvidenceField(path, line)) || !NAME_PATTERN.test(line)
+    const environment = ENVIRONMENT_REFERENCES.get(path);
+    if ((!FILES.has(path) && !environment && !setupInstruction && !canonicalDownload && !setupEvidenceField(path, line)) || !NAME_PATTERN.test(line)
         || ATTRIBUTION_PATTERNS.some(({ pattern }) => pattern.test(line))) return false;
     if (setupInstruction) return true;
+    if (environment) return !NAME_PATTERN.test(line.replace(environment, ''));
     let remaining = line;
     for (const pattern of REFERENCES) remaining = remaining.replace(pattern, '');
     return !NAME_PATTERN.test(remaining);

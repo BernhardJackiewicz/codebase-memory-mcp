@@ -2,7 +2,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import SystemArchitecture, { suggestedBehaviorEntry, type SystemArchitectureProps } from './SystemArchitecture';
+import SystemArchitecture, { flowEntries, suggestedBehaviorEntry, type FlowsLoader, type SystemArchitectureProps } from './SystemArchitecture';
 import { isContiguousPath, systemBehaviorGraph, systemComponentGraph, systemComponents, type SystemSceneModel } from './system-architecture-model';
 import { loadSystemArchitecture, readSystemArchitecture, type SystemArchitectureLoader, type SystemArchitectureResponse, type SystemProjection, type SystemSymbol } from './system-architecture-source';
 import { callToolJson } from '../provider/rpc-transport';
@@ -52,6 +52,22 @@ function corridorFixture(): SystemProjection {
     const data = overviewFixture();
     data.behavior = { ...data.behavior!, mode: 'corridor', target_id: 3, nodes: data.paths[0].nodes, edges: data.paths[0].edges };
     return data;
+}
+/** The response the server returns when the projection exceeds its JSON memory budget (Django 5.2.7). */
+function limitedEmptyFixture(): SystemProjection {
+    return {
+        schema_version: 1, status: 'limited', kind: 'static_projection', complete: false,
+        components: [], dependencies: [], cycles: [], entrypoints: [], paths: [],
+        warnings: ['Component candidates are inferred from indexed declarations and interactions; they do not establish intended responsibilities or deployment boundaries.',
+            'Paths are bounded static witnesses, not observed executions. Callback references are not invocation evidence. Index coverage gaps remain possible.',
+            'The architecture response exceeded its memory budget; narrow the requested projection.'],
+        totals: { nodes: 52402, files: 4654, edges: 274549, accounted_nodes: 0, structural_nodes: 0, components: 0, dependencies: 0, entrypoints: 0, cycles: 0, relationship_edges: 0, unmodeled_edges: 0 },
+        limits: { node_budget: 100000, edge_budget: 500000, omitted_components: 0, omitted_dependencies: 0, omitted_entrypoints: 0, omitted_cycles: 0, paths_truncated: false, path_depth: 10 },
+        overview: { complete: false, grouping_basis: 'common_source_directory_aggregate', groups: [], components: [], connections: [],
+            totals: { groups: 0, components: 0, accounted_nodes: 0, connections: 0 }, limits: { omitted_connections: 0 } },
+        behavior: { mode: 'targets', source_id: 0, complete: false, corridor_complete: false, max_hops: 10, limits_hit: ['analysis_budget'],
+            reachable_targets: [], nodes: [], edges: [], cycles: [], totals: { reachable_nodes: 0, corridor_nodes: 0, corridor_edges: 0 } },
+    };
 }
 function addOverviewContext(data: SystemProjection) {
     const extra = { id: 'context', label: 'context', basis: 'declared_module', member_count: 1, file_count: 1, representatives: [], group_id: 'g:context' };
@@ -157,6 +173,11 @@ describe('system architecture evidence', () => {
     it('accepts limited projections without inventing complete coverage', () => {
         const data = fixture(); data.status = 'limited'; data.complete = false; data.warnings = ['Node budget reached.'];
         expect(readSystemArchitecture(response(data)).result?.complete).toBe(false);
+    });
+    it('accepts the empty limited projection exactly as the server sends it', () => {
+        const wire = { status: 'ready', generation: 'g1', result: { ...limitedEmptyFixture(), project: 'django-demo', elapsed_ms: 310,
+            overview: { ...limitedEmptyFixture().overview, grouping_depth: 1 } } };
+        expect(readSystemArchitecture(wire).result?.status).toBe('limited');
     });
     it('rejects projected paths whose underlying symbols do not join', () => {
         const data = fixture(); data.paths[0].edges[1].source_id = 99;
@@ -327,6 +348,22 @@ describe('system architecture workspace', () => {
         ];
         expect(suggestedBehaviorEntry(entries)?.id).toBe(4);
         expect(suggestedBehaviorEntry([symbol(5, 'helper', 'format')])).toBeUndefined();
+        const handlers = [{ ...symbol(6, 'commands', 'handle'), file_path: 'django/core/management/commands/runserver.py' },
+            { ...symbol(7, 'tests', 'handle'), file_path: 'tests/admin_scripts/management/commands/base_command.py' },
+            { ...symbol(8, 'app', 'render'), file_path: 'django/shortcuts.py' }];
+        expect(suggestedBehaviorEntry(handlers)).toBeUndefined();
+        expect(suggestedBehaviorEntry(handlers, true)?.id).toBe(6);
+        // Ranked flows keep their order: a shallower but lower-ranked handler does not win.
+        expect(suggestedBehaviorEntry([handlers[0], { ...symbol(9, 'docs', 'run'), file_path: 'docs/_ext/djangodocs.py' }], true)?.id).toBe(6);
+        expect(suggestedBehaviorEntry([...handlers, ...entries], true)?.id).toBe(4);
+    });
+    it('reads flow entries once each and never invents an identity', () => {
+        const node = (id: number | undefined, name: string, filePath?: string) => ({ ...(id === undefined ? {} : { id }), name, ...(filePath ? { filePath } : {}) });
+        expect(flowEntries([
+            { id: 0, label: 'handle → tick', entry: node(36163, 'handle', 'django/core/management/commands/runserver.py'), terminal: node(44340, 'tick'), steps: 40 },
+            { id: 1, label: 'handle → len', entry: node(36163, 'handle', 'django/core/management/commands/runserver.py'), terminal: node(8040, 'len'), steps: 3 },
+            { id: 2, label: 'unknown', entry: node(undefined, 'anonymous'), terminal: node(1, 'x'), steps: 1 },
+        ])).toEqual([{ id: 36163, name: 'handle', qualified_name: '', label: '', file_path: 'django/core/management/commands/runserver.py', component_id: '' }]);
     });
     it('automatically requests the executable entry once and leaves manual selection authoritative', async () => {
         const data = fixture(); data.entrypoints[0] = { ...data.entrypoints[0], name: 'main', file_path: 'src/main.c' };
@@ -491,6 +528,51 @@ describe('system architecture workspace', () => {
         await act(async () => toggle.click());
         expect(container.querySelector('[data-node="store"]')).not.toBeNull();
         expect(container.textContent).toContain('Test code'); expect(container.textContent).toContain('3 components returned');
+    });
+    it('explains an empty limited projection with its own warning before any filter message', async () => {
+        await render(vi.fn<SystemArchitectureLoader>().mockResolvedValue(response(limitedEmptyFixture())));
+        const reason = () => container.querySelector('.system-scene-empty[role="status"]')?.textContent ?? '';
+        expect(reason()).toContain('The analysis returned no system structure for this project.');
+        expect(reason()).toContain('The architecture response exceeded its memory budget; narrow the requested projection.');
+        expect(reason()).not.toContain('Component candidates are inferred');
+        const cycles = [...container.querySelectorAll('label')].find(label => label.textContent?.includes('Group cycles'))!.querySelector('input')!;
+        await act(async () => cycles.click());
+        expect(container.textContent).not.toContain('No component cycles match');
+        expect(reason()).toContain('exceeded its memory budget');
+    });
+    it('keeps the budget message for an empty projection that names no limit', async () => {
+        const data = limitedEmptyFixture(); data.status = 'ready'; data.warnings = data.warnings.slice(0, 2);
+        await render(vi.fn<SystemArchitectureLoader>().mockResolvedValue(response(data)));
+        expect(container.querySelector('.system-scene-empty[role="status"]')?.textContent).toBe('No component projection is available within this analysis budget.');
+    });
+    it('fills an empty behavior start list from ranked flows and requests a conventional handler', async () => {
+        const flowsLoader = vi.fn<FlowsLoader>().mockResolvedValue([
+            { id: 0, label: 'run_tests → setup', entry: { id: 9, name: 'run_tests', filePath: 'tests/runtests.py' }, terminal: { id: 10, name: 'setup' }, steps: 12 },
+            { id: 1, label: 'handle → tick', entry: { id: 36163, name: 'handle', filePath: 'django/core/management/commands/runserver.py' }, terminal: { id: 44340, name: 'tick' }, steps: 40 },
+        ]);
+        const chosen = limitedEmptyFixture();
+        chosen.behavior = { ...chosen.behavior!, source_id: 36163 };
+        chosen.warnings = [...chosen.warnings, 'Optional behavior evidence was omitted entirely to keep the base graph within the response memory budget.'];
+        const loader = vi.fn<SystemArchitectureLoader>().mockResolvedValueOnce(response(limitedEmptyFixture())).mockResolvedValue(response(chosen));
+        await render(loader, { view: 'behavior', flowsLoader });
+        expect(flowsLoader).toHaveBeenCalledExactlyOnceWith('sample');
+        expect(loader.mock.calls.at(-1)?.[0]).toEqual({ project: 'sample', entryNodeId: 36163, expectedGeneration: 'g1', includeBehaviorEvidence: true });
+        const start = container.querySelector<HTMLSelectElement>('[aria-label="Behavior entry point"]')!;
+        expect([...start.options].map(option => option.textContent)).toEqual(['Choose an operation…', 'run_tests · tests/runtests.py',
+            'handle · django/core/management/commands/runserver.py']);
+        expect(start.value).toBe('36163');
+        const state = container.querySelector('.behavior-loading[role="status"]')!;
+        expect(state.textContent).toContain('The analysis returned no call evidence.');
+        expect(state.textContent).toContain('exceeded its memory budget');
+        expect(state.textContent).toContain('Optional behavior evidence was omitted entirely');
+        await choose('Behavior entry point', '9');
+        expect(loader.mock.calls.at(-1)?.[0].entryNodeId).toBe(9);
+        expect([...start.options].map(option => option.value)).toEqual(['', '9', '36163']);
+    });
+    it('does not ask for flows while the projection classifies entry points', async () => {
+        const flowsLoader = vi.fn<FlowsLoader>().mockResolvedValue([]);
+        await render(vi.fn<SystemArchitectureLoader>().mockResolvedValue(response()), { view: 'behavior', flowsLoader });
+        expect(flowsLoader).not.toHaveBeenCalled();
     });
     it('shows failures without retrying continuously', async () => {
         vi.useFakeTimers(); const loader = vi.fn<SystemArchitectureLoader>().mockResolvedValue({ status: 'failed', generation: 'g1', error: 'Analysis budget exceeded.' });

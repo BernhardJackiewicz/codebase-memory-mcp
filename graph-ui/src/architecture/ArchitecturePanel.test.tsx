@@ -7,7 +7,7 @@ import type { ArchitecturePanelProps } from './ArchitecturePanel';
 import type { ArchitectureOverviewDto } from '../core/intelligence-provider';
 import { architectureText as text } from './strings';
 vi.mock('./ArchitectureScene', () => ({ ArchitectureScene: () => <div data-testid="scene" /> }));
-vi.mock('./ContainerMap', () => ({ default: () => <div data-testid="container-map" /> }));
+vi.mock('./ContainerMap', () => ({ default: ({ filter }: { filter: string }) => <div data-testid="container-map" data-filter={filter} /> }));
 
 let container: HTMLDivElement;
 let root: Root;
@@ -134,6 +134,24 @@ describe('architecture workspace', () => {
         const more = [...container.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === text.showMore)!;
         await act(async () => more.click());
         expect(container.querySelectorAll('tbody tr')).toHaveLength(30);
+    });
+
+    it('offers the filter in Routes only and hands it to the service and endpoint views', async () => {
+        await render({ graph: { nodes: [], edges: [], total_nodes: 0 } });
+        expect(container.querySelector('input[type="search"]')).toBeNull();
+        await click('[data-view="routes"]');
+        await act(async () => { await vi.dynamicImportSettled(); });
+        const search = container.querySelector<HTMLInputElement>('input[type="search"]')!;
+        expect(search.getAttribute('aria-label')).toBe(text.filter);
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, '/users');
+            search.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        expect(container.querySelector('[data-testid="container-map"]')?.getAttribute('data-filter')).toBe('/users');
+        await click('[data-view="hotspots"]');
+        expect(container.querySelector('input[type="search"]')).toBeNull();
+        await click('[data-view="routes"]');
+        expect(container.querySelector<HTMLInputElement>('input[type="search"]')?.value).toBe('/users');
     });
 
     it('restores the view per project while discarding old hidden search filters', async () => {

@@ -32,6 +32,20 @@ export const componentBasis = (basis: string): string => basis === 'declared_mod
     : basis === 'interaction_community' ? 'Inferred collaboration' : basis === 'unassigned' ? 'Unassigned'
         : basis === 'common_source_directory_aggregate' ? 'Source directory group' : basis === 'aggregate_remainder' ? 'Other components' : 'Inferred component';
 
+/*
+ * Every projection opens its warnings with the same two interpretation caveats
+ * and appends what actually limited this answer. Only the caveats are left out;
+ * an unknown or reworded warning stays visible, so a change in the server text
+ * can never hide a limit.
+ */
+const STANDING_CAVEATS = [/^Component candidates are inferred\b/, /^Paths are bounded static witnesses\b/];
+/** The warnings that explain this particular projection, without the standing caveats. */
+export const projectionLimits = (data: SystemProjection): string[] =>
+    data.warnings.filter(warning => !STANDING_CAVEATS.some(caveat => caveat.test(warning)));
+/** A limited or empty projection has nothing to draw, whatever the current filters are. */
+export const projectionUnavailable = (data: SystemProjection): boolean =>
+    data.status === 'limited' || !(data.overview ? data.overview.groups.length : data.components.length);
+
 export interface SystemOverviewOptions {
     expandedGroupIds?: readonly string[]; focusId?: string; relationshipTypes?: readonly string[];
     includeTests?: boolean; includeUnconnected?: boolean; filter?: string; cyclesOnly?: boolean; layoutKey?: string;
