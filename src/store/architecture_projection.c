@@ -73,13 +73,13 @@ static const char *const ap_types[] = {
     "IMPLEMENTS", "INHERITS",   "CONFIGURES", "WRITES",         "READS",          "USAGE",
     "PUBLISHES",  "SUBSCRIBES", "DEFINES",    "DEFINES_METHOD", "CONTAINS",       "EMITS",
     "LISTENS_ON", "HANDLES",    "DATA_FLOWS", "INFRA_MAPS"};
-enum { AP_DEFINES = 14, AP_METHOD = 15, AP_CONTAINS = 16, AP_HANDLES = 19 };
+enum { AP_CALLS = 1, AP_DEFINES = 14, AP_METHOD = 15, AP_CONTAINS = 16, AP_HANDLES = 19 };
 
 typedef struct {
     int64_t id;
     char *name, *qn, *file, *label;
     int line, end, atom, component, degree;
-    bool entry, structural, declared, test, test_property;
+    bool entry, handler, route, callable, structural, declared, test, test_property;
 } ap_node;
 typedef struct {
     int64_t id;
@@ -254,6 +254,35 @@ static int ap_counts(ap_context *c, const char *project) {
     return CBM_STORE_OK;
 }
 
+/* Web code enters through route handlers, not main: HANDLES runs from a
+ * Function/Method to its Route (atlas_flows.c scores them alike). A CALLS edge
+ * into a Route is the call that registered it, as pass_route_nodes.c reads it.
+ * Handlers in test code are fixtures, and so are the handlers of routes that
+ * only test code registers: test-client calls like self.client.get("/x/") are
+ * indexed as registrations. Routes without a registration call (decorators)
+ * keep their handlers. Indexed entry points stay ahead of handlers. */
+static int ap_route_handlers(ap_context *c) {
+    enum { AP_PRODUCTION_REGISTRAR = 1, AP_TEST_REGISTRAR = 2 };
+    unsigned char *registrars = calloc((size_t)c->n + 1, sizeof(*registrars));
+    if (!registrars)
+        return CBM_STORE_ERR;
+    for (int i = 0; i < c->m; i++) {
+        const ap_edge *e = &c->edges[i];
+        if (e->type == AP_CALLS && c->nodes[e->target].route)
+            registrars[e->target] |=
+                c->nodes[e->source].test ? AP_TEST_REGISTRAR : AP_PRODUCTION_REGISTRAR;
+    }
+    for (int i = 0; i < c->m; i++) {
+        const ap_edge *e = &c->edges[i];
+        ap_node *handler = &c->nodes[e->source];
+        if (e->type == AP_HANDLES && c->nodes[e->target].route && handler->callable &&
+            !handler->test && !handler->entry && registrars[e->target] != AP_TEST_REGISTRAR)
+            handler->handler = true;
+    }
+    free(registrars);
+    return CBM_STORE_OK;
+}
+
 static int ap_load(ap_context *c, const char *project) {
     c->nodes = calloc((size_t)c->total_nodes + 1, sizeof(*c->nodes));
     c->edges = calloc((size_t)c->total_edges + 1, sizeof(*c->edges));
@@ -290,6 +319,8 @@ static int ap_load(ap_context *c, const char *project) {
         n->declared = !strcmp(n->label, "Module") || !strcmp(n->label, "Package") ||
                       !strcmp(n->label, "Namespace") || !strcmp(n->label, "Class") ||
                       !strcmp(n->label, "Struct") || !strcmp(n->label, "Interface");
+        n->route = !strcmp(n->label, "Route");
+        n->callable = !strcmp(n->label, "Function") || !strcmp(n->label, "Method");
         n->atom = c->n - 1;
         n->component = -1;
     }
@@ -314,13 +345,6 @@ static int ap_load(ap_context *c, const char *project) {
         if (source < 0 || target < 0)
             continue;
         c->edges[c->m++] = (ap_edge){sqlite3_column_int64(stmt, 0), source, target, type};
-        /* Web code enters through route handlers, not main: HANDLES runs from
-         * a Function/Method to its Route (atlas_flows.c scores them alike).
-         * Handlers in test code are fixtures, not entry points. */
-        ap_node *handler = &c->nodes[source];
-        if (type == AP_HANDLES && !strcmp(c->nodes[target].label, "Route") && !handler->test &&
-            (!strcmp(handler->label, "Function") || !strcmp(handler->label, "Method")))
-            handler->entry = true;
         if (ap_dependency(type)) {
             c->nodes[source].degree++;
             c->nodes[target].degree++;
@@ -328,7 +352,7 @@ static int ap_load(ap_context *c, const char *project) {
         }
     }
     sqlite3_finalize(stmt);
-    return step == SQLITE_DONE ? CBM_STORE_OK : CBM_STORE_ERR;
+    return step == SQLITE_DONE ? ap_route_handlers(c) : CBM_STORE_ERR;
 }
 
 /* Ownership is grounded in declared module/type names and explicit definition
@@ -1873,11 +1897,14 @@ static int ap_render(ap_context *c, const char *project, char **out_json) {
             rc = CBM_STORE_ERR;
             goto done;
         }
-        for (int i = 0; i < c->n; i++) {
-            ap_node *node = &c->nodes[i];
-            if (node->component < 0)
-                continue;
-            if (node->entry) {
+        /* Indexed entry points first, then route handlers, each in id order:
+         * paths take their slots in this order, so many handlers cannot crowd
+         * main out of the default paths. */
+        for (int pass = 0; pass < 2; pass++)
+            for (int i = 0; i < c->n; i++) {
+                ap_node *node = &c->nodes[i];
+                if (node->component < 0 || !(pass ? node->handler : node->entry))
+                    continue;
                 entry_total++;
                 if (entry_count < AP_ENTRYPOINTS) {
                     entry_indexes[entry_count++] = i;
@@ -1887,7 +1914,6 @@ static int ap_render(ap_context *c, const char *project, char **out_json) {
                     c->evidence_scope = AP_EVIDENCE_CONTEXT;
                 }
             }
-        }
         c->evidence_scope = AP_EVIDENCE_PATH;
         if (c->options.target_node_id) {
             /* The target query produces exact endpoint witnesses below. */

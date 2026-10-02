@@ -1265,7 +1265,9 @@ TEST(projection_python_test_files_follow_name_conventions) {
     PASS();
 }
 
-/* Django views are never named main; their HANDLES edge is the entry evidence. */
+/* Django views are never named main; their HANDLES edge is the entry evidence.
+ * Test-client calls like self.client.get("/probe/") are indexed as route
+ * registrations, so a route that only test code registers proves nothing. */
 TEST(projection_route_handlers_are_entry_points) {
     cbm_store_t *store = projection_store();
     ASSERT_NOT_NULL(store);
@@ -1279,25 +1281,49 @@ TEST(projection_route_handlers_are_entry_points) {
     int64_t query =
         projection_node(store, "Function", "projection.shop.query.orders", "shop/query.py", false);
     projection_node(store, "Function", "projection.shop.views.unrouted", "shop/views.py", false);
+    int64_t cart_route =
+        projection_node(store, "Route", "projection.__route__GET__/cart", "", false);
+    int64_t urls =
+        projection_node(store, "Function", "projection.shop.urls.register", "shop/urls.py", false);
+    int64_t cart =
+        projection_node(store, "Function", "projection.shop.views.cart", "shop/views.py", false);
+    int64_t probe_route =
+        projection_node(store, "Route", "projection.__route__GET__/probe", "", false);
+    int64_t probe = projection_node(store, "Method", "projection.tests.test_views.Tests.test_probe",
+                                    "tests/test_views.py", false);
+    int64_t text = projection_node(store, "Method", "projection.shop.models.Order.text",
+                                   "shop/models.py", false);
+    /* Created last, so only the ranking can put the indexed entry first. */
+    int64_t launcher =
+        projection_node(store, "Function", "projection.manage.main", "manage.py", true);
+    int64_t setup =
+        projection_node(store, "Function", "projection.manage.setup", "manage.py", false);
     projection_edge(store, view, route, "HANDLES");
     projection_edge(store, method, route, "HANDLES");
     projection_edge(store, fixture, route, "HANDLES");
     projection_edge(store, view, query, "CALLS");
+    projection_edge(store, urls, cart_route, "CALLS");
+    projection_edge(store, cart, cart_route, "HANDLES");
+    projection_edge(store, probe, probe_route, "CALLS");
+    projection_edge(store, text, probe_route, "HANDLES");
+    projection_edge(store, launcher, setup, "CALLS");
     char *json = NULL;
     ASSERT_EQ(cbm_store_architecture_projection(store, "projection", NULL, &json), CBM_STORE_OK);
     yyjson_doc *doc = yyjson_read(json, strlen(json), 0);
     ASSERT_NOT_NULL(doc);
     yyjson_val *entries = projection_field(doc, "entrypoints");
-    ASSERT_EQ(yyjson_arr_size(entries), 2);
-    ASSERT_EQ(yyjson_get_sint(yyjson_obj_get(yyjson_arr_get(entries, 0), "id")), view);
-    ASSERT_EQ(yyjson_get_sint(yyjson_obj_get(yyjson_arr_get(entries, 1), "id")), method);
-    ASSERT_EQ(yyjson_get_int(yyjson_obj_get(projection_field(doc, "totals"), "entrypoints")), 2);
+    const int64_t expected[] = {launcher, view, method, cart};
+    ASSERT_EQ(yyjson_arr_size(entries), sizeof(expected) / sizeof(expected[0]));
+    for (size_t i = 0; i < sizeof(expected) / sizeof(expected[0]); i++)
+        ASSERT_EQ(yyjson_get_sint(yyjson_obj_get(yyjson_arr_get(entries, i), "id")), expected[i]);
+    ASSERT_EQ(yyjson_get_int(yyjson_obj_get(projection_field(doc, "totals"), "entrypoints")), 4);
     yyjson_val *paths = projection_field(doc, "paths");
-    ASSERT_EQ(yyjson_arr_size(paths), 1);
-    yyjson_val *path = yyjson_arr_get(paths, 0);
-    ASSERT_EQ(yyjson_get_sint(yyjson_obj_get(path, "entrypoint_id")), view);
+    ASSERT_EQ(yyjson_arr_size(paths), 2);
+    yyjson_val *first = yyjson_arr_get(paths, 0), *second = yyjson_arr_get(paths, 1);
+    ASSERT_EQ(yyjson_get_sint(yyjson_obj_get(first, "entrypoint_id")), launcher);
+    ASSERT_EQ(yyjson_get_sint(yyjson_obj_get(second, "entrypoint_id")), view);
     ASSERT_EQ(
-        yyjson_get_sint(yyjson_obj_get(yyjson_arr_get(yyjson_obj_get(path, "nodes"), 1), "id")),
+        yyjson_get_sint(yyjson_obj_get(yyjson_arr_get(yyjson_obj_get(second, "nodes"), 1), "id")),
         query);
     yyjson_doc_free(doc);
     free(json);
