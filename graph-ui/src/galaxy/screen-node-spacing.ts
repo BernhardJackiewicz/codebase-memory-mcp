@@ -18,20 +18,23 @@ function directionSeed(id: number): number {
     return ((seed ^ (seed >>> 16)) >>> 0) / 0x100000000 * Math.PI * 2;
 }
 
-/** Screen-space presentation only. Largest disks are placed first, preserving
- * their preferred positions when possible. Existing graph IDs and metadata
- * are retained, and the result remains in the original input order.
+/** Screen-space presentation only. Pinned disks (a scope root) never move and
+ * are placed first; then the largest disks, preserving their preferred
+ * positions when possible. Existing graph IDs and metadata are retained, and
+ * the result remains in the original input order.
  *
  * Each radius scale has its own spatial hash. Earlier disks are at least as
- * large as the candidate, so only nine cells per occupied scale can overlap.
+ * large as the candidate, so only nine cells per occupied scale can overlap;
+ * pinned disks are hashed at the largest scale for the same guarantee.
  * Local search is bounded; an outside-bounds fallback guarantees clearance
  * without dropping nodes or squeezing them into a fixed viewport. */
-export function separateScreenNodes<T extends ScreenNode>(nodes: readonly T[], gap = 4): T[] {
+export function separateScreenNodes<T extends ScreenNode>(nodes: readonly T[], gap = 4, pinned: ReadonlySet<number> = new Set()): T[] {
     if (!Number.isFinite(gap) || gap < 0 || nodes.some(node => ![node.x, node.y, node.radius].every(Number.isFinite) || node.radius < 0)) {
         throw new RangeError('Screen node positions, radii and gap must be finite; radii and gap must be nonnegative.');
     }
-    const order = nodes.map((node, index) => ({ node, index }))
-        .sort((a, b) => b.node.radius - a.node.radius || a.node.id - b.node.id || a.index - b.index);
+    const order = nodes.map((node, index) => ({ node, index, pinned: pinned.has(node.id) }))
+        .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.node.radius - a.node.radius || a.node.id - b.node.id || a.index - b.index);
+    const largest = nodes.reduce((max, node) => Math.max(max, node.radius + gap / 2), 0);
     const result = new Array<T>(nodes.length), levels = new Map<number, Level>();
     let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
 
@@ -53,11 +56,11 @@ export function separateScreenNodes<T extends ScreenNode>(nodes: readonly T[], g
         return found;
     };
 
-    const insert = (disk: Disk) => {
+    const insert = (disk: Disk, scale = disk.radius) => {
         left = Math.min(left, disk.x - disk.radius); right = Math.max(right, disk.x + disk.radius);
         top = Math.min(top, disk.y - disk.radius); bottom = Math.max(bottom, disk.y + disk.radius);
         if (disk.radius === 0) return; // Zero-area disks cannot obstruct later zero-area disks.
-        const width = 2 ** Math.ceil(Math.log2(disk.radius * 2));
+        const width = 2 ** Math.ceil(Math.log2(scale * 2));
         let level = levels.get(width);
         if (!level) { level = { width, columns: new Map() }; levels.set(width, level); }
         const x = Math.floor(disk.x / width), y = Math.floor(disk.y / width);
@@ -65,8 +68,9 @@ export function separateScreenNodes<T extends ScreenNode>(nodes: readonly T[], g
         const bucket = column.get(y) ?? []; bucket.push(disk); column.set(y, bucket);
     };
 
-    for (const { node, index } of order) {
+    for (const { node, index, pinned: fixed } of order) {
         const radius = node.radius + gap / 2;
+        if (fixed) { result[index] = node; insert({ x: node.x, y: node.y, radius }, largest); continue; }
         const blocked = collisions(node.x, node.y, radius);
         let placed = { x: node.x, y: node.y };
         if (blocked.length) {

@@ -11,11 +11,11 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import GalaxyPanel from './GalaxyPanel';
 import type { GraphData, GraphEdge, GraphNode } from './types';
 
-const scene = vi.hoisted(() => ({ mounts: 0, unmounts: 0, renders: 0 }));
+const scene = vi.hoisted(() => ({ mounts: 0, unmounts: 0, renders: 0, roots: undefined as ReadonlySet<number> | undefined }));
 vi.mock('./GraphScene', async importOriginal => ({
     ...await importOriginal<typeof import('./GraphScene')>(),
-    GraphScene: ({ data }: { data: GraphData }) => {
-        scene.renders += 1;
+    GraphScene: ({ data, rootIds }: { data: GraphData; rootIds?: ReadonlySet<number> }) => {
+        scene.renders += 1; scene.roots = rootIds;
         useEffect(() => { scene.mounts += 1; return () => { scene.unmounts += 1; }; }, []);
         return <output data-testid="scene-nodes">{data.nodes.length}</output>;
     },
@@ -82,6 +82,9 @@ it('keeps one scene mounted through selection and expansion and fits once per se
     });
     expect(scene.mounts).toBe(1); expect(scene.unmounts).toBe(0);
     expect(seam().fits).toBe(fitsBefore + 1);
+    // The root is marked, sits at the origin and the fit is centred on it.
+    expect([...scene.roots ?? []]).toEqual([1]);
+    expect(seam().lastFit?.center?.map(value => value + 0)).toEqual([0, 0, 0]);
 
     const expand = [...host.querySelectorAll('button')].find(button => button.textContent === 'Expand +1')!;
     await act(async () => expand.click());

@@ -30,8 +30,10 @@ export function projectNodeDisks(nodes: readonly GraphNode[], camera: Camera, wi
 }
 
 /** Display-only offsets: index coordinates, identities and relationships stay
- * intact. Keep depth and let the drawing grow outside the viewport if needed. */
-export function separateProjectedNodes(nodes: GraphNode[], camera: Camera, width: number, height: number): GraphNode[] {
+ * intact. Keep depth and let the drawing grow outside the viewport if needed.
+ * Pinned nodes (a scope root) keep their place; the others move around them. */
+export function separateProjectedNodes(nodes: GraphNode[], camera: Camera, width: number, height: number,
+    pinned: ReadonlySet<number> = new Set()): GraphNode[] {
     if (width <= 0 || height <= 0 || nodes.length < 2) return nodes;
     const view = new Vector3();
     const perspective = camera.projectionMatrix.elements[15] === 0;
@@ -44,7 +46,7 @@ export function separateProjectedNodes(nodes: GraphNode[], camera: Camera, width
     }) : nodes;
     for (let pass = 0; pass < 4; pass++) {
         const disks = projectNodeDisks(positioned, camera, width, height);
-        const separated = separateScreenNodes(disks, 7);
+        const separated = separateScreenNodes(disks, 7, pinned);
         const moved = new Map<number, GraphNode>(), point = new Vector3();
         for (let index = 0; index < separated.length; index++) {
             const disk = separated[index]!, original = disks[index]!;
@@ -57,7 +59,7 @@ export function separateProjectedNodes(nodes: GraphNode[], camera: Camera, width
         // Lateral movement can enlarge perspective silhouettes. Verify against
         // the actual reprojected bodies, not only the input circle estimates.
         const actual = projectNodeDisks(positioned, camera, width, height);
-        if (separateScreenNodes(actual, 5).every((disk, index) => disk === actual[index])) break;
+        if (separateScreenNodes(actual, 5, pinned).every((disk, index) => disk === actual[index])) break;
     }
     return positioned;
 }

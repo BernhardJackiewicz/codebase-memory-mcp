@@ -482,18 +482,38 @@ export interface CameraFit {
  *
  * Der Rand ist derselbe wie bei jeder anderen Rahmung dieser Datei
  * ({@link FRAME_MARGIN}), damit "eingepasst" ueberall dasselbe heisst.
+ *
+ * Mit `center` (Review-Befund G4) steht die Kamera auf diesen Punkt und nicht
+ * auf die Mitte der Wolke: die Wurzel eines Scopes bleibt in der Bildmitte.
+ * Die Ausdehnungen werden dann symmetrisch um ihn gemessen, also ist der
+ * Rahmen so gross, dass auch der fernste Knoten auf der anderen Seite passt.
  */
 export function fitCamera(
     points: readonly Vector3Like[],
     fovDegrees: number,
     aspect: number,
     margin: number = FRAME_MARGIN,
+    center?: Vector3Like,
 ): CameraFit | null {
     const frame = principalFrame(points);
     if (frame.counted === 0) {
         return null;
     }
-    const [width, height, depth] = frame.extents;
+    let [width, height, depth] = frame.extents;
+    const pinned = center !== undefined && [center.x, center.y, center.z].every(Number.isFinite) ? center : undefined;
+    if (pinned !== undefined) {
+        [width, height, depth] = frame.axes.map((axis) => {
+            const offset = dot(pinned, axis);
+            let reach = 0;
+            for (const point of points) {
+                if (Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.z)) {
+                    reach = Math.max(reach, Math.abs(dot(point, axis) - offset));
+                }
+            }
+            return reach * 2;
+        }) as [number, number, number];
+    }
+    const middle = pinned ?? frame.center;
     const planar = frameDistance(
         { centerX: 0, centerY: 0, width, height },
         fovDegrees,
@@ -503,11 +523,11 @@ export function fitCamera(
     const distance = planar + depth / 2;
     const normal = (frame.axes[2] as Vector3Like);
     return {
-        center: frame.center,
+        center: middle,
         eye: {
-            x: frame.center.x + normal.x * distance,
-            y: frame.center.y + normal.y * distance,
-            z: frame.center.z + normal.z * distance,
+            x: middle.x + normal.x * distance,
+            y: middle.y + normal.y * distance,
+            z: middle.z + normal.z * distance,
         },
         up: frame.axes[1] as Vector3Like,
         normal,

@@ -325,6 +325,23 @@ describe('fitCamera', () => {
         expect(fitCamera([{ x: Number.NaN, y: Number.NaN, z: Number.NaN }], FOV, ASPECT)).toBeNull();
     });
 
+    it('steht auf der Wurzel und nicht auf der Mitte, und haelt trotzdem jeden Knoten im Bild', () => {
+        // Eine Wolke, deren Wurzel am Rand liegt: die Mitte des Kastens ist weit weg.
+        const points = cloud(300, [900, 500, 160], 31).map((point) => ({ x: point.x + 380, y: point.y, z: point.z }));
+        const root = { x: 0, y: 0, z: 0 };
+        const fit = fitCamera([...points, root], FOV, ASPECT, FRAME_MARGIN, root)!;
+        expect(fit.center).toEqual(root);
+        const seen = project(root, fit, FOV, ASPECT);
+        expect(Math.abs(seen.x)).toBeLessThan(1e-9);
+        expect(Math.abs(seen.y)).toBeLessThan(1e-9);
+        for (const point of points) {
+            const at = project(point, fit, FOV, ASPECT);
+            expect(at.z).toBeGreaterThan(0);
+            expect(Math.max(Math.abs(at.x), Math.abs(at.y))).toBeLessThanOrEqual(1);
+        }
+        expect(fit.distance).toBeGreaterThan(fitCamera(points, FOV, ASPECT)!.distance);
+    });
+
     it('steht bei einem einzigen Punkt an der Untergrenze und sieht ihn an', () => {
         const fit = fitCamera([{ x: 40, y: -12, z: 5 }], FOV, ASPECT)!;
         expect(fit.distance).toBe(FRAME_MIN_DISTANCE);

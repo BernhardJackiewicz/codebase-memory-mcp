@@ -98,6 +98,28 @@ describe('organic relationship clusters', () => {
         expect(Math.hypot(added.x - neighbor.x, added.y - neighbor.y, added.z - neighbor.z)).toBeGreaterThan(0);
     });
 
+    it('keeps the root at the origin across expansions, for a fresh trace and for a previous picture without it', () => {
+        const origin = { x: 0, y: 0, z: 0 };
+        const rootAt = (layout: { data: GraphData }, id: number) => {
+            const found = layout.data.nodes.find(candidate => candidate.id === id)!;
+            return { x: found.x + 0, y: found.y + 0, z: found.z + 0 };
+        };
+        const first = layoutOrganicClusters({ nodes: [node(0), node(1), node(2)], edges: [edge(0, 1), edge(2, 0)], total_nodes: 3 },
+            { rootIds: new Set([0]) });
+        expect(rootAt(first, 0)).toEqual(origin);
+        const second = layoutOrganicClusters({ nodes: [0, 1, 2, 3, 4].map(id => node(id)), edges: [edge(0, 1), edge(2, 0), edge(1, 3), edge(4, 2)], total_nodes: 5 },
+            { rootIds: new Set([0]), previous: first.data });
+        expect(rootAt(second, 0)).toEqual(origin);
+        expect(positions({ ...second.data, nodes: second.data.nodes.slice(0, 3) })).toEqual(positions(first.data));
+        // A different direction or edge filter starts without previous positions.
+        const fresh = layoutOrganicClusters({ ...second.data, nodes: second.data.nodes.map(candidate => ({ ...candidate, x: 500 })) }, { rootIds: new Set([0]) });
+        expect(rootAt(fresh, 0)).toEqual(origin);
+        const elsewhere = layoutOrganicClusters({ nodes: [node(0), node(1), node(2), node(9)], edges: [edge(0, 1), edge(9, 2)], total_nodes: 4 },
+            { rootIds: new Set([9]), previous: first.data });
+        expect(rootAt(elsewhere, 9)).toEqual(origin);
+        expect(positions({ ...elsewhere.data, nodes: elsewhere.data.nodes.slice(0, 3) })).toEqual(positions(first.data));
+    });
+
     it('uses source folders only as labels, not artificial communities or layout coordinates', () => {
         const source = cliques(), first = layoutOrganicClusters(source);
         const renamed = layoutOrganicClusters({ ...source, nodes: source.nodes.map(candidate => ({ ...candidate, file_path: `other/folder-${candidate.id}/file.ts` })) });

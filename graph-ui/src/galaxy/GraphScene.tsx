@@ -92,12 +92,16 @@
  *     Blickrichtung zurueck oder vor, solange der Leser sie nicht bewegt hat.
  * 16. Neu (Review-Call 2026-10-02): die OrbitControls zoomen zum Mauszeiger
  *     (`zoomToCursor`), nicht mehr in die Bildmitte.
+ * 17. Neu (Review-Call 2026-10-02): die Prop `rootIds`. Die Wurzeln eines
+ *     Scopes bekommen einen Ring und einen Namen, der immer zu sehen ist, und
+ *     die Trennung auf dem Schirm schiebt sie nie weg. Ohne die Prop zeichnet
+ *     die Szene wie vorher.
  */
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import type { JSX, ReactNode, RefObject } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
-import { OrbitControls, OrthographicCamera } from '@react-three/drei';
+import { Html, OrbitControls, OrthographicCamera } from '@react-three/drei';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
@@ -400,6 +404,33 @@ export function FitContainment({
     }, [nodes, enabled, camera, size, controlsRef, moved]);
 
     return null;
+}
+
+/*
+ * Aenderung 17: die Wurzel ist zu finden.
+ *
+ * Nach einem Expand stand die Wurzel als ein Punkt unter neunzig, ohne Namen,
+ * und die Trennung auf dem Schirm hatte sie aus der Mitte geschoben
+ * (Review-Befund G4). Der Ring ist DOM wie der Ring der Hierarchie (Html aus
+ * drei), also kein Neubau der Puffer, und sein Name steht immer da, nicht erst
+ * bei Fokus. Ein Ordner mit hundert Wurzeln bekommt keine hundert Ringe: ueber
+ * der Grenze markiert die Szene nichts und schiebt wie vorher.
+ */
+export const ROOT_MARKER_LIMIT = 12;
+
+function RootMarkers({ nodes }: { nodes: readonly GraphNode[] }): JSX.Element {
+    return (
+        <>
+            {nodes.map((node) => (
+                <Html key={node.id} position={[node.x, node.y, node.z]} zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
+                    <span className="atlas-galaxy-root-marker" data-testid="atlas-galaxy-root-marker" data-qn={node.qualified_name ?? node.name}>
+                        <i aria-hidden="true" />
+                        <b>{node.name}</b>
+                    </span>
+                </Html>
+            ))}
+        </>
+    );
 }
 
 /* Bildratenmesser und Bildratendeckel (W10) */
@@ -780,6 +811,8 @@ interface GraphSceneProps {
     labelDistanceFactor?: number;
     /* Bilder je Sekunde, hoechstens. 0 heisst: kein Deckel. */
     frameCap?: number;
+    /* Die Wurzeln des gewaehlten Scopes (Aenderung 17). */
+    rootIds?: ReadonlySet<number>;
 }
 
 export type { CameraTarget };
@@ -818,6 +851,7 @@ export function GraphScene({
     drawEdges = true,
     labelDistanceFactor = 0,
     frameCap = 0,
+    rootIds,
 }: GraphSceneProps) {
     const [hovered, setHovered] = useState<GraphNode | null>(null);
     const [hoveredShadow, setHoveredShadow] = useState<CoverageShadowNode | null>(null);
@@ -837,6 +871,12 @@ export function GraphScene({
         const nodes = renderedNodes.slice(data.nodes.length) as CoverageShadowNode[];
         return { ...coverageShadow, nodes, nodeById: new Map(nodes.map(node => [node.id, node])) };
     }, [coverageShadow, renderedNodes, sceneNodes, data.nodes.length]);
+    const markedRoots = rootIds !== undefined && rootIds.size > 0 && rootIds.size <= ROOT_MARKER_LIMIT ? rootIds : undefined;
+    const rootNodes = useMemo(() => markedRoots ? renderedCode.filter((node) => markedRoots.has(node.id)) : [],
+        [markedRoots, renderedCode]);
+    // Der Ring traegt den Namen der Wurzel; ein zweiter Name darunter waere doppelt.
+    const labelNodes = useMemo(() => markedRoots ? renderedCode.filter((node) => !markedRoots.has(node.id)) : renderedCode,
+        [markedRoots, renderedCode]);
     const onCodeHover = useCallback((node: GraphNode | null) => {
         setHovered(node);
         if (node) setHoveredShadow(null);
@@ -966,7 +1006,7 @@ export function GraphScene({
             />
             {showLabels && (
                 <NodeLabels
-                    nodes={renderedCode}
+                    nodes={labelNodes}
                     highlightedIds={highlightedIds}
                     worldFontSize={labelWorldFontSize}
                     maxTextWidth={labelMaxTextWidth}
@@ -975,6 +1015,7 @@ export function GraphScene({
                 />
             )}
             {landmarks && <HaloLayer nodes={renderedCode} />}
+            {rootNodes.length > 0 && <RootMarkers nodes={rootNodes} />}
 
             {renderedShadow && renderedShadow.nodes.length > 0 && <group>
                 {drawEdges && <CoverageShadowEdges shadow={renderedShadow} brightness={display.edgeBrightness} />}
@@ -989,7 +1030,8 @@ export function GraphScene({
             <CameraAnimator target={cameraTarget} controlsRef={controlsRef} flat={flat} />
             <FitContainment nodes={renderedNodes} target={cameraTarget} controlsRef={controlsRef} moved={moved}
                 enabled={separateNodes && !flat} />
-            {separateNodes && <ScreenNodeSeparation nodes={sceneNodes} active={active} onChange={receiveSeparation} onBusyChange={onRenderBusyChange} />}
+            {separateNodes && <ScreenNodeSeparation nodes={sceneNodes} active={active} onChange={receiveSeparation} onBusyChange={onRenderBusyChange}
+                pinned={markedRoots} />}
             <FitProbe nodes={renderedNodes} />
             <IdleAutoRotate controlsRef={controlsRef} enabled={!flat && idleRotation && !separateNodes} />
             <FrameRateMeter nodes={sceneNodes.length} edges={data.edges.length + (coverageShadow?.edges.length ?? 0)} cap={frameCap} />
@@ -1075,8 +1117,10 @@ export function computeFrameTarget(box: FrameBox, aspect: number): CameraTarget 
 export function computeFitTarget(
     nodes: readonly { x: number; y: number; z: number }[],
     aspect: number,
+    /* Der Punkt in der Bildmitte, etwa die Wurzel eines Scopes (Review-Befund G4). */
+    center?: { x: number; y: number; z: number },
 ): (CameraTarget & { fit: CameraFit }) | null {
-    const fit = fitCamera(nodes, GRAPH_CAMERA_FOV, aspect);
+    const fit = fitCamera(nodes, GRAPH_CAMERA_FOV, aspect, undefined, center);
     if (fit === null) {
         return null;
     }

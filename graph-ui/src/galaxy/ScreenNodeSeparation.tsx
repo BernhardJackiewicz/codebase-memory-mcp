@@ -5,18 +5,20 @@ import type { GraphNode } from './types';
 import { separateProjectedNodes } from './projected-node-spacing';
 
 /** Arrange a new graph or viewport after its camera fit settles. Once committed,
- * positions stay fixed while zooming, panning or orbiting the same graph. */
-export function ScreenNodeSeparation({ nodes, active, onChange, onBusyChange }: {
+ * positions stay fixed while zooming, panning or orbiting the same graph.
+ * Pinned nodes are never moved, so a marked scope root stays where it is. */
+export function ScreenNodeSeparation({ nodes, active, onChange, onBusyChange, pinned }: {
     nodes: GraphNode[];
     active: boolean;
+    pinned?: ReadonlySet<number>;
     onChange: (source: GraphNode[], positioned: GraphNode[]) => void;
     onBusyChange?: (busy: boolean) => void;
 }) {
     const { camera, size, invalidate } = useThree();
     const state = useRef({ matrix: new Matrix4(), projection: new Matrix4(), source: undefined as GraphNode[] | undefined,
         width: 0, height: 0, changedAt: 0, dirty: true, queued: 0, busy: false });
-    const callbacks = useRef({ onChange, onBusyChange });
-    callbacks.current = { onChange, onBusyChange };
+    const callbacks = useRef({ onChange, onBusyChange, pinned });
+    callbacks.current = { onChange, onBusyChange, pinned };
     useEffect(() => () => {
         cancelAnimationFrame(state.current.queued);
         callbacks.current.onBusyChange?.(false);
@@ -43,7 +45,7 @@ export function ScreenNodeSeparation({ nodes, active, onChange, onBusyChange }: 
         current.queued = requestAnimationFrame(() => {
             current.queued = requestAnimationFrame(() => {
                 current.queued = 0;
-                callbacks.current.onChange(nodes, separateProjectedNodes(nodes, camera, size.width, size.height));
+                callbacks.current.onChange(nodes, separateProjectedNodes(nodes, camera, size.width, size.height, callbacks.current.pinned));
                 current.dirty = false; current.busy = false;
                 callbacks.current.onBusyChange?.(false);
                 invalidate();

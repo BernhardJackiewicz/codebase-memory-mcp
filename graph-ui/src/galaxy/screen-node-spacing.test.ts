@@ -61,4 +61,12 @@ describe('projected node spacing', () => {
         expect(separateScreenNodes(nodes)[0]).toBe(nodes[0]);
         expect(separateScreenNodes([])).toEqual([]);
     });
+
+    it('never moves a pinned root, even when larger disks sit on top of it', () => {
+        const nodes = [{ id: 1, x: 0, y: 0, radius: 3 }, ...Array.from({ length: 30 }, (_, index) =>
+            ({ id: index + 2, x: (index % 5) - 2, y: Math.floor(index / 5) - 3, radius: 6 + index % 9 }))];
+        const result = separateScreenNodes(nodes, 4, new Set([1]));
+        expect(result[0]).toBe(nodes[0]);
+        expect(smallestGap(result)).toBeGreaterThanOrEqual(4 - 1e-8);
+    });
 });

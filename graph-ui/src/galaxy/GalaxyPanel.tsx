@@ -424,6 +424,8 @@ export interface AtlasGalaxySeam {
         depth: number;
         normal: [number, number, number];
         up: [number, number, number];
+        /** Worauf die Kamera sieht: in einem Scope die Wurzel. */
+        center?: [number, number, number];
     } | undefined;
     /** Genau der Satz, der im Kopf steht. */
     headline: string;
@@ -1511,7 +1513,18 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         if (nodes.length === 0) {
             return;
         }
-        const target = computeFitTarget(nodes, aspect);
+        /*
+         * Die Wurzel steht in der Mitte (Review-Befund G4). Gerahmt wird um sie
+         * herum, weit genug, dass auch der fernste Knoten passt; ohne das stand
+         * die Mitte der Wolke im Bild und die Wurzel irgendwo darin.
+         */
+        const roots = fitScope === undefined ? [] : nodes.filter((node) => scope.result?.roots.has(node.id));
+        const center = roots.length === 0 ? undefined : {
+            x: roots.reduce((sum, node) => sum + node.x, 0) / roots.length,
+            y: roots.reduce((sum, node) => sum + node.y, 0) / roots.length,
+            z: roots.reduce((sum, node) => sum + node.z, 0) / roots.length,
+        };
+        const target = computeFitTarget(nodes, aspect, center);
         if (target === null) {
             return;
         }
@@ -1531,8 +1544,11 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
             depth: fit.depth,
             normal: [fit.normal.x, fit.normal.y, fit.normal.z],
             up: [fit.up.x, fit.up.y, fit.up.z],
+            center: [fit.center.x, fit.center.y, fit.center.z],
         };
-    }, [visible, mode, projection, picture, aspect, requestedFit, ownFit, coverageShadow, fitRequest, props.workspaceExpanded]);
+        // `scope.result` folgt dem Bild und loest selbst keine Einpassung aus.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [visible, mode, projection, picture, aspect, requestedFit, ownFit, coverageShadow, fitRequest, props.workspaceExpanded, fitScope]);
 
     const [backgroundCleared, setBackgroundCleared] = useState(false);
     useEffect(() => {
@@ -2421,6 +2437,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                         separateNodes={mode === 'galaxy' && sceneScoped}
                         onRenderBusyChange={setSpacingBusy}
                         idleRotation={mode === 'galaxy' && !sceneScoped}
+                        rootIds={mode === 'galaxy' && sceneScoped ? scope.result?.roots : undefined}
                         data={shown}
                         display={display}
                         highlightedIds={scope.scope && scope.depth > 1 ? null : highlighted}
