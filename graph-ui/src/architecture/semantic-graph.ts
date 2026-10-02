@@ -105,6 +105,8 @@ const symbolId = (node: GraphNode) => `symbol:${identity(node)}`;
  * file. A nested test/ package such as django/test/ is product code.
  */
 const TEST_SOURCE = /(^|\/)(tests|__tests__|specs?)\/|^(src\/)?test\/|(^|\/)(test_[^/]*|tests?\.[^/.]+|[^/]+[._-](test|spec)\.[^/.]+)$/i;
+/** The first path segment of a route label, without its method: '/accounts' for 'GET /accounts/login/'. */
+const routePrefixOf = (label: string) => `/${label.replace(/^[A-Z]+\s+/, '').split('/').filter(Boolean)[0] ?? ''}`;
 const sourceNode = (node: GraphNode) => Boolean(node.file_path && node.file_path !== '{}'
     && !['Project', 'Folder', 'Package', 'Branch', 'Route'].includes(node.label));
 const symbolNode = (node: GraphNode): SemanticNode => ({ id: symbolId(node),
@@ -405,15 +407,16 @@ export function buildSemanticGraph(graph: GraphData, options: SemanticGraphOptio
         }
         hiddenRoutes = hidden.size;
         // Without a filter, routes sharing a first path segment become one counted
-        // group; a filter lists the matching routes one by one again.
+        // group; a filter lists the matching routes one by one again. The root
+        // path '/' shares no segment, so its routes stay single.
         const grouped = new Map<string, string>();
         if (options.groupRoutes && !options.filter?.trim()) {
             const prefixes = new Map<string, SemanticNode[]>();
             for (const node of routeNodes.values()) if (node.kind === 'route') {
-                const prefix = `/${node.label.replace(/^[A-Z]+\s+/, '').split('/').filter(Boolean)[0] ?? ''}`;
+                const prefix = routePrefixOf(node.label);
                 prefixes.set(prefix, [...prefixes.get(prefix) ?? [], node]);
             }
-            for (const [prefix, routes] of prefixes) if (routes.length > 1) {
+            for (const [prefix, routes] of prefixes) if (routes.length > 1 && prefix !== '/') {
                 const id = `route-group:${prefix}`;
                 routeNodes.set(id, { id, kind: 'route', kindLabel: 'Route group', routePrefix: prefix, label: `${prefix} · ${routes.length}`,
                     detail: `${routes.length} routes whose path starts with ${prefix}`, position: [0, 0, 0], count: routes.length,
@@ -539,12 +542,19 @@ export function buildSemanticGraph(graph: GraphData, options: SemanticGraphOptio
     };
     const unfiltered = capped(nodes, edges);
     if (filter) {
+        // A filter that names a route group's prefix selects exactly that group's
+        // routes, by the rule that built the group; any other text is a search.
+        const prefixed = (node: SemanticNode) => node.kind === 'route' && routePrefixOf(node.label).toLowerCase() === filter;
+        const routeGroup = options.view === 'routes' && options.groupRoutes && /^\/[^/\s]+$/.test(filter) && nodes.some(prefixed);
         for (const node of nodes) {
-            if (`${node.label} ${node.filePath ?? node.areaPath ?? ''} ${node.detail} ${node.members.map(member => member.name).join(' ')}`.toLowerCase().includes(filter)) matching.add(node.id);
+            if (routeGroup ? prefixed(node)
+                : `${node.label} ${node.filePath ?? node.areaPath ?? ''} ${node.detail} ${node.members.map(member => member.name).join(' ')}`.toLowerCase().includes(filter)) matching.add(node.id);
         }
+        // Neighbours add relationship context; for a route group they never add routes.
+        const routeIds = new Set(routeGroup ? nodes.filter(node => node.kind === 'route').map(node => node.id) : []);
         const context = new Set(matching);
         for (const edge of edges) {
-            if (matching.has(edge.source) || matching.has(edge.target)) { context.add(edge.source); context.add(edge.target); }
+            if (matching.has(edge.source) || matching.has(edge.target)) for (const id of [edge.source, edge.target]) if (!routeIds.has(id)) context.add(id);
         }
         nodes = nodes.filter(node => context.has(node.id));
         edges = edges.filter(edge => context.has(edge.source) && context.has(edge.target));

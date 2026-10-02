@@ -332,6 +332,38 @@ describe('route identities and service evidence', () => {
         const filtered = buildSemanticGraph(graph, { view: 'routes', groupRoutes: true, filter: '/accounts', routeSnapshot });
         expect(filtered.nodes.filter(item => item.kind === 'route').map(item => item.label)).toEqual(['/accounts/login/', '/accounts/logout/']);
     });
+    it('selects exactly the routes of a group when the filter names its prefix', () => {
+        const at = (id: number, name: string, file_path: string): GraphNode => ({ ...route, id, name, qualified_name: `fixture.route.${id}`, file_path });
+        const routes = [at(400, '/', 'app/urls.py'), at(401, '/', 'shop/urls.py'), at(402, '/', 'blog/urls.py'),
+            at(403, '/admin/', 'django/contrib/admin/sites.py'), at(404, '/admin/y/', 'django/contrib/admin/sites.py'),
+            at(405, '/admin_views/x/', 'tests/urls.py'), at(406, '/login/', 'django/contrib/admin/sites.py'),
+            at(407, '/accounts/login/', 'app/urls.py'), at(408, 'accounts/profile/', 'app/urls.py'), at(409, 'GET /accounts/logout/', 'app/urls.py')];
+        const handler = node(1, 'django/contrib/admin/sites.py', 'login');
+        const graph: GraphData = { nodes: [handler, ...routes], edges: [], total_nodes: 11 };
+        const routeSnapshot = { truncated: false, warnings: [], relationships: [routes[3], routes[4], routes[6]].map(source => ({ source, target: handler, type: 'HANDLES' as const })) };
+        const options = { view: 'routes' as const, groupRoutes: true, routeSnapshot };
+        const grouped = buildSemanticGraph(graph, options);
+        // The root path names no shared segment: its routes stay single instead of becoming a group the filter cannot select.
+        expect(grouped.nodes.filter(item => item.kind === 'route').map(item => item.label).sort())
+            .toEqual(['/', '/', '/', '/accounts · 3', '/admin · 2', '/admin_views/x/', '/login/']);
+        const routesFor = (prefix: string) => {
+            const model = buildSemanticGraph(graph, { ...options, filter: prefix });
+            return model.nodes.filter(item => item.kind === 'route').map(item => item.label).sort();
+        };
+        for (const group of grouped.nodes.filter(item => item.routePrefix)) {
+            expect(routesFor(group.routePrefix!)).toEqual(group.members.map(member => member.name).sort());
+            expect(routesFor(group.routePrefix!)).toHaveLength(group.count);
+        }
+        // Neither '/admin_views' nor a route registered under django/contrib/admin joins the '/admin' group, though its handler area stays as context.
+        const admin = buildSemanticGraph(graph, { ...options, filter: '/admin' });
+        expect(admin.nodes.map(item => item.label).sort()).toEqual(['/admin/', '/admin/y/', 'django']);
+        expect(admin.edges.map(edge => [edge.source, edge.target])).toEqual([['route:Route:fixture.route.403@django/contrib/admin/sites.py', 'handler-area:django'],
+            ['route:Route:fixture.route.404@django/contrib/admin/sites.py', 'handler-area:django']]);
+        // Text that names no group prefix is still a search over labels, paths and details.
+        expect(routesFor('admin')).toEqual(['/admin/', '/admin/y/', '/admin_views/x/', '/login/']);
+        expect(routesFor('/')).toHaveLength(10);
+        expect(buildSemanticGraph(graph, { view: 'routes', filter: '/admin', routeSnapshot }).nodes.some(item => item.label === '/admin_views/x/')).toBe(true);
+    });
     it('keeps routes of a product test package and hides those of test roots', () => {
         const at = (id: number, name: string, file_path: string): GraphNode => ({ ...route, id, name, qualified_name: `fixture.route.${id}`, file_path });
         const graph: GraphData = { nodes: [at(500, '/client/', 'django/test/client.py'), at(501, '/fixture/', 'tests/urls.py'),
