@@ -5,20 +5,27 @@
  * die mitzaehlt, wie oft sie auf- und abgebaut wird; die Beziehungen kommen
  * ueber dieselbe RPC-Strecke wie im Betrieb.
  */
-import { act, useEffect } from 'react';
+import { act, useEffect, useLayoutEffect } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import GalaxyPanel from './GalaxyPanel';
 import type { GraphData, GraphEdge, GraphNode } from './types';
 import type { ScenePath } from './PathLayer';
+import { GALAXY_LEGEND_KEY } from './galaxy-legend';
 
 const scene = vi.hoisted(() => ({ mounts: 0, unmounts: 0, renders: 0, roots: undefined as ReadonlySet<number> | undefined,
-    highlighted: null as Set<number> | null, path: undefined as ScenePath | undefined }));
+    highlighted: null as Set<number> | null, path: undefined as ScenePath | undefined,
+    /** Every committed picture: what the scene draws and what the edge type filter lists beside it. */
+    frames: [] as { nodes: number; types: string[]; traceRows: number }[] }));
 vi.mock('./GraphScene', async importOriginal => ({
     ...await importOriginal<typeof import('./GraphScene')>(),
     GraphScene: ({ data, rootIds, highlightedIds, path }: { data: GraphData; rootIds?: ReadonlySet<number>; highlightedIds: Set<number> | null; path?: ScenePath }) => {
         scene.renders += 1; scene.roots = rootIds; scene.highlighted = highlightedIds; scene.path = path;
         useEffect(() => { scene.mounts += 1; return () => { scene.unmounts += 1; }; }, []);
+        useLayoutEffect(() => {
+            scene.frames.push({ nodes: data.nodes.length, types: [...new Set(data.edges.map(edge => edge.type))].sort(),
+                traceRows: document.querySelectorAll('.atlas-trace-edge-row').length });
+        });
         return <output data-testid="scene-nodes">{data.nodes.length}</output>;
     },
 }));
@@ -61,7 +68,7 @@ function graphFetch() {
 let host: HTMLDivElement, root: Root;
 beforeEach(() => {
     (globalThis as unknown as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
-    scene.mounts = 0; scene.unmounts = 0; scene.renders = 0;
+    scene.mounts = 0; scene.unmounts = 0; scene.renders = 0; scene.frames = [];
     host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); globalThis.__atlasGalaxy = undefined; });
@@ -244,4 +251,24 @@ it('keeps the picked name when a removed layer takes the path target out of the 
     expect(heading()).toBe('Path to n4 · 0 hops');
     expect(panel()?.textContent).toContain('No path to n4 over the loaded relationships');
     expect(panel()?.textContent).not.toContain('#4');
+});
+
+it('shows the whole graph with its hidden edge kinds until the first scoped picture, and lists only current kinds', async () => {
+    await act(async () => root.render(<GalaxyPanel project="sample" visible workspaceExpanded onOpenNode={vi.fn()} fetch={graphFetch()}
+        legendStore={{ getItem: (key: string) => (key === GALAXY_LEGEND_KEY ? 'open' : null), setItem: vi.fn() } as unknown as Storage} />));
+    await settle(() => expect(seam().nodes).toBe(5));
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-testid="atlas-galaxy-legend-swatch"][data-type="CALLS"]')!.click());
+    expect(seam().hiddenKinds).toEqual(['CALLS']);
+    expect(seam().drawnEdges).toBe(1);
+
+    scene.frames = [];
+    await act(async () => { seam().clickNode('sample.n1'); });
+    await settle(() => expect(seam().nodes).toBe(4));
+    const placeholder = scene.frames.filter(frame => frame.nodes === 5);
+    expect(placeholder.length).toBeGreaterThan(0);
+    // The whole graph that stays on screen keeps the reader's choice ...
+    expect(placeholder.every(frame => frame.types.join() === 'IMPORTS')).toBe(true);
+    // ... and the trace filter beside it never offers the whole graph's kinds as the scope's.
+    expect(placeholder.every(frame => frame.traceRows === 0)).toBe(true);
+    expect(scene.frames.at(-1)).toMatchObject({ nodes: 4, types: ['CALLS'], traceRows: 1 });
 });

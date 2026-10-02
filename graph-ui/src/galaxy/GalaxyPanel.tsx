@@ -1139,19 +1139,27 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     const hiddenHere = kinds.filter((kind) => hiddenKinds.has(kind.type)).length;
     const kindNote = edgeKindNote(kinds.length, hiddenHere);
 
-    // Die Szene bekommt in der Galaxie das stehende Bild (siehe `sceneData`).
+    /*
+     * Die Szene bekommt in der Galaxie das stehende Bild (siehe `sceneData`).
+     * Steht dort noch der ganze Graph, gelten auch seine ausgeblendeten
+     * Kantenarten weiter; erst ein Scope-Bild filtert ueber `traceTypes`.
+     * `shown` ist nur das AKTUELLE Bild: Kantenfilter, Zaehler und Auskunft an
+     * den Chat rechnen nie mit dem Platzhalter.
+     */
     const scenePicture = mode === 'hierarchy' ? picture : sceneData;
-    const shown = useMemo(
+    const sceneShown = useMemo(
         () => {
             if (!scenePicture) return undefined;
-            const filtered = props.workspaceExpanded && scope.scope ? scenePicture : withoutEdgeKinds(scenePicture, hiddenKinds);
+            const traced = props.workspaceExpanded && scope.scope && (mode === 'hierarchy' || sceneScoped);
+            const filtered = traced ? scenePicture : withoutEdgeKinds(scenePicture, hiddenKinds);
             const requiredNames = new Set(data?.nodes.filter(node => scope.result?.roots.has(node.id)).map(node => node.qualified_name));
             return props.workspaceExpanded ? limitGraphRender(filtered, nodeBudget, edgeBudget, mode === 'hierarchy'
                 ? new Set(filtered.nodes.filter(node => requiredNames.has(node.qualified_name)).map(node => node.id))
                 : scope.result?.roots) : filtered;
         },
-        [scenePicture, hiddenKinds, props.workspaceExpanded, nodeBudget, edgeBudget, scope.result?.roots, scope.scope, mode, data],
+        [scenePicture, hiddenKinds, props.workspaceExpanded, nodeBudget, edgeBudget, scope.result?.roots, scope.scope, mode, data, sceneScoped],
     );
+    const shown = mode === 'hierarchy' || sceneData === data ? sceneShown : undefined;
 
     const traceKinds = useMemo(() => edgeKinds(shown), [shown]);
     const agentEvidence = useMemo(() => {
@@ -2068,7 +2076,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
             pulsedQn: pulsedNode?.qualified_name ?? pulsedNode?.name ?? '',
             edgeKinds: kinds.map((kind) => ({ ...kind, hidden: hiddenKinds.has(kind.type) })),
             hiddenKinds: [...hiddenKinds].sort(),
-            drawnEdges: shown?.edges.length ?? 0,
+            drawnEdges: sceneShown?.edges.length ?? 0,
             edgeNote,
             hierarchy:
                 projection === undefined
@@ -2522,14 +2530,14 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                         </button>
                     </Hint>
                 )}
-                {shown !== undefined && everVisible.current && (
+                {sceneShown !== undefined && everVisible.current && (
                     <GraphScene
                         active={visible}
                         separateNodes={mode === 'galaxy' && sceneScoped}
                         onRenderBusyChange={setSpacingBusy}
                         idleRotation={mode === 'galaxy' && !sceneScoped}
                         rootIds={mode === 'galaxy' && sceneScoped ? scope.result?.roots : undefined}
-                        data={shown}
+                        data={sceneShown}
                         display={display}
                         highlightedIds={trailIds ?? (scope.scope && scope.depth > 1 ? null : highlighted)}
                         path={trailIds && trailView ? { steps: trailView.steps, active: trailActive, labels: trailView.labels } : undefined}
@@ -2568,7 +2576,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                          */
                         showLabels={
                             mode === 'hierarchy'
-                                ? shown.nodes.length <= HIERARCHY_LABEL_BUDGET
+                                ? sceneShown.nodes.length <= HIERARCHY_LABEL_BUDGET
                                 : trailIds !== undefined || (highlighted !== null && highlighted.size > 0)
                         }
                         /*
