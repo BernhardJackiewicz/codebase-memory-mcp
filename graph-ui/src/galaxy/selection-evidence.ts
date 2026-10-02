@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import type { BrowserChatContext } from '../browser-ai/chat-model';
-import type { GraphNode } from './types';
+import type { GraphEdge, GraphNode } from './types';
 
 export type SelectionEvidenceListener = (context: BrowserChatContext | undefined) => void;
 export interface SelectionEvidence {
@@ -21,6 +21,61 @@ export function graphNodeEvidence(node: GraphNode) {
         filePath: node.file_path, startLine: node.start_line, endLine: node.end_line,
         status: node.status, incomingCalls: node.in_calls, outgoingCalls: node.out_calls,
         documentation: node.documentation, packageName: node.package_name };
+}
+
+/** Related symbols of one edge type and direction, grouped by file. `count` is
+ * complete; `files` lists at most `RELATED_NAMES_PER_GROUP` symbols. */
+export interface RelationshipGroup { type: string; count: number; files: { path: string; symbols: { name: string; kind?: string }[] }[] }
+export interface ScopeRelationships {
+    /** Edges into a selected root from outside the selection. */
+    incoming: RelationshipGroup[];
+    incomingSymbols: number;
+    /** Edges from a selected root to outside the selection. */
+    outgoing: RelationshipGroup[];
+    outgoingSymbols: number;
+    /** Edge counts between selected roots and between symbols further out. */
+    internal: { type: string; count: number }[];
+    beyond: { type: string; count: number }[];
+}
+export const RELATED_NAMES_PER_GROUP = 24;
+
+/** Classify every scope edge by its direction relative to the roots before any
+ * bound applies, so counts stay complete and callers never mix with callees. */
+export function scopeRelationships(nodes: readonly GraphNode[], edges: readonly GraphEdge[], roots: ReadonlySet<number>): ScopeRelationships {
+    const byId = new Map(nodes.map(node => [node.id, node]));
+    const related = { incoming: new Map<string, Set<number>>(), outgoing: new Map<string, Set<number>>() };
+    const counted = { internal: new Map<string, number>(), beyond: new Map<string, number>() };
+    for (const edge of edges) {
+        const from = roots.has(edge.source), to = roots.has(edge.target);
+        if (from !== to) {
+            const side = to ? related.incoming : related.outgoing;
+            const members = side.get(edge.type) ?? new Set<number>();
+            members.add(to ? edge.source : edge.target); side.set(edge.type, members);
+        } else {
+            const side = from ? counted.internal : counted.beyond;
+            side.set(edge.type, (side.get(edge.type) ?? 0) + 1);
+        }
+    }
+    const groups = (side: Map<string, Set<number>>): RelationshipGroup[] => [...side].map(([type, members]) => {
+        const symbols = [...members].map(id => {
+            const node = byId.get(id);
+            return { name: node?.name ?? `#${id}`, kind: node?.label || undefined, path: node?.file_path ?? '' };
+        });
+        const perFile = new Map<string, number>();
+        symbols.forEach(symbol => perFile.set(symbol.path, (perFile.get(symbol.path) ?? 0) + 1));
+        // Files with the most related symbols first, so a bounded list keeps the densest evidence.
+        symbols.sort((left, right) => perFile.get(right.path)! - perFile.get(left.path)!
+            || left.path.localeCompare(right.path) || left.name.localeCompare(right.name));
+        const files = new Map<string, { name: string; kind?: string }[]>();
+        for (const { path, ...symbol } of symbols.slice(0, RELATED_NAMES_PER_GROUP)) files.set(path, [...files.get(path) ?? [], symbol]);
+        return { type, count: members.size, files: [...files].map(([path, listed]) => ({ path, symbols: listed })) };
+    }).sort((left, right) => right.count - left.count || left.type.localeCompare(right.type));
+    const distinct = (side: Map<string, Set<number>>) => new Set([...side.values()].flatMap(members => [...members])).size;
+    const totals = (side: Map<string, number>) => [...side].map(([type, count]) => ({ type, count }))
+        .sort((left, right) => right.count - left.count || left.type.localeCompare(right.type));
+    return { incoming: groups(related.incoming), incomingSymbols: distinct(related.incoming),
+        outgoing: groups(related.outgoing), outgoingSymbols: distinct(related.outgoing),
+        internal: totals(counted.internal), beyond: totals(counted.beyond) };
 }
 
 /** Bound every collection/string and the total snapshot; report each omission.

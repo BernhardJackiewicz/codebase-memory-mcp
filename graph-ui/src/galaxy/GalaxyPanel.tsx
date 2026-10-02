@@ -143,7 +143,7 @@ import { useGraphScope } from './use-graph-scope';
 import { limitGraphRender, scopedHierarchy } from './graph-scope';
 import './graph-exploration.css';
 import { layoutNodeForSelection } from './selected-node';
-import { graphNodeEvidence, useSelectionEvidence, type SelectionEvidenceListener } from './selection-evidence';
+import { graphNodeEvidence, scopeRelationships, useSelectionEvidence, type SelectionEvidenceListener } from './selection-evidence';
 import { buildCoverageShadow } from './coverage-shadow';
 import type { CoverageShadowNode } from './coverage-shadow';
 import {
@@ -1137,23 +1137,21 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     const agentEvidence = useMemo(() => {
         if (!scope.scope) return undefined;
         const selected = scope.result?.data;
-        const roots = selected?.nodes.filter(node => scope.result?.roots.has(node.id)) ?? [];
-        const byId = new Map(selected?.nodes.map(node => [node.id, node]));
+        const rootIds = scope.result?.roots ?? new Set<number>();
+        const roots = selected?.nodes.filter(node => rootIds.has(node.id)) ?? [];
         const edges = selected?.edges ?? [];
-        const typeCounts: Record<string, number> = {};
-        edges.forEach(edge => { typeCounts[edge.type] = (typeCounts[edge.type] ?? 0) + 1; });
+        // Every scope edge is classified against the roots first; only the names are
+        // bounded afterwards. Render budgets are a drawing concern and stay out of it.
         return { project, view: 'galaxy', source: 'query_graph scoped indexed relationships', label: scope.scope.name,
-            selected: { scope: scope.scope, rootCount: roots.length, roots: roots.slice(0, 24).map(graphNodeEvidence), omittedRoots: Math.max(0, roots.length - 24) },
+            selected: { scope: scope.scope, rootCount: roots.length, roots: roots.slice(0, 8).map(graphNodeEvidence), omittedRoots: Math.max(0, roots.length - 8) },
             scope: { depth: scope.depth, direction: props.workspaceExpanded ? scope.direction : 'both', edgeTypes: traceTypes ?? 'all',
-                nodes: selected?.nodes.length ?? 0, edges: edges.length, renderedNodes: shown?.nodes.length ?? 0, renderedEdges: shown?.edges.length ?? 0 },
-            relationships: { typeCounts, items: edges.slice(0, 24).map(edge => ({ id: edge.id, type: edge.type, line: edge.line,
-                strategy: edge.strategy, confidence: edge.confidence, source: byId.get(edge.source) ? graphNodeEvidence(byId.get(edge.source)!) : { id: edge.source },
-                target: byId.get(edge.target) ? graphNodeEvidence(byId.get(edge.target)!) : { id: edge.target } })), omitted: Math.max(0, edges.length - 24) },
+                nodes: selected?.nodes.length ?? 0, edges: edges.length },
+            relationships: scopeRelationships(selected?.nodes ?? [], edges, rootIds),
             limitations: { state: scope.complete ? 'complete-indexed-scope' : scope.loading ? 'loading-partial-preview' : 'partial', error: scope.error,
                 exhausted: scope.result?.exhausted, indexCoverage: 'unavailable',
-                interpretation: 'Static indexed relationships, not runtime activity. Scope completeness is relative to the indexed graph and selected depth/types. Omitted snapshot examples do not mean absent relationships.' },
+                interpretation: 'Static indexed relationships, not runtime activity. Scope completeness is relative to the indexed graph and selected depth/types.' },
         };
-    }, [project, scope.scope, scope.result, scope.depth, scope.direction, scope.complete, scope.loading, scope.error, traceTypes, props.workspaceExpanded, shown]);
+    }, [project, scope.scope, scope.result, scope.depth, scope.direction, scope.complete, scope.loading, scope.error, traceTypes, props.workspaceExpanded]);
     useSelectionEvidence(props.onSelectionEvidence, agentEvidence, visible && props.workspaceExpanded === true);
     const toggleKind = useCallback((type: string) => {
         if (props.workspaceExpanded && scope.scope) {

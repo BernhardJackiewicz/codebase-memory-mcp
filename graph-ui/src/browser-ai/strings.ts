@@ -30,3 +30,32 @@ export const browserAiText = {
     progress: (loaded: number, total: number) => `${(loaded / 1_000_000).toFixed(1)} / ${(total / 1_000_000).toFixed(1)} MB`,
     location: (path: string, line: number) => `${path}:${line}`,
 };
+
+/** Words for graph facts in the prompt (always English) and for the listed
+ * relationship answer, which follows the language of the question. */
+const englishRelationshipWords = {
+    from: 'from', to: 'to',
+    more: (count: number) => `+${count} more`,
+    hops: (depth: number) => depth === 0 ? 'the selection only' : depth === 1 ? '1 hop' : `${depth} hops`,
+    both: 'in both directions', inbound: 'incoming only', outbound: 'outgoing only',
+    allTypes: 'all relationship types',
+    onlyTypes: (types: readonly string[]) => types.length ? `only ${types.join(', ')}` : 'no relationship types',
+    size: (nodes: number, edges: number) => `${nodes} ${nodes === 1 ? 'symbol' : 'symbols'} and ${edges} ${edges === 1 ? 'relationship' : 'relationships'}`,
+    complete: 'complete for the indexed graph',
+    loading: 'still loading, so this is a partial preview',
+    partial: (error?: string) => `incomplete${error ? `: ${error}` : ''}`,
+    exhausted: 'nothing further beyond this depth',
+    scope: (shape: string, size: string, state: string) => `Scope: ${shape}; ${size}; ${state}.`,
+    incoming: (total: number, symbols: number) => `Incoming relationships: ${total} from ${symbols} ${symbols === 1 ? 'symbol' : 'symbols'}.`,
+    outgoing: (total: number, symbols: number) => `Outgoing relationships: ${total} to ${symbols} ${symbols === 1 ? 'symbol' : 'symbols'}.`,
+    noIncoming: 'Incoming relationships: none in this scope.',
+    noOutgoing: 'Outgoing relationships: none in this scope.',
+    incomingNotLoaded: 'Incoming relationships: not loaded; the scope does not follow incoming edges.',
+    outgoingNotLoaded: 'Outgoing relationships: not loaded; the scope does not follow outgoing edges.',
+    moreTypes: (count: number) => `+${count} more relationship ${count === 1 ? 'type' : 'types'}`,
+    internal: (summary: string) => `Between the selected symbols: ${summary}.`,
+    beyond: (summary: string) => `Further out in the scope: ${summary}.`,
+};
+export type RelationshipWords = typeof englishRelationshipWords;
+
+export const relationshipWords: { en: RelationshipWords } = { en: englishRelationshipWords };

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BrowserChatContext, BrowserChatReaderContext } from './chat-model';
 import { prepareExplanationContext } from './explanation-context';
+import { JSONB_AGG_CALLERS, jsonbAggEvidence, jsonbAggScope } from './galaxy-evidence.fixture';
 
 function reader(text: string, kind: 'file' | 'selection' = 'file'): BrowserChatReaderContext {
     const lines = text.split('\n');
@@ -136,6 +137,63 @@ describe('bounded explanation evidence', () => {
             expect(outputText(prepared)).toContain('Current');
             expect(prepared.limitations.join(' ')).toMatch(/source unavailable/i);
         }
+    });
+
+    it('describes a Galaxy selection as readable facts with every caller, grouped by direction and edge type', () => {
+        const prepared = prepareExplanationContext(undefined, jsonbAggEvidence(), 3200);
+        const text = outputText(prepared);
+        expect(text).toContain('Selected: JSONBAgg (Class) in django/contrib/postgres/aggregates/general.py:50-54.');
+        expect(text).toContain('Scope: 1 hop in both directions, all relationship types; 15 symbols and 25 relationships; complete for the indexed graph.');
+        expect(text).toContain('Incoming relationships: 23 from 12 symbols.');
+        const line = (type: string) => text.split('\n').find(item => item.startsWith(`- ${type} `)) ?? '';
+        for (const type of ['CALLS', 'TESTS']) {
+            expect(line(type)).toMatch(new RegExp(`^- ${type} from 11: `));
+            for (const name of JSONB_AGG_CALLERS) expect(line(type)).toContain(name);
+            expect(line(type)).toContain('(Method, tests/postgres_tests/test_aggregates.py)');
+        }
+        expect(line('DEFINES')).toBe('- DEFINES from 1: general.py (File, django/contrib/postgres/aggregates/general.py)');
+        expect(text).toContain('Outgoing relationships: 2 to 2 symbols.');
+        expect(line('INHERITS')).toMatch(/^- INHERITS to 2: OrderableAggMixin .*Aggregate/);
+        // Callers never appear under the outgoing side.
+        expect(text.slice(text.indexOf('Outgoing relationships'))).not.toContain('test_jsonb_agg');
+        expect(prepared.capacity).toBeUndefined();
+    });
+
+    it('keeps internal snapshot keys, provenance fields and omission paths out of the Galaxy prompt', () => {
+        const text = outputText(prepareExplanationContext(undefined, jsonbAggEvidence()));
+        expect(text).not.toMatch(/Snapshot|renderedNodes|renderedEdges|generation|rootCount|omittedRoots|qualifiedName|query_graph|\broots\b|\bview\b|\$\.|omissions|typeCounts|\.items\[/);
+        expect(text).not.toContain('django-demo.');
+    });
+
+    it('lists names until the budget ends, then says how many more there are and reports the capacity', () => {
+        const prepared = prepareExplanationContext(undefined, jsonbAggEvidence(), 1900);
+        const text = outputText(prepared);
+        expect(text).toContain('Incoming relationships: 23 from 12 symbols.');
+        const calls = text.split('\n').find(item => item.startsWith('- CALLS from 11: '))!;
+        const listed = JSONB_AGG_CALLERS.filter(name => calls.includes(`${name},`) || calls.includes(`${name} (`)).length;
+        expect(listed).toBeGreaterThan(0);
+        expect(calls).toMatch(new RegExp(`; \\+${11 - listed} more$`));
+        expect(prepared.capacity).toMatchObject({ nodes: 15, edges: 25 });
+        expect(prepared.capacity!.shown).toBeLessThan(25);
+        expect(prepared.characterCount).toBeLessThanOrEqual(1900);
+    });
+
+    it('classifies before bounding: a large caller set keeps its complete count beyond the named sample', () => {
+        const scope = jsonbAggScope();
+        const many = Array.from({ length: 60 }, (_, index) => ({ source: 1000 + index, target: 32360, type: 'CALLS' }));
+        const context = jsonbAggEvidence({ edges: [...scope.edges, ...many] });
+        const text = outputText(prepareExplanationContext(undefined, context, 6000));
+        // The extra callers are not in the node list, so they are named by id; the count stays exact.
+        expect(text).toContain('- CALLS from 71: ');
+        expect(text).toMatch(/- CALLS from 71: .*; \+47 more/);
+    });
+
+    it('says when a side was not loaded instead of reporting no callers', () => {
+        const text = outputText(prepareExplanationContext(undefined, jsonbAggEvidence({ direction: 'outbound' })));
+        expect(text).toContain('Incoming relationships: not loaded; the scope does not follow incoming edges.');
+        expect(text).toContain('outgoing only');
+        expect(outputText(prepareExplanationContext(undefined, jsonbAggEvidence({ state: 'loading-partial-preview' }))))
+            .toContain('still loading, so this is a partial preview');
     });
 
     it('bounds hostile giant graph data, source labels and very small requested budgets', () => {
