@@ -961,6 +961,25 @@ describe('graph answers and answer limits', () => {
         expect(capacityNote()).toBeUndefined();
     });
 
+    it('gives a manual question more evidence when the input limit is raised', async () => {
+        const { props, runtime } = fixture();
+        await render({ ...props, proactiveSelection: longCallers() }); await click('Download & load');
+        await type('Explain this class'); await click('Send ↑');
+        const shown = (note?: string) => Number(/showing (\d+)$/.exec(note ?? '')?.[1] ?? 24);
+        const before = shown(capacityNote());
+        await models();
+        const input = document.querySelector<HTMLInputElement>('#cbm-chat-input-tokens')!;
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '6144');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+        await type('Explain this class'); await click('Send ↑');
+        expect(runtime.chat.mock.calls[1][0].at(-1)!.content.length).toBeGreaterThan(runtime.chat.mock.calls[0][0].at(-1)!.content.length);
+        expect(before).toBeLessThan(24);
+        expect(capacityNote()).toBeUndefined();
+    });
+
     it('releases the loaded worker when another tab chooses another model', async () => {
         const { props, runtime } = fixture(); await render(props); await click('Download & load');
         const raw = JSON.stringify({ version: 1, preferences: { modelId: BROWSER_MODELS[1].id, automatic: true, limits: {} } });
@@ -1068,6 +1087,10 @@ describe('agent configuration limits', () => {
         expect(document.querySelector('.cbm-chat-token-limits legend')?.textContent).toBe(`Token limits for ${first.displayName}`);
         expect(field('cbm-chat-input-tokens')).toMatchObject({ value: '2048', min: '512', max: String(first.contextTokens - first.maxOutputTokens) });
         expect(field('cbm-chat-output-tokens')).toMatchObject({ value: String(first.maxOutputTokens), min: '32', max: String(first.maxOutputTokens) });
+        // Every default and every suggested value is a valid step, so the arrows reach them.
+        expect(field('cbm-chat-input-tokens')?.step).toBe('64');
+        expect(field('cbm-chat-output-tokens')?.step).toBe('32');
+        expect(field('cbm-chat-output-tokens')?.validity.stepMismatch).toBe(false);
         await setLimit('cbm-chat-output-tokens', 99_999);
         expect(field('cbm-chat-output-tokens')?.value).toBe(String(first.maxOutputTokens));
         await setLimit('cbm-chat-output-tokens', 128);

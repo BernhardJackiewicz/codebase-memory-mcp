@@ -84,7 +84,7 @@ function PacketSource({ packet, citation }: { packet: PreparedExplanationContext
 }
 
 /** A typed limit applies on blur or Enter, clamped into the model policy. */
-function TokenLimitField({ id, label, value, min, max, onCommit }: { id: string; label: string; value: number; min: number; max: number; onCommit: (value: number) => void }): JSX.Element {
+function TokenLimitField({ id, label, value, min, max, step, onCommit }: { id: string; label: string; value: number; min: number; max: number; step: number; onCommit: (value: number) => void }): JSX.Element {
     const [text, setText] = useState(String(value));
     useEffect(() => { setText(String(value)); }, [value]);
     const commit = (): void => {
@@ -95,7 +95,7 @@ function TokenLimitField({ id, label, value, min, max, onCommit }: { id: string;
     };
     return <div className="cbm-chat-token-limit">
         <label htmlFor={id}>{label}</label>
-        <input id={id} type="number" inputMode="numeric" min={min} max={max} step={64} value={text} aria-describedby={`${id}-range`}
+        <input id={id} type="number" inputMode="numeric" min={min} max={max} step={step} value={text} aria-describedby={`${id}-range`}
             onChange={event => setText(event.target.value)} onBlur={commit} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commit(); } }} />
         <small id={`${id}-range`}>{browserChatText.limitRange(min, max)}</small>
     </div>;
@@ -128,6 +128,9 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     // Short automatic explanations never exceed the configured limits either.
     const autoOutput = Math.min(AUTO_OUTPUT_TOKENS, limits.outputTokens);
     const autoInput = Math.min(AUTO_INPUT_TOKENS, limits.inputTokens, model.contextTokens - autoOutput);
+    // Evidence for a manual question grows with the input limit: about 1.5 characters per
+    // token leave room for the question, history and instructions (2048 tokens: 3200).
+    const chatEvidence = Math.max(800, Math.floor(limits.inputTokens * 25 / 16));
     const [phase, setPhase] = useState<Phase>('off');
     const { draft, setDraft, turns, setTurns, ready: historyReady, historyNotice, clearHistory } = useChatHistory<ChatTurn>(historyKey);
     const [error, setError] = useState<string>();
@@ -383,7 +386,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const listed = !retry && !source ? relationshipAnswer(prompt, [...currentGraph, ...extra]) : undefined;
         if (listed) {
             setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, context: extra,
-                evidence: prepareExplanationContext(undefined, listed.context, 3200), modelId: model.id, request: [],
+                evidence: prepareExplanationContext(undefined, listed.context, chatEvidence), modelId: model.id, request: [],
                 answer: listed.markdown, status: 'complete', answeredFrom: 'graph' }]);
             consume();
             return;
@@ -391,7 +394,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const earlier = ask ? turns.filter(item => item.id !== retry.id) : turns;
         let history: ChatTurn[] = earlier;
         const makeRequest = () => buildChatMessages(history, prompt, source, extra, reader, currentGraph, packet ? formatExplanationEvidence(packet) : undefined);
-        if (!retry && ((reader?.source?.text.length ?? 0) > 5000 || currentGraph.length)) packet = prepareExplanationContext(reader, currentGraph, 3200);
+        if (!retry && ((reader?.source?.text.length ?? 0) > 5000 || currentGraph.length)) packet = prepareExplanationContext(reader, currentGraph, chatEvidence);
         let request = retry && !ask ? retry.request.map(message => ({ ...message })) : makeRequest();
         const queued = { cancelled: false }; manualRequest.current = queued;
         const waitingEpoch = epoch.current;
@@ -419,7 +422,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 request = makeRequest(); count = await currentRuntime.countTokens(request);
                 if (epoch.current !== ticket || stopRequested.current) return;
             }
-            for (let budget = packet ? 1900 : 3200; !retry && count > limit && (reader?.source || currentGraph.length) && budget >= 300; budget = Math.floor(budget * .6)) {
+            for (let budget = packet ? Math.floor(chatEvidence * .6) : chatEvidence; !retry && count > limit && (reader?.source || currentGraph.length) && budget >= 300; budget = Math.floor(budget * .6)) {
                 packet = prepareExplanationContext(reader, currentGraph, budget);
                 request = makeRequest(); count = await currentRuntime.countTokens(request);
                 if (epoch.current !== ticket || stopRequested.current) return;
@@ -494,9 +497,9 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             {model.compatibilityNote && <p>{model.compatibilityNote}</p>}
             <fieldset className="cbm-chat-token-limits">
                 <legend>{browserChatText.tokenLimits(model.displayName)}</legend>
-                <TokenLimitField id="cbm-chat-input-tokens" label={browserChatText.inputLimit} value={limits.inputTokens} {...tokenLimitBounds(model, limits.outputTokens).input}
+                <TokenLimitField id="cbm-chat-input-tokens" label={browserChatText.inputLimit} value={limits.inputTokens} {...tokenLimitBounds(model, limits.outputTokens).input} step={64}
                     onCommit={inputTokens => setPreferences(current => ({ limits: { ...current.limits, [model.id]: clampTokenLimits(model, limits, { inputTokens }) } }))} />
-                <TokenLimitField id="cbm-chat-output-tokens" label={browserChatText.outputLimit} value={limits.outputTokens} {...tokenLimitBounds(model, limits.outputTokens).output}
+                <TokenLimitField id="cbm-chat-output-tokens" label={browserChatText.outputLimit} value={limits.outputTokens} {...tokenLimitBounds(model, limits.outputTokens).output} step={32}
                     onCommit={outputTokens => setPreferences(current => ({ limits: { ...current.limits, [model.id]: clampTokenLimits(model, limits, { outputTokens }) } }))} />
                 <p>{browserChatText.limitsNote(autoInput, autoOutput)}</p>
             </fieldset>
