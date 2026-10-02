@@ -340,7 +340,7 @@ export function ArchitectureScene({ model: graphModel, selectedId, selectedEdgeI
             <OrbitControls ref={controls} makeDefault enabled={active} enableRotate={!planar} enableDamping={false}
                 mouseButtons={{ LEFT: planar ? MOUSE.PAN : MOUSE.ROTATE, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN }}
                 touches={{ ONE: planar ? TOUCH.PAN : TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }}
-                minZoom={0.15} maxZoom={60} rotateSpeed={0.5} zoomSpeed={0.8} maxPolarAngle={Math.PI / 2.05} />
+                minZoom={0.15} maxZoom={60} rotateSpeed={0.5} zoomSpeed={0.8} maxPolarAngle={Math.PI / 2.05} zoomToCursor />
             <FitArchitecture model={model} planar={planar} resetKey={resetKey} controls={controls} active={active} />
             {(adaptiveLabels || model.view === 'hotspots') && <HotspotLabels model={model} priorityId={selectedId ?? hoveredId} onVisible={setVisibleHotspotLabels} />}
         </Canvas>
