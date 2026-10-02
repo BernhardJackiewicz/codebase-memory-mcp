@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { BrowserChatContext, BrowserChatReaderContext } from './chat-model';
 import { prepareExplanationContext } from './explanation-context';
-import { JSONB_AGG_CALLERS, jsonbAggEvidence, jsonbAggScope } from './galaxy-evidence.fixture';
+import { selectionEvidenceContext } from '../galaxy/selection-evidence';
+import { JSONB_AGG_CALLERS, jsonbAggEvidence, jsonbAggScope, largeFolderScope } from './galaxy-evidence.fixture';
 
 function reader(text: string, kind: 'file' | 'selection' = 'file'): BrowserChatReaderContext {
     const lines = text.split('\n');
@@ -186,6 +187,18 @@ describe('bounded explanation evidence', () => {
         // The extra callers are not in the node list, so they are named by id; the count stays exact.
         expect(text).toContain('- CALLS from 71: ');
         expect(text).toMatch(/- CALLS from 71: .*; \+47 more/);
+    });
+
+    it('keeps a large documented scope readable and says when its snapshot cut relationships', () => {
+        const whole = outputText(prepareExplanationContext(undefined, selectionEvidenceContext(largeFolderScope()), 6000));
+        expect(whole).toContain('Incoming relationships: 150 from 150 symbols.');
+        expect(whole).toContain('Outgoing relationships: 150 to 150 symbols.');
+        expect(whole).not.toMatch(/Snapshot\.|Selected\.|Relationships\.|incompl/);
+        const evidence = largeFolderScope();
+        const cut = selectionEvidenceContext({ ...evidence, selected: { ...evidence.selected as object, notes: Array.from({ length: 13 }, () => 'n'.repeat(1200)) } });
+        const text = outputText(prepareExplanationContext(undefined, cut, 6000));
+        expect(text).toContain('counts and names can be incomplete');
+        expect(text).not.toMatch(/Snapshot\.view|to 0 symbols|from 0 symbols/);
     });
 
     it('says when a side was not loaded instead of reporting no callers', () => {

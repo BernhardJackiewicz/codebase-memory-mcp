@@ -910,18 +910,37 @@ describe('graph answers and answer limits', () => {
         expect(request[2].content).toContain('test_values_list');
     });
 
+    // 40 callers with long names in their own files: the snapshot names 24, a default prompt fewer.
+    const longCallers = () => {
+        const callers = Array.from({ length: 40 }, (_, index) => ({ id: 2000 + index, name: `caller_with_a_long_descriptive_name_number_${index}`, label: 'Function',
+            file_path: `tests/postgres_tests/callers/test_module_number_${index}.py`, x: 0, y: 0, z: 0, size: 1, color: '#999' }));
+        return jsonbAggEvidence({ edges: callers.map(caller => ({ source: caller.id, target: 32360, type: 'CALLS' })), nodes: callers });
+    };
+    const capacityNote = () => [...[...container.querySelectorAll('.cbm-chat-turn')].at(-1)?.querySelectorAll('.cbm-chat-answer-note') ?? []]
+        .map(item => item.textContent ?? '').find(note => note.includes('too large'));
+
     it('marks an answer cut at the output token limit and shows the capacity of an oversized scope', async () => {
         const { props, runtime } = fixture();
         runtime.chat.mockImplementationOnce(async (_messages, _onToken, options) => {
             options?.onComplete?.({ stopReason: 'length' }); return 'A long list that';
         });
-        const many = Array.from({ length: 40 }, (_, index) => ({ source: 2000 + index, target: 32360, type: 'CALLS' }));
-        await render({ ...props, proactiveSelection: jsonbAggEvidence({ edges: many }) }); await click('Download & load');
+        await render({ ...props, proactiveSelection: longCallers() }); await click('Download & load');
         await type('Explain this class'); await click('Send ↑');
         const notes = [...container.querySelectorAll('.cbm-chat-answer-note')].map(item => item.textContent);
         expect(notes).toContain('Shortened (token limit)');
-        expect(notes.some(note => /^15 nodes \/ 40 edges: too large for the local Qwen2\.5 Coder 0\.5B model; showing 24$/.test(note ?? ''))).toBe(true);
+        const capacity = notes.map(note => /^55 nodes \/ 40 edges: too large for the local Qwen2\.5 Coder 0\.5B model; showing (\d+)$/.exec(note ?? '')).find(Boolean);
+        expect(Number(capacity?.[1])).toBeGreaterThan(0);
+        expect(Number(capacity?.[1])).toBeLessThan(24);
+        expect(runtime.chat.mock.calls[0][0].at(-1)!.content).toMatch(/\+\d+ more/);
+    });
+
+    it('does not blame the model when only the snapshot bounds the names', async () => {
+        const { props, runtime } = fixture();
+        const many = Array.from({ length: 40 }, (_, index) => ({ source: 2000 + index, target: 32360, type: 'CALLS' }));
+        await render({ ...props, proactiveSelection: jsonbAggEvidence({ edges: many }) }); await click('Download & load');
+        await type('Explain this class'); await click('Send ↑');
         expect(runtime.chat.mock.calls[0][0].at(-1)!.content).toContain('+16 more');
+        expect(capacityNote()).toBeUndefined();
     });
 
     it('leaves the oldest history out when the input limit is exceeded and says so', async () => {

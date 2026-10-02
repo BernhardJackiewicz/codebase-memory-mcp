@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { JSONB_AGG_CALLERS, jsonbAggEvidence } from './galaxy-evidence.fixture';
+import { selectionEvidenceContext } from '../galaxy/selection-evidence';
+import { JSONB_AGG_CALLERS, jsonbAggEvidence, largeFolderScope } from './galaxy-evidence.fixture';
 import { relationshipAnswer, relationshipQuestion } from './relationship-answer';
 
 const line = (markdown: string, type: string) => markdown.split('\n').find(item => item.startsWith(`- **${type}** `)) ?? '';
@@ -72,6 +73,22 @@ describe('listed relationship answers', () => {
         const many = Array.from({ length: 40 }, (_, index) => ({ source: 2000 + index, target: 32360, type: 'CALLS' }));
         const answer = relationshipAnswer('Who calls JSONBAgg?', [jsonbAggEvidence({ edges: many })])!;
         expect(line(answer.markdown, 'CALLS')).toMatch(/^- \*\*CALLS\*\* from 40: .*; \+16 more$/);
+    });
+
+    it('answers for a large documented scope with complete counts and every edge type', () => {
+        const markdown = relationshipAnswer('What does postgres call?', [selectionEvidenceContext(largeFolderScope())])!.markdown;
+        expect(markdown).toContain('Outgoing relationships: 150 to 150 symbols.');
+        for (const type of ['CALLS', 'TESTS', 'USAGE', 'IMPORTS', 'DEFINES_METHOD']) expect(line(markdown, type)).toMatch(/^- \*\*\w+\*\* to 30: .*; \+\d+ more$/);
+        expect(markdown).toContain('complete for the indexed graph.');
+    });
+
+    it('says so when the snapshot cut relationships instead of claiming a complete list', () => {
+        const evidence = largeFolderScope();
+        const cut = selectionEvidenceContext({ ...evidence, selected: { ...evidence.selected as object, notes: Array.from({ length: 13 }, () => 'n'.repeat(1200)) } });
+        const markdown = relationshipAnswer('What does postgres call?', [cut])!.markdown;
+        expect(markdown).not.toMatch(/to 0 symbols/);
+        expect(markdown).toContain('the snapshot left part of its relationships out, so counts and names can be incomplete');
+        expect(markdown).toMatch(/Outgoing relationships: left out of this snapshot\.|Outgoing relationships: \d+\./);
     });
 
     it('leaves questions about another symbol, attached non-Galaxy evidence and other questions to the model', () => {

@@ -19,7 +19,10 @@ export interface GalaxyEvidence {
     state: 'complete' | 'loading' | 'partial';
     error?: string;
     exhausted: boolean;
-    relationships: ScopeRelationships;
+    /** Distinct related symbols per side; undefined when the snapshot lost the total. */
+    relationships: Omit<ScopeRelationships, 'incomingSymbols' | 'outgoingSymbols'> & { incomingSymbols?: number; outgoingSymbols?: number };
+    /** The snapshot budget cut relationship data, so counts and names can be incomplete. */
+    truncated: boolean;
 }
 
 const record = (value: unknown): Record<string, unknown> | undefined => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -51,13 +54,17 @@ export function readGalaxyEvidence(snapshot: string): GalaxyEvidence | undefined
     let parsed: Record<string, unknown> | undefined;
     try { parsed = record(JSON.parse(snapshot)); } catch { return undefined; }
     const evidence = record(parsed?.evidence);
-    const relationships = record(evidence?.relationships);
-    if (evidence?.kind !== 'current-selection-evidence' || evidence.view !== 'galaxy' || !relationships
-        || !Array.isArray(relationships.incoming) || !Array.isArray(relationships.outgoing)) return undefined;
-    const selected = record(evidence.selected), scope = record(evidence.scope), limits = record(evidence.limitations);
+    const selected = record(evidence?.selected), scope = record(evidence?.scope), limits = record(evidence?.limitations);
     const identity = record(selected?.scope);
-    const direction = scope?.direction === 'inbound' || scope?.direction === 'outbound' ? scope.direction : 'both';
-    const edgeTypes = Array.isArray(scope?.edgeTypes) ? scope.edgeTypes.flatMap(type => text(type, 60) ?? []) : 'all';
+    // A traced Galaxy scope, recognised by its identity and depth even when its relationships were cut.
+    if (evidence?.kind !== 'current-selection-evidence' || evidence.view !== 'galaxy' || typeof identity?.kind !== 'string'
+        || typeof scope?.depth !== 'number') return undefined;
+    const relationships = record(evidence.relationships);
+    const truncated = !relationships || !Array.isArray(relationships.incoming) || !Array.isArray(relationships.outgoing)
+        || records(parsed?.omissions).some(item => typeof item.path === 'string' && item.path.startsWith('$.relationships'));
+    const total = (value: unknown) => typeof value === 'number' ? count(value) : undefined;
+    const direction = scope.direction === 'inbound' || scope.direction === 'outbound' ? scope.direction : 'both';
+    const edgeTypes = Array.isArray(scope.edgeTypes) ? scope.edgeTypes.flatMap(type => text(type, 60) ?? []) : 'all';
     const state = limits?.state === 'complete-indexed-scope' ? 'complete' : limits?.state === 'loading-partial-preview' ? 'loading' : 'partial';
     const roots = records(selected?.roots).flatMap(root => {
         const name = text(root.name, 120);
@@ -65,14 +72,15 @@ export function readGalaxyEvidence(snapshot: string): GalaxyEvidence | undefined
             endLine: line(root.endLine), documentation: text(root.documentation, 300) }] : [];
     });
     return {
-        project: text(evidence.project, 120) ?? '', label: text(identity?.name, 120) ?? roots[0]?.name ?? 'selection',
-        identity: identity ?? null, selectionKind: text(identity?.kind, 20) ?? 'node',
+        project: text(evidence.project, 120) ?? '', label: text(identity.name, 120) ?? roots[0]?.name ?? 'selection',
+        identity, selectionKind: text(identity.kind, 20) ?? 'node',
         roots, rootCount: Math.max(count(selected?.rootCount), roots.length),
-        depth: count(scope?.depth), direction, edgeTypes, nodes: count(scope?.nodes), edges: count(scope?.edges),
+        depth: count(scope.depth), direction, edgeTypes, nodes: count(scope.nodes), edges: count(scope.edges),
         state, error: text(limits?.error, 200), exhausted: limits?.exhausted === true,
-        relationships: { incoming: groups(relationships.incoming), incomingSymbols: count(relationships.incomingSymbols),
-            outgoing: groups(relationships.outgoing), outgoingSymbols: count(relationships.outgoingSymbols),
-            internal: totals(relationships.internal), beyond: totals(relationships.beyond) },
+        relationships: { incoming: groups(relationships?.incoming), incomingSymbols: total(relationships?.incomingSymbols),
+            outgoing: groups(relationships?.outgoing), outgoingSymbols: total(relationships?.outgoingSymbols),
+            internal: totals(relationships?.internal), beyond: totals(relationships?.beyond) },
+        truncated,
     };
 }
 
@@ -121,8 +129,8 @@ export function scopeSentence(evidence: GalaxyEvidence, words: RelationshipWords
     const direction = evidence.direction === 'inbound' ? words.inbound : evidence.direction === 'outbound' ? words.outbound : words.both;
     const types = evidence.edgeTypes === 'all' ? words.allTypes : words.onlyTypes(evidence.edgeTypes);
     const state = evidence.state === 'complete' ? words.complete : evidence.state === 'loading' ? words.loading : words.partial(evidence.error);
-    return words.scope(`${words.hops(evidence.depth)} ${direction}, ${types}`, words.size(evidence.nodes, evidence.edges),
-        evidence.state === 'complete' && evidence.exhausted ? `${state}; ${words.exhausted}` : state);
+    const notes = [state, ...evidence.state === 'complete' && evidence.exhausted ? [words.exhausted] : [], ...evidence.truncated ? [words.truncated] : []];
+    return words.scope(`${words.hops(evidence.depth)} ${direction}, ${types}`, words.size(evidence.nodes, evidence.edges), notes.join('; '));
 }
 
 /** Whether the loaded scope followed this side at all; otherwise "none" would be a guess. */

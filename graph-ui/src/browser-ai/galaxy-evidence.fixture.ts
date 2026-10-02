@@ -1,4 +1,4 @@
-import { graphNodeEvidence, scopeRelationships, selectionEvidenceContext } from '../galaxy/selection-evidence';
+import { galaxyScopeEvidence, selectionEvidenceContext, type GalaxyScope, type SelectionEvidence } from '../galaxy/selection-evidence';
 import type { GraphEdge, GraphNode } from '../galaxy/types';
 import type { BrowserChatContext } from './chat-model';
 
@@ -25,14 +25,29 @@ export function jsonbAggScope(): { nodes: GraphNode[]; edges: GraphEdge[]; roots
 }
 
 /** The context GalaxyPanel publishes for that scope, with optional scope overrides. */
-export function jsonbAggEvidence(overrides: { depth?: number; direction?: string; state?: string; edges?: GraphEdge[] } = {}): BrowserChatContext {
+export function jsonbAggEvidence(overrides: { depth?: number; direction?: string; state?: GalaxyScope['state']; edges?: GraphEdge[]; nodes?: GraphNode[] } = {}): BrowserChatContext {
     const scope = jsonbAggScope();
-    const edges = overrides.edges ?? scope.edges;
     const [root] = scope.nodes;
-    return selectionEvidenceContext({ project: 'django-demo', view: 'galaxy', source: 'query_graph scoped indexed relationships', label: 'JSONBAgg',
-        selected: { scope: { kind: 'symbol', qualifiedName: root.qualified_name, name: 'JSONBAgg' }, rootCount: 1, roots: [graphNodeEvidence(root)], omittedRoots: 0 },
-        scope: { depth: overrides.depth ?? 1, direction: overrides.direction ?? 'both', edgeTypes: 'all', nodes: scope.nodes.length, edges: edges.length },
-        relationships: scopeRelationships(scope.nodes, edges, scope.roots),
-        limitations: { state: overrides.state ?? 'complete-indexed-scope', exhausted: false, indexCoverage: 'unavailable',
-            interpretation: 'Static indexed relationships, not runtime activity.' } });
+    return selectionEvidenceContext(galaxyScopeEvidence({ project: 'django-demo', identity: { kind: 'symbol', qualifiedName: root.qualified_name!, name: 'JSONBAgg' },
+        nodes: [...scope.nodes, ...overrides.nodes ?? []], edges: overrides.edges ?? scope.edges, roots: scope.roots,
+        depth: overrides.depth ?? 1, direction: overrides.direction ?? 'both', edgeTypes: 'all',
+        state: overrides.state ?? 'complete-indexed-scope', exhausted: false }));
+}
+
+/** A folder of 40 documented symbols with five incoming and five outgoing edge types of 30 symbols each. */
+export function largeFolderScope(): SelectionEvidence {
+    const node = (id: number, name: string, file: string, documentation?: string): GraphNode => ({ id, name, label: 'Function', qualified_name: `pkg.${file}.${name}`,
+        file_path: `django/contrib/postgres/aggregates/${file}.py`, start_line: 10, end_line: 20, documentation, x: 0, y: 0, z: 0, size: 1, color: '#999' });
+    const roots = Array.from({ length: 40 }, (_, index) => node(index + 1, `postgres_member_${index}`, 'members', 'd'.repeat(1500)));
+    const types = ['CALLS', 'TESTS', 'USAGE', 'IMPORTS', 'DEFINES_METHOD'];
+    const nodes: GraphNode[] = [...roots], edges: GraphEdge[] = [];
+    types.forEach((type, typeIndex) => (['incoming', 'outgoing'] as const).forEach(side => {
+        for (let index = 0; index < 30; index++) {
+            const id = 1000 + typeIndex * 100 + (side === 'incoming' ? 0 : 50) + index;
+            nodes.push(node(id, `${side}_${type.toLowerCase()}_relationship_${index}`, `${side}_module_${Math.floor(index / 3)}`));
+            edges.push(side === 'incoming' ? { source: id, target: 1 + index, type } : { source: 1 + index, target: id, type });
+        }
+    }));
+    return galaxyScopeEvidence({ project: 'django-demo', identity: { kind: 'folder', path: 'django/contrib/postgres', name: 'postgres' }, nodes, edges,
+        roots: new Set(roots.map(root => root.id)), depth: 1, direction: 'both', edgeTypes: 'all', state: 'complete-indexed-scope', exhausted: false });
 }

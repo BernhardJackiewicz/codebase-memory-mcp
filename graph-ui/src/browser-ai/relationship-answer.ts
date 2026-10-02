@@ -37,7 +37,7 @@ function listed(question: RelationshipQuestion, evidence: GalaxyEvidence): strin
         if (evidence.depth === 0) { sections.push(`${heading}. ${words.notExpanded}`); continue; }
         if (!sideLoaded(evidence, side)) { sections.push(`${heading}. ${words.notLoaded(side)}`); continue; }
         const groups = evidence.relationships[side];
-        if (!groups.length) { sections.push(`${heading}. ${words.noRelationships}`); continue; }
+        if (!groups.length) { sections.push(`${heading}. ${evidence.truncated ? words.cut(side) : words.noRelationships}`); continue; }
         const symbols = side === 'incoming' ? evidence.relationships.incomingSymbols : evidence.relationships.outgoingSymbols;
         const total = groups.reduce((sum, group) => sum + group.count, 0);
         const calls = groups.find(group => group.type === 'CALLS');
