@@ -44,12 +44,25 @@ it('ignores obsolete replies and never presents the previous source as current',
     expect(observed.result?.data).toBe(first);
     await render(second);
     expect(observed.result).toBeUndefined(); expect(observed.loading).toBe(true);
+    // The previous picture stays available to keep a scene mounted, but only as stale.
+    expect(observed.stale?.data).toBe(first);
     await act(async () => worker.reply(firstRequest.sequence, first));
-    expect(observed.result).toBeUndefined();
+    expect(observed.result).toBeUndefined(); expect(observed.stale?.data).toBe(first);
     const secondRequest = worker.postMessage.mock.calls[1]![0];
     await act(async () => worker.reply(secondRequest.sequence, second));
     expect(observed.result?.data).toBe(second); expect(observed.loading).toBe(false);
+    expect(observed.stale).toBeUndefined();
     expect(WorkerStub.instances).toHaveLength(1);
+});
+
+it('forgets the stale picture after a gap without input', async () => {
+    await render(first);
+    const worker = WorkerStub.instances[0]!;
+    await act(async () => worker.reply(worker.postMessage.mock.calls[0]![0].sequence, first));
+    await render(undefined);
+    expect(observed.result).toBeUndefined(); expect(observed.stale).toBeUndefined(); expect(observed.loading).toBe(false);
+    await render(second);
+    expect(observed.loading).toBe(true); expect(observed.stale).toBeUndefined();
 });
 
 it('retains its worker while disabled and terminates it on unmount', async () => {

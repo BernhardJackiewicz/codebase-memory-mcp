@@ -84,6 +84,12 @@
  *     ihre Geschwindigkeit ueber das neue Ziel hinweg; ihr Daempfungsgrad ist
  *     genau 1, sie kann also nicht ueberschwingen. Ohne das Feld ist jeder
  *     bestehende Anflug Zeichen fuer Zeichen der von vorher.
+ * 14. Neu (Review-Call 2026-10-02): CameraAnimator spielt einen Anflug, der
+ *     schon vor dem Aufsetzen der Szene gesetzt war, nicht nach. Er gehoert
+ *     zum Bild davor; eine Einpassung gilt weiter.
+ * 15. Neu (Review-Call 2026-10-02): `FitContainment` holt Knoten, die nach
+ *     einer Einpassung dazukommen, ins Bild, indem die Kamera entlang ihrer
+ *     Blickrichtung zuruecktritt, solange der Leser sie nicht bewegt hat.
  */
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -99,7 +105,7 @@ import { EdgeLines } from './EdgeLines';
 import { NodeLabels } from './NodeLabels';
 import { ScreenNodeSeparation } from './ScreenNodeSeparation';
 import type { LabelBox } from './NodeLabels';
-import { fitCamera, flatBounds, frameDistance, orthographicZoom } from './camera-frame';
+import { containBackoff, fitCamera, flatBounds, frameDistance, orthographicZoom } from './camera-frame';
 import type { CameraFit, FrameBox } from './camera-frame';
 import { FRAME_WINDOW_MS, recordFrameWindow, recordSceneFacts } from './frame-rate';
 import { springStep } from '../agents/agent-motion';
@@ -162,7 +168,7 @@ const FLY_LERP_PER_FRAME = 0.08;
  * einen ganzen Anflug in einem Sprung erledigen. */
 const FLY_MAX_DELTA = 0.1;
 
-function CameraAnimator({
+export function CameraAnimator({
     target,
     controlsRef,
     flat = false,
@@ -180,9 +186,21 @@ function CameraAnimator({
         position: [0, 0, 0] as [number, number, number],
         lookAt: [0, 0, 0] as [number, number, number],
     });
+    /* Das Ziel, das beim Aufsetzen schon dastand. Siehe Aenderung 14. */
+    const mountedWith = useRef(target);
 
     useEffect(() => {
         if (!target) {
+            return;
+        }
+        /*
+         * Aenderung 14: ein Anflug, der schon vor dem Aufsetzen dieser Szene
+         * gesetzt war, gehoert zum Bild davor. Ihn jetzt abzuspielen hiesse,
+         * die Kamera zu einem Ziel zu fahren, das niemand mehr meint
+         * (Review-Befund G1). Eine Einpassung (`immediate`) gilt weiter: sie ist
+         * die Lage, in der das Bild anfaengt.
+         */
+        if (target === mountedWith.current && target.immediate !== true) {
             return;
         }
         targetRef.current = target;
@@ -315,6 +333,66 @@ function CameraAnimator({
             camera.lookAt(targetRef.current.lookAt);
         }
     });
+
+    return null;
+}
+
+/*
+ * Aenderung 15: was nach einer Einpassung dazukommt, kommt ins Bild.
+ *
+ * Ein Expand und die vollstaendige Antwort nach einer Vorschau passen nicht
+ * neu ein (Review-Befund G1): eine neue Einpassung stellte die Kamera jedes
+ * Mal anders hin. Die neuen Knoten liegen aber oft ausserhalb des alten
+ * Rahmens, und die Trennung auf dem Schirm schiebt Knoten nach aussen. Also
+ * tritt die Kamera entlang ihrer Blickrichtung genau so weit zurueck, dass
+ * jeder gezeichnete Knoten mit Rand im Bild liegt (`containBackoff`). Richtung,
+ * Oben und Drehpunkt bleiben. Das gilt nur, solange die letzte Lage eine
+ * Einpassung war und der Leser die Kamera seitdem nicht bewegt hat: wer
+ * hineingezoomt hat, wollte genau diesen Ausschnitt.
+ */
+export function FitContainment({
+    nodes,
+    target,
+    controlsRef,
+    moved,
+    enabled,
+}: {
+    nodes: readonly GraphNode[];
+    target: CameraTarget | null;
+    controlsRef: RefObject<OrbitControlsImpl | null>;
+    /** Wird von der Steuerung gesetzt, sobald der Leser zieht, dreht oder zoomt. */
+    moved: RefObject<boolean>;
+    enabled: boolean;
+}): null {
+    const camera = useThree((state) => state.camera);
+    const size = useThree((state) => state.size);
+    const armed = useRef(false);
+
+    useEffect(() => {
+        if (target === null) {
+            return;
+        }
+        armed.current = target.immediate === true;
+        moved.current = false;
+    }, [target, moved]);
+
+    useEffect(() => {
+        if (!enabled || !armed.current || moved.current || size.height <= 0
+            || !(camera instanceof THREE.PerspectiveCamera)) {
+            return;
+        }
+        camera.updateMatrixWorld();
+        const view = nodes.map((node) =>
+            new THREE.Vector3(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse));
+        const back = containBackoff(view, camera.fov, size.width / size.height);
+        if (!(back > 0.001)) {
+            return;
+        }
+        const direction = camera.getWorldDirection(new THREE.Vector3());
+        camera.position.addScaledVector(direction, -back);
+        camera.updateMatrixWorld();
+        controlsRef.current?.update();
+    }, [nodes, enabled, camera, size, controlsRef, moved]);
 
     return null;
 }
@@ -739,6 +817,8 @@ export function GraphScene({
     const [hovered, setHovered] = useState<GraphNode | null>(null);
     const [hoveredShadow, setHoveredShadow] = useState<CoverageShadowNode | null>(null);
     const controlsRef = useRef<OrbitControlsImpl | null>(null);
+    /* Ob der Leser die Kamera seit der letzten Einpassung bewegt hat (Aenderung 15). */
+    const moved = useRef(false);
     const background = useGraphBackgroundReset(() => { setHovered(null); setHoveredShadow(null); onBackgroundClick?.(); });
     const flat = projection === 'flat';
     const sceneNodes = useMemo(() => coverageShadow ? [...data.nodes, ...coverageShadow.nodes] : data.nodes, [data.nodes, coverageShadow]);
@@ -902,6 +982,8 @@ export function GraphScene({
             {resolveCoverageShadowNode(renderedShadow, hoveredShadow) && hoveredShadow && renderShadowTooltip?.(hoveredShadow)}
 
             <CameraAnimator target={cameraTarget} controlsRef={controlsRef} flat={flat} />
+            <FitContainment nodes={renderedNodes} target={cameraTarget} controlsRef={controlsRef} moved={moved}
+                enabled={separateNodes && !flat} />
             {separateNodes && <ScreenNodeSeparation nodes={sceneNodes} active={active} onChange={receiveSeparation} onBusyChange={onRenderBusyChange} />}
             <FitProbe nodes={renderedNodes} />
             <IdleAutoRotate controlsRef={controlsRef} enabled={!flat && idleRotation && !separateNodes} />
@@ -941,6 +1023,7 @@ export function GraphScene({
                 minDistance={Math.max(5, sceneRadius * 0.02)}
                 maxDistance={Math.max(sceneRadius, orbitReach) * 4}
                 autoRotateSpeed={0.4}
+                onStart={() => { moved.current = true; }}
             />
             {flat && <FlatTarget box={flatBox} controlsRef={controlsRef} />}
         </Canvas>

@@ -15,6 +15,7 @@ import {
     FLAT_MIN_ZOOM,
     FRAME_MARGIN,
     FRAME_MIN_DISTANCE,
+    containBackoff,
     fitCamera,
     flatBounds,
     frameDistance,
@@ -328,5 +329,41 @@ describe('fitCamera', () => {
         const fit = fitCamera([{ x: 40, y: -12, z: 5 }], FOV, ASPECT)!;
         expect(fit.distance).toBe(FRAME_MIN_DISTANCE);
         expect(fit.center).toEqual({ x: 40, y: -12, z: 5 });
+    });
+});
+
+/*
+ * Was nach einer Einpassung dazukommt (Review-Befund G1).
+ *
+ * Ein Expand passt nicht neu ein; die Kamera tritt nur so weit zurueck, dass
+ * die neuen Knoten mit Rand ins Bild kommen. Gerechnet im Blickraum: vor der
+ * Kamera ist z negativ.
+ */
+describe('containBackoff', () => {
+    const ASPECT = 1.5;
+    const half = Math.tan((FOV * Math.PI) / 360);
+
+    it('bleibt stehen, solange jeder Punkt mit Rand im Bild liegt', () => {
+        const points = [{ x: 0, y: 0, z: -400 }, { x: 100, y: -80, z: -500 }];
+        expect(containBackoff(points, FOV, ASPECT)).toBe(0);
+    });
+
+    it('tritt genau so weit zurueck, dass der aeusserste Punkt am Rand steht', () => {
+        const point = { x: 0, y: 300, z: -200 };
+        const back = containBackoff([point], FOV, ASPECT);
+        const depth = 200 + back;
+        expect((point.y * FRAME_MARGIN) / (depth * half)).toBeCloseTo(1, 6);
+    });
+
+    it('rechnet die Breite mit dem Seitenverhaeltnis und holt auch Punkte hinter der Kamera', () => {
+        const wide = { x: 600, y: 0, z: -100 };
+        const back = containBackoff([wide], FOV, ASPECT);
+        expect((wide.x * FRAME_MARGIN) / ((100 + back) * half * ASPECT)).toBeCloseTo(1, 6);
+        expect(containBackoff([{ x: 0, y: 0, z: 50 }], FOV, ASPECT)).toBeCloseTo(50, 6);
+    });
+
+    it('uebergeht unbrauchbare Zahlen statt NaN zu liefern', () => {
+        expect(containBackoff([{ x: Number.NaN, y: 0, z: -1 }], FOV, ASPECT)).toBe(0);
+        expect(containBackoff([], FOV, ASPECT)).toBe(0);
     });
 });

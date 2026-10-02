@@ -414,6 +414,37 @@ export function principalFrame(points: readonly Vector3Like[]): PrincipalFrame {
     };
 }
 
+/**
+ * Wie weit eine Kamera entlang ihrer Blickrichtung zuruecktreten muss, damit
+ * jeder Punkt mit Rand im Bild liegt.
+ *
+ * Die Punkte stehen im Blickraum der Kamera (vor ihr ist z negativ). Ein
+ * Schritt zurueck aendert ihr x und y nicht, nur ihre Tiefe, also ist die
+ * Antwort fuer jeden Punkt geschlossen ausrechenbar: die Tiefe, bei der er
+ * genau am Rand steht, weniger der Tiefe, die er hat. Null heisst: alles ist
+ * schon im Bild, und die Kamera bleibt, wo sie ist. Sie tritt nie vor.
+ */
+export function containBackoff(
+    points: readonly Vector3Like[],
+    fovDegrees: number,
+    aspect: number,
+    margin: number = FRAME_MARGIN,
+): number {
+    const fov = (Math.max(1, Math.min(179, fovDegrees)) * Math.PI) / 180;
+    const scale = Number.isFinite(margin) && margin > 0 ? margin : 1;
+    const vertical = Math.tan(fov / 2) / scale;
+    const horizontal = vertical * (Number.isFinite(aspect) && aspect > 0 ? aspect : 1);
+    let back = 0;
+    for (const point of points) {
+        if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) {
+            continue;
+        }
+        const needed = Math.max(Math.abs(point.x) / horizontal, Math.abs(point.y) / vertical);
+        back = Math.max(back, needed + point.z);
+    }
+    return back;
+}
+
 /** Wo die Kamera steht, damit die ganze Wolke im Bild ist. */
 export interface CameraFit {
     /** Der Punkt, auf den die Kamera sieht. */

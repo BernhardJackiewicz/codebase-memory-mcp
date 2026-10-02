@@ -769,11 +769,25 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     }, [scope.result, scope.scope, organicKey, scope.depth]);
     const organicTask = useOrganicLayout(scope.scope ? scope.result?.data : undefined, organicOptions);
     const organic = organicTask.result;
+    // Jedes gezeichnete Bild desselben Scopes haelt seine Punkte fest, auch die
+    // Vorschau: sonst springt die Wolke beim Wechsel zur vollstaendigen Antwort.
     useEffect(() => {
-        if (scope.complete && organic) organicHistory.current = { key: organicKey, depth: scope.depth, data: organic.data };
+        if (organic) organicHistory.current = { key: organicKey, depth: scope.result?.depth ?? scope.depth, data: organic.data };
         if (!scope.scope) organicHistory.current = undefined;
-    }, [scope.complete, scope.scope, organic, organicKey, scope.depth]);
+    }, [scope.scope, scope.result, organic, organicKey, scope.depth]);
     const data = scope.scope ? organic?.data : layout;
+    /*
+     * Was die Szene zeigt, solange das naechste Bild noch angeordnet wird.
+     *
+     * Bis hierher war `data` waehrend jeder Anordnung leer, die Szene wurde
+     * ausgehaengt, und jeder Schritt (Auswahl, Expand, Vorschau zu Antwort)
+     * baute den Canvas neu auf (Review-Befund G1). Jetzt bleibt das letzte Bild
+     * stehen, bis das neue fertig ist; vor dem ersten Bild eines Scopes ist das
+     * der ganze Graph, der gerade noch zu sehen war. `data` bleibt dabei das
+     * AKTUELLE Bild: Einpassung, Legende und Zaehler rechnen nie mit dem alten.
+     */
+    const sceneData = scope.scope ? (organic ?? organicTask.stale)?.data ?? layout : layout;
+    const sceneScoped = Boolean(scope.scope) && sceneData !== layout;
     const scopedRoot = scope.result?.roots.size === 1
         ? scope.result.data.nodes.find(node => scope.result!.roots.has(node.id)) : undefined;
     const notifiedScopedSymbol = useRef('');
@@ -1121,16 +1135,18 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     const hiddenHere = kinds.filter((kind) => hiddenKinds.has(kind.type)).length;
     const kindNote = edgeKindNote(kinds.length, hiddenHere);
 
+    // Die Szene bekommt in der Galaxie das stehende Bild (siehe `sceneData`).
+    const scenePicture = mode === 'hierarchy' ? picture : sceneData;
     const shown = useMemo(
         () => {
-            if (!picture) return undefined;
-            const filtered = props.workspaceExpanded && scope.scope ? picture : withoutEdgeKinds(picture, hiddenKinds);
+            if (!scenePicture) return undefined;
+            const filtered = props.workspaceExpanded && scope.scope ? scenePicture : withoutEdgeKinds(scenePicture, hiddenKinds);
             const requiredNames = new Set(data?.nodes.filter(node => scope.result?.roots.has(node.id)).map(node => node.qualified_name));
             return props.workspaceExpanded ? limitGraphRender(filtered, nodeBudget, edgeBudget, mode === 'hierarchy'
                 ? new Set(filtered.nodes.filter(node => requiredNames.has(node.qualified_name)).map(node => node.id))
                 : scope.result?.roots) : filtered;
         },
-        [picture, hiddenKinds, props.workspaceExpanded, nodeBudget, edgeBudget, scope.result?.roots, scope.scope, mode, data],
+        [scenePicture, hiddenKinds, props.workspaceExpanded, nodeBudget, edgeBudget, scope.result?.roots, scope.scope, mode, data],
     );
 
     const traceKinds = useMemo(() => edgeKinds(shown), [shown]);
@@ -1439,8 +1455,22 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     const refitNow = useCallback(() => setOwnFit((count) => count + 1), []);
     const coverageShadow = useMemo(() => showCoverage && props.workspaceExpanded && mode === 'galaxy' && data
         ? buildCoverageShadow(data) : null, [data, props.workspaceExpanded, mode, showCoverage]);
-    const fitRequest = useMemo(() => ({ picture, mode, projection, requestedFit, ownFit, coverageShadow }),
-        [picture, mode, projection, requestedFit, ownFit, coverageShadow]);
+    /*
+     * Was eine neue Einpassung verlangt.
+     *
+     * In der gewaehlten Galaxie ist das der Scope selbst (Wurzel, Richtung,
+     * Kantenarten) und nicht sein Bild: ein Expand, eine Vorschau und die
+     * vollstaendige Antwort danach sind derselbe Ausschnitt, und eine Kamera,
+     * die bei jedem davon neu einpasst, stellt den Leser jedes Mal anders hin
+     * (Review-Befund G1). Was dabei neu hinzukommt, holt die Szene selbst ins
+     * Bild, solange der Leser die Kamera nicht bewegt hat (GraphScene,
+     * `FitContainment`).
+     */
+    const fitScope = mode === 'galaxy' && props.workspaceExpanded && scope.scope ? organicKey : undefined;
+    const fitPicture = fitScope === undefined ? picture : undefined;
+    const fitProjection = fitScope === undefined ? projection : undefined;
+    const fitRequest = useMemo(() => ({ scope: fitScope, picture: fitPicture, projection: fitProjection, mode, requestedFit, ownFit, coverageShadow }),
+        [fitScope, fitPicture, fitProjection, mode, requestedFit, ownFit, coverageShadow]);
     const lastFitRequest = useRef<typeof fitRequest | undefined>(undefined);
 
     useEffect(() => {
@@ -1454,10 +1484,12 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
             skipNextFit.current = false;
             return;
         }
-        lastFitRequest.current = fitRequest;
         if (mode === 'hierarchy' && projection !== undefined) {
             const box = hierarchyFrame(projection);
             const target = computeFrameTarget(box, aspect);
+            // Erst eine Einpassung, die wirklich lief, verbraucht die Anfrage:
+            // ein Scope, dessen Bild noch angeordnet wird, passt danach ein.
+            lastFitRequest.current = fitRequest;
             setCameraTarget(target);
             targetChanges.current += 1;
             fitCount.current += 1;
@@ -1484,6 +1516,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         if (target === null) {
             return;
         }
+        lastFitRequest.current = fitRequest;
         setCameraTarget(target);
         targetChanges.current += 1;
         fitCount.current += 1;
@@ -1742,7 +1775,8 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         mode === 'hierarchy' ? HIERARCHY_DISPLAY : DEFAULT_DISPLAY_SETTINGS,
         choice,
     );
-    const layoutState = error.length > 0 ? 'failed' : data === undefined ? 'loading' : 'ready';
+    // Ein stehendes Bild ist kein Ladezustand: die Werkzeugleiste sagt, dass angeordnet wird.
+    const layoutState = error.length > 0 ? 'failed' : sceneData === undefined ? 'loading' : 'ready';
     // Die Hierarchie braucht das Layout nicht: sie faerbt sich damit, sie lebt
     // nicht davon. Ein Walk, dessen Bild dasteht, ist fertig.
     const state = mode === 'hierarchy' ? projection ? 'ready'
@@ -1759,7 +1793,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                 ? `layout unavailable: ${error}`
                 : layoutState === 'loading'
                     ? `loading the layout of ${project.length > 0 ? project : 'no project'} ...`
-                    : layoutSummary(data as GraphData, LAYOUT_NODE_BUDGET);
+                    : layoutSummary((data ?? sceneData) as GraphData, LAYOUT_NODE_BUDGET);
 
     /*
      * Die zweite Zeile des Kopfes: woraus die Linien bestehen (W9).
@@ -2385,9 +2419,9 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                 {shown !== undefined && everVisible.current && (
                     <GraphScene
                         active={visible}
-                        separateNodes={mode === 'galaxy' && Boolean(scope.scope)}
+                        separateNodes={mode === 'galaxy' && sceneScoped}
                         onRenderBusyChange={setSpacingBusy}
-                        idleRotation={mode === 'galaxy' && !scope.scope}
+                        idleRotation={mode === 'galaxy' && !sceneScoped}
                         data={shown}
                         display={display}
                         highlightedIds={scope.scope && scope.depth > 1 ? null : highlighted}
