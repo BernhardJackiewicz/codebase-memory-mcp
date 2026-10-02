@@ -106,6 +106,9 @@ const symbolId = (node: GraphNode) => `symbol:${identity(node)}`;
  */
 const TEST_SOURCE = /(^|\/)(tests|__tests__|specs?)\/|^(src\/)?test\/|(^|\/)(test_[^/]*|tests?\.[^/.]+|[^/]+[._-](test|spec)\.[^/.]+)$/i;
 /** The first path segment of a route label, without its method: '/accounts' for 'GET /accounts/login/'. */
+/** Route paths as people read them: '/%C3%A9dit' reads '/édit'. Reserved characters stay encoded
+ * (decodeURI), and a path that is not valid percent-encoding stays as indexed. */
+export const readableRoute = (path: string): string => { try { return decodeURI(path); } catch { return path; } };
 const routePrefixOf = (label: string) => `/${label.replace(/^[A-Z]+\s+/, '').split('/').filter(Boolean)[0] ?? ''}`;
 const sourceNode = (node: GraphNode) => Boolean(node.file_path && node.file_path !== '{}'
     && !['Project', 'Folder', 'Package', 'Branch', 'Route'].includes(node.label));
@@ -374,7 +377,7 @@ export function buildSemanticGraph(graph: GraphData, options: SemanticGraphOptio
                 const id = `route:${identity(node)}`;
                 if (!routeNodes.has(id)) routeNodes.set(id, { ...symbolNode(node), id, kind: 'route',
                     graphNode: currentNodes.has(node) ? node : undefined,
-                    label: edge?.routePath ?? node.name, detail: node.file_path ?? 'Indexed route; source location unavailable' });
+                    label: readableRoute(edge?.routePath ?? node.name), detail: node.file_path ?? 'Indexed route; source location unavailable' });
                 return id;
             }
             const area = node.file_path ? areaOf(node.file_path) : undefined;
@@ -401,7 +404,7 @@ export function buildSemanticGraph(graph: GraphData, options: SemanticGraphOptio
             // A textual registration is useful navigation, but cannot establish an edge or handler identity.
             const id = `registration:${route.method ?? ''}:${route.path}@${route.filePath ?? ''}:${route.line ?? ''}`;
             if (options.hideTestRoutes && route.filePath && TEST_SOURCE.test(route.filePath)) { hidden.add(id); continue; }
-            routeNodes.set(id, { id, kind: 'route', label: `${route.method ? `${route.method} ` : ''}${route.path}`,
+            routeNodes.set(id, { id, kind: 'route', label: `${route.method ? `${route.method} ` : ''}${readableRoute(route.path)}`,
                 detail: `${route.origin === 'source' ? 'Source' : 'Index'} registration · handler relationship not resolved`,
                 position: [0, 0, 0], count: 1, filePath: route.filePath, line: route.line, members: [] });
         }

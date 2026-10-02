@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSemanticGraph, layoutFolderHierarchy, semanticEntryPoints, type SemanticNode, type SemanticPlatform } from './semantic-graph';
+import { buildSemanticGraph, layoutFolderHierarchy, readableRoute, semanticEntryPoints, type SemanticNode, type SemanticPlatform } from './semantic-graph';
 import type { GraphData, GraphNode } from '../galaxy/types';
 
 const node = (id: number, file: string, name = `symbol${id}`, status: GraphNode['status'] = 'normal'): GraphNode => ({
@@ -421,4 +421,11 @@ it('packs entry-point siblings while preserving depth order between bands', () =
     expect(new Set(siblings.map(item => item.position[2])).size).toBeLessThanOrEqual(5);
     expect(Math.min(...siblings.map(item => item.position[0]))).toBeGreaterThan(model.nodes.find(item => item.depth === 0)!.position[0]);
     expect(Math.max(...siblings.map(item => item.position[0]))).toBeLessThan(model.nodes.find(item => item.depth === 2)!.position[0]);
+});
+
+it('shows percent-encoded route paths as people read them and keeps reserved characters encoded', () => {
+    expect(readableRoute('/%C3%A9dit/')).toBe('/\u00e9dit/');
+    expect(readableRoute('/files/a%2Fb')).toBe('/files/a%2Fb');
+    expect(readableRoute('/broken/%E0%A4%A')).toBe('/broken/%E0%A4%A');
+    expect(readableRoute('/plain/')).toBe('/plain/');
 });
