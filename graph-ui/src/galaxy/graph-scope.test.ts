@@ -215,6 +215,14 @@ it('wraps large hierarchy levels into readable blocks without losing or overlapp
     }
     expect(result.data.nodes.every(node => node.color === '#abcabc')).toBe(true);
 });
+it('takes hop columns from discovered levels, not from the global layout depth of a preview', () => {
+    // A preview from the overall layout keeps server coordinates; z says nothing about hops.
+    const nodes = [{ ...node(1), z: -250 }, { ...node(2), z: 40 }, { ...node(3), z: -90 }];
+    const levels = new Map([[1, 0], [2, 1], [3, 2]]);
+    const result = scopedHierarchy({ data: { nodes, edges: [], total_nodes: 3 }, roots: new Set([1]), depth: 2, exhausted: false, levels }, 'preview');
+    expect(Object.fromEntries(result.placements.map(placement => [placement.name, placement.hop]))).toEqual({ n1: 0, n2: 1, n3: 2 });
+    expect(result.depth).toBe(3);
+});
 it('retains simple columns for small hierarchy levels', () => {
     const nodes = [{ ...node(1), z: 0 }, { ...node(2), z: -18 }, { ...node(3), z: -18 }];
     const result = scopedHierarchy({ data: { nodes, edges: [], total_nodes: 3 }, roots: new Set([1]), depth: 1, exhausted: false }, 'small');

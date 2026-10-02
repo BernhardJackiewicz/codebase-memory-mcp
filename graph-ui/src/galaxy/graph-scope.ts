@@ -208,11 +208,14 @@ export function limitGraphRender(data: GraphData, nodeLimit: number, edgeLimit: 
 
 /** The same evidence in successive hop blocks. Small hops keep one column;
  * large hops wrap into compact grids so fitting thousands of neighbors does
- * not turn the entire scene into a single vertical line. */
+ * not turn the entire scene into a single vertical line.
+ *
+ * Hops come from the discovered levels. Only arranged rings encode them in z;
+ * a preview built from the overall layout keeps its global coordinates. */
 export function scopedHierarchy(scope: ScopedGraph, name: string): import('./hierarchy-layout').HierarchyProjection {
     const columns = new Map<number, GraphNode[]>();
     for (const node of scope.data.nodes) {
-        const hop = Math.max(0, Math.round(-node.z / 18));
+        const hop = scope.roots.has(node.id) ? 0 : scope.levels?.get(node.id) ?? Math.max(0, Math.round(-node.z / 18));
         const entries = columns.get(hop) ?? []; entries.push(node); columns.set(hop, entries);
     }
     const nodes: GraphNode[] = [], remap = new Map<number, number>();
