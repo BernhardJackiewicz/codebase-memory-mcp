@@ -331,17 +331,22 @@ export class RpcIntelligenceClient {
      * Pfade von einem Symbol aus laufen. Liefert die Vereinigung: eine
      * Ablehnung wegen Mehrdeutigkeit ist hier eine normale Antwort, kein
      * Fehler.
+     *
+     * Richtung und Tiefe in den Woertern des Servers (src/mcp/mcp.c,
+     * `trace_path`): `inbound`/`outbound`/`both` und `depth`. Bis zum Review
+     * vom 2026-10-02 gingen hier `callers`/`callees` und `max_depth` hinaus,
+     * und beides kennt das Schema nicht.
      */
     async tracePath(
         project: string,
         functionName: string,
-        args: { direction?: 'callers' | 'callees' | 'both'; maxDepth?: number } = {},
+        args: { direction?: 'inbound' | 'outbound' | 'both'; depth?: number } = {},
     ): Promise<PathResult> {
         return readPathResult(await this.json('trace_path', {
             project,
             function_name: functionName,
             ...(args.direction ? { direction: args.direction } : {}),
-            ...(args.maxDepth !== undefined ? { max_depth: args.maxDepth } : {}),
+            ...(args.depth !== undefined ? { depth: args.depth } : {}),
         }));
     }
 

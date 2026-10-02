@@ -51,7 +51,7 @@ it('returns a standalone hierarchy selection to the overall Galaxy without stale
     await act(async () => select.click());
     const evidence = JSON.parse(onSelectionEvidence.mock.lastCall![0].text).evidence;
     expect(evidence.selected.scope).toMatchObject({ kind: 'node', id: 1, name: 'node1' });
-    expect(evidence.scope).toMatchObject({ depth: 0, direction: 'both', edgeTypes: 'all' });
+    expect(evidence.scope).toMatchObject({ depth: 1, direction: 'both', edgeTypes: 'all' });
     expect(evidence.limitations.state).not.toBe('complete-indexed-scope');
     await act(async () => host.querySelector<HTMLButtonElement>('[data-mode="hierarchy"]')!.click());
     expect(globalThis.__atlasGalaxy?.mode).toBe('hierarchy');

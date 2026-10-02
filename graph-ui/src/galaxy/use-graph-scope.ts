@@ -5,6 +5,12 @@ import { readerGraphFocus, type SourceFocusRange } from './reader-graph-focus';
 import type { GraphData } from './types';
 import { graphNeighborhoodCache, graphNeighborhoodTransportKey, peekGraphNeighborhoodCache } from './graph-neighborhood-cache';
 
+/** A node or symbol alone has no relationships to show, so it starts one hop
+ * out. Files and folders already carry their internal edges at depth 0. */
+export function minimumScopeDepth(scope: GraphScope | undefined): number {
+    return scope?.kind === 'node' || scope?.kind === 'symbol' ? 1 : 0;
+}
+
 /** Scoped requests are independent of the whole-repository layout budget. */
 export function useGraphScope({ project, layout, filePath, range, fetch: fetchImpl, edgeTypes }: {
     project: string; layout?: GraphData; filePath?: string; range?: SourceFocusRange; fetch?: typeof globalThis.fetch; edgeTypes?: readonly string[];
@@ -23,7 +29,7 @@ export function useGraphScope({ project, layout, filePath, range, fetch: fetchIm
     const [readerDepth, setReaderDepth] = useState<{ key: string; depth: number }>();
     const actualDepth = filePath ? readerDepth?.key === readerKey ? readerDepth.depth : 1 : depth;
     const scope = useMemo<GraphScope | undefined>(() => filePath ? { kind: 'file', path: filePath,
-        name: `${filePath.split('/').pop()}${range ? `:${range.startLine}–${range.endLine}` : ''}`, ...(range ? { range } : {}) } : chosen,
+        name: `${filePath.split('/').pop()}${range ? `:${range.startLine}-${range.endLine}` : ''}`, ...(range ? { range } : {}) } : chosen,
     [filePath, range?.startLine, range?.endLine, chosen]);
     const edgeTypesKey = graphEdgeTypesKey(edgeTypes);
     const selectedTypes = useMemo<string[] | undefined>(() => edgeTypesKey === 'null' ? undefined : JSON.parse(edgeTypesKey) as string[], [edgeTypesKey]);
@@ -122,13 +128,14 @@ export function useGraphScope({ project, layout, filePath, range, fetch: fetchIm
         return { data: { nodes: layout.nodes.filter(node => ids.has(node.id)), edges: [...edges], total_nodes: ids.size },
             roots, depth: actualDepth, exhausted: false, levels };
     }, [scope, layout, actualDepth, actualDirection, selectedTypes]);
-    return { scope, depth: actualDepth, direction, setDirection,
+    const minDepth = filePath ? 1 : minimumScopeDepth(scope);
+    return { scope, depth: actualDepth, minDepth, direction, setDirection,
         result: complete ?? (cachedPreview?.key === key ? cachedPreview.value : undefined)
             ?? (result?.scopeKey === scopeKey && result.value.depth <= actualDepth ? result.value : fallback), loading: Boolean(scope && !complete && !error), error,
         validating: Boolean(scope && !complete && !error && pendingPhase?.key === key && pendingPhase.validating),
         complete: Boolean(complete), retry: () => setReload(value => value + 1),
-        select: (next: GraphScope) => { setChosen(next); setDepth(0); setDirection('both'); },
+        select: (next: GraphScope) => { setChosen(next); setDepth(minimumScopeDepth(next)); setDirection('both'); },
         reset: () => { setChosen(undefined); setDepth(0); setReaderDepth(undefined); setDirection('both'); },
-        setDepth: (next: number) => filePath ? setReaderDepth({ key: readerKey, depth: Math.max(1, next) }) : setDepth(Math.max(0, next)),
+        setDepth: (next: number) => filePath ? setReaderDepth({ key: readerKey, depth: Math.max(minDepth, next) }) : setDepth(Math.max(minDepth, next)),
     };
 }

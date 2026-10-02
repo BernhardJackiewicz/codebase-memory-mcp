@@ -84,12 +84,27 @@
  *     ihre Geschwindigkeit ueber das neue Ziel hinweg; ihr Daempfungsgrad ist
  *     genau 1, sie kann also nicht ueberschwingen. Ohne das Feld ist jeder
  *     bestehende Anflug Zeichen fuer Zeichen der von vorher.
+ * 14. Neu (Review-Call 2026-10-02): CameraAnimator spielt einen Anflug, der
+ *     schon vor dem Aufsetzen der Szene gesetzt war, nicht nach. Er gehoert
+ *     zum Bild davor; eine Einpassung gilt weiter.
+ * 15. Neu (Review-Call 2026-10-02): `FitContainment` rahmt das naechste Bild
+ *     eines Scopes, ohne neu einzupassen: die Kamera tritt entlang ihrer
+ *     Blickrichtung zurueck oder vor, solange der Leser sie nicht bewegt hat.
+ * 16. Neu (Review-Call 2026-10-02): die OrbitControls zoomen zum Mauszeiger
+ *     (`zoomToCursor`), nicht mehr in die Bildmitte.
+ * 17. Neu (Review-Call 2026-10-02): die Prop `rootIds`. Die Wurzeln eines
+ *     Scopes bekommen einen Ring und einen Namen, der immer zu sehen ist, und
+ *     die Trennung auf dem Schirm schiebt sie nie weg. Ohne die Prop zeichnet
+ *     die Szene wie vorher.
+ * 18. Neu (Review-Call 2026-10-02): die Prop `path`. Ein Pfad oder eine
+ *     Aufrufreihe liegt mit beschrifteten Kanten ueber der Szene
+ *     (src/galaxy/PathLayer.tsx). Ohne die Prop zeichnet die Szene wie vorher.
  */
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import type { JSX, ReactNode, RefObject } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
-import { OrbitControls, OrthographicCamera } from '@react-three/drei';
+import { Html, OrbitControls, OrthographicCamera } from '@react-three/drei';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
@@ -98,8 +113,9 @@ import { HaloLayer } from './HaloLayer';
 import { EdgeLines } from './EdgeLines';
 import { NodeLabels } from './NodeLabels';
 import { ScreenNodeSeparation } from './ScreenNodeSeparation';
+import { PathLayer, type ScenePath } from './PathLayer';
 import type { LabelBox } from './NodeLabels';
-import { fitCamera, flatBounds, frameDistance, orthographicZoom } from './camera-frame';
+import { FRAME_MIN_DISTANCE, containShift, fitCamera, flatBounds, frameDistance, orthographicZoom } from './camera-frame';
 import type { CameraFit, FrameBox } from './camera-frame';
 import { FRAME_WINDOW_MS, recordFrameWindow, recordSceneFacts } from './frame-rate';
 import { springStep } from '../agents/agent-motion';
@@ -162,7 +178,7 @@ const FLY_LERP_PER_FRAME = 0.08;
  * einen ganzen Anflug in einem Sprung erledigen. */
 const FLY_MAX_DELTA = 0.1;
 
-function CameraAnimator({
+export function CameraAnimator({
     target,
     controlsRef,
     flat = false,
@@ -180,9 +196,21 @@ function CameraAnimator({
         position: [0, 0, 0] as [number, number, number],
         lookAt: [0, 0, 0] as [number, number, number],
     });
+    /* Das Ziel, das beim Aufsetzen schon dastand. Siehe Aenderung 14. */
+    const mountedWith = useRef(target);
 
     useEffect(() => {
         if (!target) {
+            return;
+        }
+        /*
+         * Aenderung 14: ein Anflug, der schon vor dem Aufsetzen dieser Szene
+         * gesetzt war, gehoert zum Bild davor. Ihn jetzt abzuspielen hiesse,
+         * die Kamera zu einem Ziel zu fahren, das niemand mehr meint
+         * (Review-Befund G1). Eine Einpassung (`immediate`) gilt weiter: sie ist
+         * die Lage, in der das Bild anfaengt.
+         */
+        if (target === mountedWith.current && target.immediate !== true) {
             return;
         }
         targetRef.current = target;
@@ -317,6 +345,96 @@ function CameraAnimator({
     });
 
     return null;
+}
+
+/*
+ * Aenderung 15: das naechste Bild eines Scopes wird gerahmt, nicht eingepasst.
+ *
+ * Ein Expand und die vollstaendige Antwort nach einer Vorschau passen nicht
+ * neu ein (Review-Befund G1): eine neue Einpassung stellte die Kamera jedes
+ * Mal anders hin. Das neue Bild ist aber groesser oder kleiner als das alte,
+ * und die Trennung auf dem Schirm schiebt Knoten nach aussen. Also tritt die
+ * Kamera entlang ihrer Blickrichtung so weit zurueck oder vor, dass der
+ * aeusserste gezeichnete Knoten mit Rand am Bildrand steht (`containShift`).
+ * Richtung, Oben und Drehpunkt bleiben, und naeher als jede Einpassung
+ * (`FRAME_MIN_DISTANCE`) kommt sie dem Drehpunkt nicht. Das gilt nur, solange
+ * die letzte Lage eine Einpassung war und der Leser die Kamera seitdem nicht
+ * bewegt hat: wer gezoomt hat, wollte genau diesen Ausschnitt.
+ */
+export function FitContainment({
+    nodes,
+    target,
+    controlsRef,
+    moved,
+    enabled,
+}: {
+    nodes: readonly GraphNode[];
+    target: CameraTarget | null;
+    controlsRef: RefObject<OrbitControlsImpl | null>;
+    /** Wird von der Steuerung gesetzt, sobald der Leser zieht, dreht oder zoomt. */
+    moved: RefObject<boolean>;
+    enabled: boolean;
+}): null {
+    const camera = useThree((state) => state.camera);
+    const size = useThree((state) => state.size);
+    const armed = useRef<CameraTarget | null>(null);
+
+    useEffect(() => {
+        if (target === null) {
+            return;
+        }
+        armed.current = target.immediate === true ? target : null;
+        moved.current = false;
+    }, [target, moved]);
+
+    useEffect(() => {
+        const fit = armed.current;
+        if (!enabled || fit === null || moved.current || nodes.length === 0 || size.height <= 0
+            || !(camera instanceof THREE.PerspectiveCamera)) {
+            return;
+        }
+        camera.updateMatrixWorld();
+        const view = nodes.map((node) =>
+            new THREE.Vector3(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse));
+        const shift = Math.max(containShift(view, camera.fov, size.width / size.height),
+            FRAME_MIN_DISTANCE - camera.position.distanceTo(fit.lookAt));
+        if (!(Math.abs(shift) > 0.5)) {
+            return;
+        }
+        const direction = camera.getWorldDirection(new THREE.Vector3());
+        camera.position.addScaledVector(direction, -shift);
+        camera.updateMatrixWorld();
+        controlsRef.current?.update();
+    }, [nodes, enabled, camera, size, controlsRef, moved]);
+
+    return null;
+}
+
+/*
+ * Aenderung 17: die Wurzel ist zu finden.
+ *
+ * Nach einem Expand stand die Wurzel als ein Punkt unter neunzig, ohne Namen,
+ * und die Trennung auf dem Schirm hatte sie aus der Mitte geschoben
+ * (Review-Befund G4). Der Ring ist DOM wie der Ring der Hierarchie (Html aus
+ * drei), also kein Neubau der Puffer, und sein Name steht immer da, nicht erst
+ * bei Fokus. Ein Ordner mit hundert Wurzeln bekommt keine hundert Ringe: ueber
+ * der Grenze markiert die Szene nichts und schiebt wie vorher.
+ */
+export const ROOT_MARKER_LIMIT = 12;
+
+function RootMarkers({ nodes }: { nodes: readonly GraphNode[] }): JSX.Element {
+    return (
+        <>
+            {nodes.map((node) => (
+                <Html key={node.id} position={[node.x, node.y, node.z]} zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
+                    <span className="atlas-galaxy-root-marker" data-testid="atlas-galaxy-root-marker" data-qn={node.qualified_name ?? node.name}>
+                        <i aria-hidden="true" />
+                        <b>{node.name}</b>
+                    </span>
+                </Html>
+            ))}
+        </>
+    );
 }
 
 /* Bildratenmesser und Bildratendeckel (W10) */
@@ -697,6 +815,10 @@ interface GraphSceneProps {
     labelDistanceFactor?: number;
     /* Bilder je Sekunde, hoechstens. 0 heisst: kein Deckel. */
     frameCap?: number;
+    /* Die Wurzeln des gewaehlten Scopes (Aenderung 17). */
+    rootIds?: ReadonlySet<number>;
+    /* Ein Pfad oder eine Aufrufreihe ueber der Szene (Aenderung 18). */
+    path?: ScenePath;
 }
 
 export type { CameraTarget };
@@ -735,10 +857,14 @@ export function GraphScene({
     drawEdges = true,
     labelDistanceFactor = 0,
     frameCap = 0,
+    rootIds,
+    path,
 }: GraphSceneProps) {
     const [hovered, setHovered] = useState<GraphNode | null>(null);
     const [hoveredShadow, setHoveredShadow] = useState<CoverageShadowNode | null>(null);
     const controlsRef = useRef<OrbitControlsImpl | null>(null);
+    /* Ob der Leser die Kamera seit der letzten Einpassung bewegt hat (Aenderung 15). */
+    const moved = useRef(false);
     const background = useGraphBackgroundReset(() => { setHovered(null); setHoveredShadow(null); onBackgroundClick?.(); });
     const flat = projection === 'flat';
     const sceneNodes = useMemo(() => coverageShadow ? [...data.nodes, ...coverageShadow.nodes] : data.nodes, [data.nodes, coverageShadow]);
@@ -752,6 +878,12 @@ export function GraphScene({
         const nodes = renderedNodes.slice(data.nodes.length) as CoverageShadowNode[];
         return { ...coverageShadow, nodes, nodeById: new Map(nodes.map(node => [node.id, node])) };
     }, [coverageShadow, renderedNodes, sceneNodes, data.nodes.length]);
+    const markedRoots = rootIds !== undefined && rootIds.size > 0 && rootIds.size <= ROOT_MARKER_LIMIT ? rootIds : undefined;
+    const rootNodes = useMemo(() => markedRoots ? renderedCode.filter((node) => markedRoots.has(node.id)) : [],
+        [markedRoots, renderedCode]);
+    // Der Ring traegt den Namen der Wurzel; ein zweiter Name darunter waere doppelt.
+    const labelNodes = useMemo(() => markedRoots ? renderedCode.filter((node) => !markedRoots.has(node.id)) : renderedCode,
+        [markedRoots, renderedCode]);
     const onCodeHover = useCallback((node: GraphNode | null) => {
         setHovered(node);
         if (node) setHoveredShadow(null);
@@ -881,7 +1013,7 @@ export function GraphScene({
             />
             {showLabels && (
                 <NodeLabels
-                    nodes={renderedCode}
+                    nodes={labelNodes}
                     highlightedIds={highlightedIds}
                     worldFontSize={labelWorldFontSize}
                     maxTextWidth={labelMaxTextWidth}
@@ -890,6 +1022,8 @@ export function GraphScene({
                 />
             )}
             {landmarks && <HaloLayer nodes={renderedCode} />}
+            {rootNodes.length > 0 && <RootMarkers nodes={rootNodes} />}
+            {path !== undefined && <PathLayer nodes={renderedCode} path={path} />}
 
             {renderedShadow && renderedShadow.nodes.length > 0 && <group>
                 {drawEdges && <CoverageShadowEdges shadow={renderedShadow} brightness={display.edgeBrightness} />}
@@ -902,7 +1036,10 @@ export function GraphScene({
             {resolveCoverageShadowNode(renderedShadow, hoveredShadow) && hoveredShadow && renderShadowTooltip?.(hoveredShadow)}
 
             <CameraAnimator target={cameraTarget} controlsRef={controlsRef} flat={flat} />
-            {separateNodes && <ScreenNodeSeparation nodes={sceneNodes} active={active} onChange={receiveSeparation} onBusyChange={onRenderBusyChange} />}
+            <FitContainment nodes={renderedNodes} target={cameraTarget} controlsRef={controlsRef} moved={moved}
+                enabled={separateNodes && !flat} />
+            {separateNodes && <ScreenNodeSeparation nodes={sceneNodes} active={active} onChange={receiveSeparation} onBusyChange={onRenderBusyChange}
+                pinned={markedRoots} />}
             <FitProbe nodes={renderedNodes} />
             <IdleAutoRotate controlsRef={controlsRef} enabled={!flat && idleRotation && !separateNodes} />
             <FrameRateMeter nodes={sceneNodes.length} edges={data.edges.length + (coverageShadow?.edges.length ?? 0)} cap={frameCap} />
@@ -938,9 +1075,18 @@ export function GraphScene({
                 dampingFactor={0.08}
                 rotateSpeed={0.5}
                 zoomSpeed={1.5}
+                /*
+                 * Aenderung 16: das Mausrad zoomt dorthin, wo der Zeiger steht,
+                 * und nicht in die Bildmitte (Review-Befund G3). three-stdlib
+                 * versetzt dabei auch den Drehpunkt; die Einpassung und jeder
+                 * Anflug setzen ihn ohnehin selbst, und die Grenzen der
+                 * Entfernung gelten fuer den neuen Abstand genauso.
+                 */
+                zoomToCursor
                 minDistance={Math.max(5, sceneRadius * 0.02)}
                 maxDistance={Math.max(sceneRadius, orbitReach) * 4}
                 autoRotateSpeed={0.4}
+                onStart={() => { moved.current = true; }}
             />
             {flat && <FlatTarget box={flatBox} controlsRef={controlsRef} />}
         </Canvas>
@@ -979,8 +1125,10 @@ export function computeFrameTarget(box: FrameBox, aspect: number): CameraTarget 
 export function computeFitTarget(
     nodes: readonly { x: number; y: number; z: number }[],
     aspect: number,
+    /* Der Punkt in der Bildmitte, etwa die Wurzel eines Scopes (Review-Befund G4). */
+    center?: { x: number; y: number; z: number },
 ): (CameraTarget & { fit: CameraFit }) | null {
-    const fit = fitCamera(nodes, GRAPH_CAMERA_FOV, aspect);
+    const fit = fitCamera(nodes, GRAPH_CAMERA_FOV, aspect, undefined, center);
     if (fit === null) {
         return null;
     }

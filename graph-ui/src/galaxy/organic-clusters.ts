@@ -279,10 +279,17 @@ export function layoutOrganicClusters(data: GraphData, options: OrganicClusterOp
     }), .006);
     const adjacent: number[][] = nodes.map(() => []);
     for (const pair of pairs) { adjacent[pair.a]!.push(pair.b); adjacent[pair.b]!.push(pair.a); }
+    const rootCount = nodes.filter(node => options.rootIds?.has(node.id)).length;
     const particles: Particle[] = nodes.map((node, index) => {
         const old = previous.get(node.id), anchor = anchors[groupIndex[index]!]!;
         const radius = 8 + 1.5 * Math.sqrt(Math.max(0, Number.isFinite(node.size) ? node.size : 1));
         if (old) return { x: old.x, y: old.y, z: old.z, radius, fixed: true, home: { x: old.x, y: old.y, z: old.z } };
+        // Pinned positions cannot be shifted, so a root they do not hold is
+        // placed at the origin directly instead of re-centering afterwards.
+        if (previous.size && options.rootIds?.has(node.id)) {
+            const offset = rootCount > 1 ? cloudPoint(`root:${node.id}`, 20) : { x: 0, y: 0, z: 0 };
+            return { ...offset, radius, fixed: rootCount === 1, home: { x: 0, y: 0, z: 0 } };
+        }
         const neighboringOld = adjacent[index]!.flatMap(neighbor => previous.has(nodes[neighbor]!.id) ? [previous.get(nodes[neighbor]!.id)!] : []);
         const home = neighboringOld.length ? { x: neighboringOld.reduce((sum, p) => sum + p.x, 0) / neighboringOld.length,
             y: neighboringOld.reduce((sum, p) => sum + p.y, 0) / neighboringOld.length, z: neighboringOld.reduce((sum, p) => sum + p.z, 0) / neighboringOld.length }
@@ -295,6 +302,8 @@ export function layoutOrganicClusters(data: GraphData, options: OrganicClusterOp
         distance: 42 + hash(`length:${nodes[pair.a]!.id}:${nodes[pair.b]!.id}`) / 0x100000000 * 26,
         strength: groupIndex[pair.a] === groupIndex[pair.b] ? .034 : .0015,
     }), .018);
+    // Roots sit at the origin: a fresh layout is re-centered on them, and an
+    // expansion keeps the earlier, already centered positions.
     const roots = nodes.flatMap((node, index) => options.rootIds?.has(node.id) ? [particles[index]!] : []);
     const origin = previous.size || !roots.length ? { x: 0, y: 0, z: 0 }
         : { x: roots.reduce((sum, p) => sum + p.x, 0) / roots.length, y: roots.reduce((sum, p) => sum + p.y, 0) / roots.length,
