@@ -215,6 +215,7 @@ import type { AgentsRuntime } from '../agents/agent-source';
 import { loadAgentsPreference, saveAgentsPreference } from '../agents/agent-preference';
 import type { AgentsPreference } from '../agents/agent-preference';
 import { fullscreenIsolationRequired, isolateFullscreenBackground } from './fullscreen-isolation';
+import { isTypingTarget } from '../app/keyboard';
 
 /**
  * Wie lange die Ereigniszeile des FOLLOW-Modus stehen bleibt.
@@ -1207,10 +1208,17 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
      * nicht". Der Abstand ist hier die Zahl der Hops und nur hier (G6); die
      * Wolke selbst behauptet keinen. Die Wahl haengt am Scope (`organicKey`):
      * eine neue Wurzel, Richtung oder Kantenart verwirft sie, ein Expand
-     * rechnet sie auf dem groesseren Bild neu.
+     * rechnet sie auf dem groesseren Bild neu. Verworfen heisst verworfen: wer
+     * die Richtung zurueckstellt oder dieselbe Wurzel neu waehlt, bekommt den
+     * alten Pfad nicht ungefragt wieder. Das Ziel behaelt seinen Namen, auch
+     * wenn ein entfernter Layer es aus dem Bild nimmt.
      */
-    const [trail, setTrail] = useState<{ key: string; kind: 'path'; target: number } | { key: string; kind: 'calls' }>();
+    const [trail, setTrail] = useState<{ key: string; kind: 'path'; target: number; name: string } | { key: string; kind: 'calls' }>();
     const [trailStep, setTrailStep] = useState(0);
+    useEffect(() => {
+        setTrail(current => (current && current.key !== organicKey ? undefined : current));
+        setTrailStep(0);
+    }, [organicKey]);
     const trailRoot = scope.result?.roots.size === 1 ? [...scope.result.roots][0] : undefined;
     const rootCalls = useMemo(() => (data && trailRoot !== undefined ? callOrder(data.edges, trailRoot) : []), [data, trailRoot]);
     const pathCandidates = useMemo(() => data?.nodes.filter(node => !scope.result?.roots.has(node.id)) ?? [], [data, scope.result]);
@@ -1223,7 +1231,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                 heading: galaxyPathText.callsHeading(trailRoot === undefined ? '' : nameOf(trailRoot), rootCalls.length) };
         }
         const steps: ScopePathStep[] | undefined = shortestScopePath(data.edges, scope.result.roots, trail.target, scope.direction);
-        const target = nameOf(trail.target);
+        const target = names.get(trail.target) ?? trail.name;
         return { nameOf, lines: false, labels: 'all' as const, steps: steps ?? [],
             heading: galaxyPathText.pathHeading(target, steps?.length ?? 0),
             note: steps === undefined ? galaxyPathText.noPath(target) : steps.length === 0 ? galaxyPathText.isRoot(target) : undefined };
@@ -1232,16 +1240,24 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     const trailIds = useMemo(() => trailView?.steps.length && scope.result ? pathNodes(trailView.steps, scope.result.roots) : undefined,
         [trailView, scope.result]);
     const clearTrail = useCallback(() => { setTrail(undefined); setTrailStep(0); }, []);
+    /*
+     * Escape gibt den Pfad frei, aber erst nach allen, die vorgehen: liegt eine
+     * Flaeche darueber (`escapeTaken`, dieselbe Reihenfolge wie beim
+     * Vollbild), gehoert die Taste ihr, und wer in einem Feld oder im Editor
+     * tippt, verlaesst mit Escape das Feld und nicht den Pfad.
+     */
+    const escapeTaken = props.escapeTaken === true;
     useEffect(() => {
-        if (!trailView) return;
+        if (!trailView || escapeTaken) return;
         const onKey = (event: globalThis.KeyboardEvent): void => {
             if (event.key !== 'Escape' || event.defaultPrevented) return;
+            if (isTypingTarget(event.target instanceof Element ? event.target : null)) return;
             event.preventDefault();
             clearTrail();
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [trailView, clearTrail]);
+    }, [trailView, escapeTaken, clearTrail]);
 
     const index = useMemo(
         () => (picture === undefined ? new Map<string, GraphNode>() : nodesByQualifiedName(picture.nodes)),
@@ -1727,9 +1743,8 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
      * die Oberflaeche legt, und zwar ZULETZT: liegt eine andere Flaeche darueber
      * (Hilfe, Einstiegsdialog, Suchfenster, Einstellungen), gehoert die Taste
      * ihr. Der Vollbildmodus reiht sich in die bestehende Reihenfolge ein, er
-     * draengt sich nicht vor.
+     * draengt sich nicht vor (`escapeTaken` steht beim Pfad weiter oben).
      */
-    const escapeTaken = props.escapeTaken === true;
     useEffect(() => {
         const node = panel.current;
         if (node === null || !fullscreenIsolationRequired(fullscreen, escapeTaken)) {
@@ -1810,6 +1825,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
             const selected = layoutNodeForSelection(layout, node) ?? layoutNodeForSelection(data, node) ?? node;
             props.onSelectNode?.(selected);
             if (props.workspaceExpanded) {
+                clearTrail();
                 scope.select({ kind: 'node', id: selected.id, name: selected.name, qualifiedName: selected.qualified_name });
                 setNote('');
                 return;
@@ -1821,19 +1837,20 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
             setNote('');
             onOpenNode(selected);
         },
-        [layout, data, picture, mode, flyTo, onOpenNode, props.onSelectNode, props.workspaceExpanded, scope.select],
+        [layout, data, picture, mode, flyTo, onOpenNode, props.onSelectNode, props.workspaceExpanded, scope.select, clearTrail],
     );
 
     const handleBackgroundClick = useCallback(() => {
         setBackgroundCleared(true);
         if (props.workspaceExpanded) setChosenMode('galaxy');
+        clearTrail();
         scope.reset();
         changeTraceTypes(undefined);
         setHighlighted(null);
         setNote(props.workspaceExpanded ? '' : mode === 'hierarchy' ? readerProjection?.message ?? HIERARCHY_NO_FOCUS_NOTE : GALAXY_NO_FOCUS_NOTE);
         refitNow();
         props.onClearSelection?.();
-    }, [mode, refitNow, props.onClearSelection, readerProjection, scope.reset, props.workspaceExpanded, changeTraceTypes]);
+    }, [mode, refitNow, props.onClearSelection, readerProjection, scope.reset, props.workspaceExpanded, changeTraceTypes, clearTrail]);
 
     /*
      * Die Vorgabe der Ansicht, mit der Wahl des Lesers darauf.
@@ -2312,7 +2329,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                 )}
             </header>
             {(props.workspaceExpanded || scope.scope) && <div className="atlas-graph-exploration" aria-label="Graph scope">
-                {props.workspaceExpanded && <GalaxyNavigator embedded nodes={layout?.nodes ?? []} project={project} fetch={fetchImpl} onSelect={handleNodeClick} onSelectScope={next => { props.onClearSelection?.(); setBackgroundCleared(false); scope.select(next); }} />}
+                {props.workspaceExpanded && <GalaxyNavigator embedded nodes={layout?.nodes ?? []} project={project} fetch={fetchImpl} onSelect={handleNodeClick} onSelectScope={next => { props.onClearSelection?.(); setBackgroundCleared(false); clearTrail(); scope.select(next); }} />}
                 {scope.scope ? <>
                     {props.workspaceExpanded && <button type="button" onClick={handleBackgroundClick}>All graph</button>}
                     <strong className="atlas-graph-scope-name" title={scope.scope.name}>{scope.scope.name}</strong>
@@ -2328,7 +2345,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                     <button type="button" disabled={scope.loading || scope.result?.exhausted}
                         onClick={() => scope.setDepth(scope.depth + 1)}>Expand +1</button>
                     {props.workspaceExpanded && mode === 'galaxy' && <>
-                        <PathPicker nodes={pathCandidates} onPick={node => { setTrail({ key: organicKey, kind: 'path', target: node.id }); setTrailStep(0); }} />
+                        <PathPicker nodes={pathCandidates} onPick={node => { setTrail({ key: organicKey, kind: 'path', target: node.id, name: node.name }); setTrailStep(0); }} />
                         <button type="button" disabled={rootCalls.length === 0} aria-pressed={trail?.key === organicKey && trail.kind === 'calls'}
                             title={rootCalls.length ? galaxyPathText.callOrderTitle : galaxyPathText.callOrderUnavailable}
                             onClick={() => { if (trail?.key === organicKey && trail.kind === 'calls') clearTrail(); else { setTrail({ key: organicKey, kind: 'calls' }); setTrailStep(0); } }}>

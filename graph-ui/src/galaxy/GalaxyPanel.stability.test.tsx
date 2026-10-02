@@ -159,3 +159,89 @@ it('highlights a path and the call order of the root inside the loaded scope, an
     await direction('outbound');
     expect(host.querySelector('[data-testid="atlas-galaxy-path-panel"]')).toBeNull();
 });
+
+const panel = () => host.querySelector('[data-testid="atlas-galaxy-path-panel"]');
+const traceDirection = (value: string) => act(async () => {
+    const select = host.querySelector<HTMLSelectElement>('select[aria-label="Trace direction"]')!;
+    select.value = value; select.dispatchEvent(new Event('change', { bubbles: true }));
+});
+const pickPath = (name: string) => act(async () => {
+    host.querySelector<HTMLDetailsElement>('.atlas-graph-path-picker')!.open = true;
+    [...host.querySelectorAll<HTMLButtonElement>('.atlas-graph-path-menu li button')]
+        .find(entry => entry.querySelector('strong')?.textContent === name)!.click();
+});
+
+it('drops a path on a new scope key, so returning to the old key does not bring it back', async () => {
+    await act(async () => root.render(<GalaxyPanel project="sample" visible workspaceExpanded onOpenNode={vi.fn()} fetch={graphFetch()} />));
+    await settle(() => expect(seam().nodes).toBe(5));
+    await act(async () => { seam().clickNode('sample.n1'); });
+    await settle(() => expect(seam().nodes).toBe(4));
+    await pickPath('n2');
+    expect(heading()).toBe('Path to n2 · 1 hop');
+
+    // Incoming and back to both directions: the same key as before, but the path is gone.
+    await traceDirection('inbound');
+    await settle(() => expect(seam().nodes).toBe(2));
+    expect(panel()).toBeNull();
+    await traceDirection('both');
+    await settle(() => expect(seam().nodes).toBe(4));
+    expect(panel()).toBeNull();
+    expect(scene.path).toBeUndefined();
+
+    // The whole graph and the same root again: a fresh picture without the old path.
+    await act(async () => button('Call order').click());
+    expect(heading()).toBe('Calls of n1 · 2 calls');
+    await act(async () => button('All graph').click());
+    await settle(() => expect(seam().nodes).toBe(5));
+    await act(async () => { seam().clickNode('sample.n1'); });
+    await settle(() => expect(seam().nodes).toBe(4));
+    expect(panel()).toBeNull();
+    expect(button('Call order').getAttribute('aria-pressed')).toBe('false');
+});
+
+it('leaves Escape to an overlay above the galaxy and to a field being typed in', async () => {
+    const fetch = graphFetch();
+    const panelWith = (escapeTaken: boolean) => <GalaxyPanel project="sample" visible workspaceExpanded escapeTaken={escapeTaken} onOpenNode={vi.fn()} fetch={fetch} />;
+    await act(async () => root.render(panelWith(false)));
+    await settle(() => expect(seam().nodes).toBe(5));
+    await act(async () => { seam().clickNode('sample.n1'); });
+    await settle(() => expect(seam().nodes).toBe(4));
+    await pickPath('n2');
+    expect(panel()).not.toBeNull();
+    const escape = (target: EventTarget) => {
+        const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+        act(() => { target.dispatchEvent(event); });
+        return event;
+    };
+
+    // Help, settings or projects lie above: the key is theirs.
+    await act(async () => root.render(panelWith(true)));
+    expect(escape(window).defaultPrevented).toBe(false);
+    expect(panel()).not.toBeNull();
+
+    // Typing in a field: Escape leaves the field, not the path.
+    await act(async () => root.render(panelWith(false)));
+    const field = host.querySelector<HTMLInputElement>('input[aria-label="Find a graph node"]')!;
+    expect(escape(field).defaultPrevented).toBe(false);
+    expect(panel()).not.toBeNull();
+
+    expect(escape(window).defaultPrevented).toBe(true);
+    expect(panel()).toBeNull();
+});
+
+it('keeps the picked name when a removed layer takes the path target out of the picture', async () => {
+    await act(async () => root.render(<GalaxyPanel project="sample" visible workspaceExpanded onOpenNode={vi.fn()} fetch={graphFetch()} />));
+    await settle(() => expect(seam().nodes).toBe(5));
+    await act(async () => { seam().clickNode('sample.n1'); });
+    await settle(() => expect(seam().nodes).toBe(4));
+    await act(async () => button('Expand +1').click());
+    await settle(() => expect(seam().nodes).toBe(5));
+    await pickPath('n4');
+    expect(heading()).toBe('Path to n4 · 2 hops');
+
+    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Remove graph layer"]')!.click());
+    await settle(() => expect(seam().nodes).toBe(4));
+    expect(heading()).toBe('Path to n4 · 0 hops');
+    expect(panel()?.textContent).toContain('No path to n4 over the loaded relationships');
+    expect(panel()?.textContent).not.toContain('#4');
+});
