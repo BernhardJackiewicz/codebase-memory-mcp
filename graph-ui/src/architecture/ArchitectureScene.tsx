@@ -6,6 +6,7 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import type { SemanticEdge, SemanticGraph, SemanticNode, SemanticPlatform } from './semantic-graph';
 import { languageColor, measureSourceNode, sourceBrickHeight, sourceLanguage, sourceNodeSizePercent, type SourceCatalog, type SourceMeasure } from './source-metrics';
 import { gravityPercent, gravityStrength, hotspotsForNode, type HotspotCatalog, type HotspotGroup } from './hotspot-map';
+import { labelEdges, labelInset, labelRect, labelsCollide, type LabelBox, type LabelRect } from './label-space';
 import { edgeColor, isDirectedEdge } from '../graph/edge-style';
 import { EdgePulseLayer } from '../graph/EdgePulseLayer';
 import './architecture-scene.css';
@@ -191,16 +192,20 @@ function HotspotLabels({ model, priorityId, onVisible }: { model: RenderGraph; p
     // Html labels mount where drei puts them: the event source, else the canvas parent.
     const labelHost = (events.connected as HTMLElement | undefined) ?? gl.domElement.parentElement;
     const previous = useRef('');
-    const boxes = useRef(new Map<string, [number, number]>());
+    const boxes = useRef(new Map<string, LabelBox>());
     const attempts = useRef(0);
     useEffect(() => { boxes.current.clear(); attempts.current = 0; }, [model]);
     useFrame(() => {
         const unmeasured = () => model.nodes.some(node => !boxes.current.has(node.id));
         if (unmeasured()) labelHost?.querySelectorAll<HTMLElement>('.architecture-node-label[data-node-id]').forEach(label => {
             // A selected label carries extra rows; it is the priority label and keeps its reserve below.
-            if (label.offsetWidth && !label.classList.contains('is-selected')) boxes.current.set(label.dataset.nodeId!, [label.offsetWidth, label.offsetHeight]);
+            if (!label.offsetWidth || label.classList.contains('is-selected')) return;
+            const [edgeX, edgeY] = labelEdges(getComputedStyle(label));
+            boxes.current.set(label.dataset.nodeId!, { width: label.offsetWidth, height: label.offsetHeight, edgeX, edgeY });
         });
-        const occupied: { left: number; right: number; top: number; bottom: number }[] = [];
+        // A measured label may overlap a neighbour by its padding, never by its text.
+        const inset = labelInset(boxes.current.values());
+        const occupied: LabelRect[] = [];
         const ids = new Set<string>();
         // Hotspot wells, then larger parts, claim their label space first.
         const ordered = [...model.nodes].sort((a, b) => Number(b.id === priorityId) - Number(a.id === priorityId)
@@ -209,13 +214,11 @@ function HotspotLabels({ model, priorityId, onVisible }: { model: RenderGraph; p
             const point = new Vector3(...node.position).add(new Vector3(0, dimensions(node)[1] + 7, 0)).project(camera);
             const x = (point.x + 1) * size.width / 2; const y = (1 - point.y) * size.height / 2;
             const box = boxes.current.get(node.id);
-            const width = box?.[0] ?? Math.min(178, Math.max(78, node.label.length * 7 + (node.gravityPercent === undefined ? 26 : 68)));
-            const halfHeight = node.id === priorityId ? 48 : (box?.[1] ?? 38) / 2;
-            // A measured label may overlap a neighbour by its padding, never by its text.
-            const [insetX, insetY] = box ? [6, 4] : [-5, 0];
-            const rect = { left: x - width / 2 + insetX, right: x + width / 2 - insetX, top: y - halfHeight + insetY, bottom: y + halfHeight - insetY };
+            const width = box?.width ?? Math.min(178, Math.max(78, node.label.length * 7 + (node.gravityPercent === undefined ? 26 : 68)));
+            const height = node.id === priorityId ? 96 : box?.height ?? 38;
+            const rect = labelRect(x, y, width, height, box ? inset : [-5, 0]);
             if (node.id !== priorityId && (rect.right < 0 || rect.left > size.width || rect.bottom < 0 || rect.top > size.height
-                || occupied.some(other => rect.left < other.right && rect.right > other.left && rect.top < other.bottom && rect.bottom > other.top))) continue;
+                || occupied.some(other => labelsCollide(rect, other)))) continue;
             ids.add(node.id); occupied.push(rect);
         }
         const key = [...ids].sort().join('|');
