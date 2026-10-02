@@ -1140,6 +1140,72 @@ TEST(projection_repeated_behavior_evidence_preserves_base_graph_under_budget) {
     PASS();
 }
 
+/* Shaped like Django 5.2.7 (12,700 mostly single-symbol components, far below
+ * the node and edge budgets): one full overview entry per component used to
+ * exceed the 32 MB response budget, so the whole projection came back
+ * limited and empty. The overview now lists a bounded, ranked subset and
+ * still accounts for every component through its groups and totals. */
+TEST(projection_many_small_components_stay_within_response_budget) {
+    cbm_store_t *store = projection_store();
+    ASSERT_NOT_NULL(store);
+    enum { parts = 14000 };
+    char padding[161];
+    memset(padding, 'x', sizeof(padding) - 1);
+    padding[sizeof(padding) - 1] = '\0';
+    ASSERT_EQ(cbm_store_begin(store), CBM_STORE_OK);
+    for (int i = 0; i < parts; i++) {
+        char qn[256], file[256];
+        snprintf(qn, sizeof(qn), "projection.area%d.%s%05d.Part", i % 8, padding, i);
+        snprintf(file, sizeof(file), "src/area%d/%.*s%05d.py", i % 8, 120, padding, i);
+        ASSERT_TRUE(projection_node(store, "Class", qn, file, false) > 0);
+    }
+    ASSERT_EQ(cbm_store_commit(store), CBM_STORE_OK);
+    char *json = NULL;
+    ASSERT_EQ(cbm_store_architecture_projection(store, "projection", NULL, &json), CBM_STORE_OK);
+    ASSERT_NULL(strstr(json, "exceeded its memory budget"));
+    /* architecture_jobs.c rejects results above 8 MiB. */
+    ASSERT_TRUE(strlen(json) < 8 * 1024 * 1024);
+    yyjson_doc *doc = yyjson_read(json, strlen(json), 0);
+    ASSERT_NOT_NULL(doc);
+    ASSERT_STR_EQ(yyjson_get_str(projection_field(doc, "status")), "ready");
+    ASSERT_EQ(yyjson_get_int(yyjson_obj_get(projection_field(doc, "totals"), "components")), parts);
+    yyjson_val *displayed = projection_field(doc, "components");
+    ASSERT_EQ(yyjson_arr_size(displayed), 256);
+    yyjson_val *overview = projection_field(doc, "overview"),
+               *listed = yyjson_obj_get(overview, "components"),
+               *groups = yyjson_obj_get(overview, "groups");
+    size_t listed_count = yyjson_arr_size(listed);
+    ASSERT_TRUE(listed_count >= 512);
+    ASSERT_TRUE(listed_count < parts);
+    ASSERT_FALSE(yyjson_get_bool(yyjson_obj_get(overview, "complete")));
+    ASSERT_EQ(
+        yyjson_get_int(yyjson_obj_get(yyjson_obj_get(overview, "limits"), "omitted_components")),
+        parts - (int)listed_count);
+    ASSERT_EQ(yyjson_get_int(yyjson_obj_get(yyjson_obj_get(overview, "totals"), "components")),
+              parts);
+    /* Every displayed component keeps its overview entry. */
+    for (size_t i = 0; i < yyjson_arr_size(displayed); i++) {
+        const char *id = yyjson_get_str(yyjson_obj_get(yyjson_arr_get(displayed, i), "id"));
+        bool found = false;
+        for (size_t j = 0; j < listed_count && !found; j++)
+            found = !strcmp(id, yyjson_get_str(yyjson_obj_get(yyjson_arr_get(listed, j), "id")));
+        ASSERT_TRUE(found);
+    }
+    size_t membership = 0;
+    int members = 0;
+    for (size_t i = 0; i < yyjson_arr_size(groups); i++) {
+        yyjson_val *group = yyjson_arr_get(groups, i);
+        membership += yyjson_arr_size(yyjson_obj_get(group, "component_ids"));
+        members += yyjson_get_int(yyjson_obj_get(group, "member_count"));
+    }
+    ASSERT_EQ(membership, parts);
+    ASSERT_EQ(members, parts);
+    yyjson_doc_free(doc);
+    free(json);
+    cbm_store_close(store);
+    PASS();
+}
+
 SUITE(architecture_projection) {
     RUN_TEST(projection_accounts_for_isolated_nodes_and_files);
     RUN_TEST(projection_preserves_typed_edges_and_contiguous_paths);
@@ -1165,4 +1231,5 @@ SUITE(architecture_projection) {
     RUN_TEST(projection_missing_corrupt_and_noncall_arguments_remain_unknown);
     RUN_TEST(projection_oversized_evidence_is_omitted_without_truncating_values);
     RUN_TEST(projection_repeated_behavior_evidence_preserves_base_graph_under_budget);
+    RUN_TEST(projection_many_small_components_stay_within_response_budget);
 }

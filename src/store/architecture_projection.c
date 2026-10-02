@@ -19,7 +19,12 @@ enum {
     AP_ARGUMENT_LIMIT = 8,
     AP_SIGNATURE_BYTES = 4096,
     AP_VALUE_BYTES = 1024,
-    AP_PARAMETER_LIMIT = 64
+    AP_PARAMETER_LIMIT = 64,
+    /* Overview entries carry a full representative symbol (about 1.3 KB of
+     * mutable JSON each). Django 5.2.7 has 12,700 components: listing all of
+     * them took half of AP_JSON_BUDGET before any other section. Keep it at
+     * least the max_components ceiling (512) so displayed parts stay listed. */
+    AP_OVERVIEW_COMPONENTS = 4096
 };
 enum { AP_EVIDENCE_CONTEXT, AP_EVIDENCE_CORRIDOR, AP_EVIDENCE_PATH, AP_EVIDENCE_SCOPES };
 
@@ -68,7 +73,7 @@ static const char *const ap_types[] = {
     "IMPLEMENTS", "INHERITS",   "CONFIGURES", "WRITES",         "READS",          "USAGE",
     "PUBLISHES",  "SUBSCRIBES", "DEFINES",    "DEFINES_METHOD", "CONTAINS",       "EMITS",
     "LISTENS_ON", "HANDLES",    "DATA_FLOWS", "INFRA_MAPS"};
-enum { AP_DEFINES = 14, AP_METHOD = 15, AP_CONTAINS = 16 };
+enum { AP_DEFINES = 14, AP_METHOD = 15, AP_CONTAINS = 16, AP_HANDLES = 19 };
 
 typedef struct {
     int64_t id;
@@ -89,6 +94,7 @@ typedef struct {
 typedef struct {
     int root, members, files, atoms, representative, degree, displayed;
     int overview_group;
+    bool listed;
     char *directory;
     int samples[AP_REPRESENTATIVES], sample_count;
 } ap_component;
@@ -1278,7 +1284,7 @@ static int ap_overview(ap_context *c, yyjson_mut_doc *doc, yyjson_mut_val *root)
     yyjson_mut_obj_add_val(doc, overview, "connections", connections);
     yyjson_mut_obj_add_val(doc, overview, "totals", totals);
     yyjson_mut_obj_add_val(doc, overview, "limits", limits);
-    int connection_count = 0, shown = 0;
+    int connection_count = 0, shown = 0, omitted_parts = 0;
     if (!c->limited) {
         for (int g = 0; g < c->group_count; g++) {
             ap_overview_group *group = &c->groups[g];
@@ -1309,8 +1315,14 @@ static int ap_overview(ap_context *c, yyjson_mut_doc *doc, yyjson_mut_val *root)
             if (ap_stopped(c))
                 return CBM_STORE_ERR;
         }
+        /* Groups above keep every component id and count; only the detailed
+         * entries are bounded, in display rank order. */
         for (int i = 0; i < c->component_count; i++) {
             ap_component *part = &c->components[i];
+            if (!part->listed) {
+                omitted_parts++;
+                continue;
+            }
             yyjson_mut_val *value = yyjson_mut_obj(doc), *reps = yyjson_mut_arr(doc);
             char id[48];
             ap_component_id(c, i, id);
@@ -1369,12 +1381,14 @@ static int ap_overview(ap_context *c, yyjson_mut_doc *doc, yyjson_mut_val *root)
         }
         free(edges);
     }
-    yyjson_mut_obj_add_bool(doc, overview, "complete", !c->limited && shown == connection_count);
+    yyjson_mut_obj_add_bool(doc, overview, "complete",
+                            !c->limited && shown == connection_count && !omitted_parts);
     yyjson_mut_obj_add_int(doc, totals, "groups", c->limited ? 0 : c->group_count);
     yyjson_mut_obj_add_int(doc, totals, "components", c->limited ? 0 : c->component_count);
     yyjson_mut_obj_add_int(doc, totals, "accounted_nodes", c->limited ? 0 : c->accounted);
     yyjson_mut_obj_add_int(doc, totals, "connections", connection_count);
     yyjson_mut_obj_add_int(doc, limits, "omitted_connections", connection_count - shown);
+    yyjson_mut_obj_add_int(doc, limits, "omitted_components", omitted_parts);
     return CBM_STORE_OK;
 }
 
@@ -1732,30 +1746,35 @@ static int ap_render(ap_context *c, const char *project, char **out_json) {
     bool paths_truncated = false;
     int rc = CBM_STORE_OK;
     ap_dep *deps = NULL;
-    if (ap_overview(c, doc, root) != CBM_STORE_OK) {
-        rc = CBM_STORE_ERR;
-        goto done;
-    }
     if (!c->limited) {
         /* Prefer the largest connected candidates, retaining deterministic IDs.
-         * Never relabel discarded components as a single invented component. */
+         * Never relabel discarded components as a single invented component.
+         * The same rank bounds the overview entries, which therefore always
+         * include every displayed component. */
         ap_rank *ranks = malloc(((size_t)c->component_count + 1) * sizeof(*ranks));
         if (!ranks) {
             rc = CBM_STORE_ERR;
             goto done;
         }
-        for (int i = 0; i < c->component_count; i++) {
-            c->components[i].displayed = -1;
+        for (int i = 0; i < c->component_count; i++)
             ranks[i] = (ap_rank){i, c->components[i].members, c->components[i].degree};
-        }
         qsort(ranks, (size_t)c->component_count, sizeof(*ranks), ap_rank_compare);
-        for (int pick = 0; pick < c->options.max_components && pick < c->component_count; pick++)
-            c->components[ranks[pick].index].displayed = shown++;
+        for (int pick = 0; pick < c->component_count; pick++) {
+            ap_component *part = &c->components[ranks[pick].index];
+            part->displayed = pick < c->options.max_components ? shown++ : -1;
+            part->listed = pick < AP_OVERVIEW_COMPONENTS;
+        }
         free(ranks);
         if (ap_stopped(c)) {
             rc = CBM_STORE_ERR;
             goto done;
         }
+    }
+    if (ap_overview(c, doc, root) != CBM_STORE_OK) {
+        rc = CBM_STORE_ERR;
+        goto done;
+    }
+    if (!c->limited) {
         for (int i = 0; i < c->component_count; i++) {
             ap_component *p = &c->components[i];
             if (p->displayed < 0)
