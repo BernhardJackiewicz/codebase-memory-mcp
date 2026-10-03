@@ -20,3 +20,8 @@
 .container-mode button[aria-pressed=true] { color:#d9ece5; background:#243d35; border-color:#638d7b; }
 .container-mode button:focus-visible { outline:2px solid #8ce9f7; outline-offset:3px; }
 @media(max-width:760px) { .container-projects { padding:12px; } .container-map .spatial-map { height:540px; } }
+/* A project without Compose files is an answer, not a warning; a read failure keeps the warning tone. */
+.container-discovery { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; padding:12px 20px; }
+.container-discovery p { margin:0; }
+.container-discovery[data-discovery=none], .container-discovery[data-discovery=reading] { color:var(--spatial-muted); font-size:12px; }
+.container-discovery .spatial-primary { border-color:#449e7b; background:#16322b; color:#90f0c9; }

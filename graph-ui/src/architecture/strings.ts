@@ -80,4 +80,12 @@ export const architectureText = {
     behaviorLimited: 'The analysis returned no call evidence.',
     includeTestRoutes: (hidden: number) => hidden ? `Include test routes (${hidden.toLocaleString()} hidden)` : 'Include test routes',
     showRoutes: (count: number) => `Show these ${count.toLocaleString()} routes →`,
+    /** Routes › Service map: what the deployment inventory read found. */
+    serviceMap: {
+        reading: 'Finding indexed Compose definitions…',
+        none: 'No Docker Compose deployment files were found in this index. Endpoints shows the routes.',
+        failed: 'Could not read the indexed deployment files. Refresh to try again.',
+        compareFailed: 'Could not read that project. Its index may be unavailable.',
+    },
+    showEndpoints: 'Show endpoints →',
 };

@@ -53,6 +53,23 @@ describe('service map interactions', () => {
         expect(button('Open declaration')).toBeUndefined();
         expect(clear).toHaveBeenCalledOnce();
     });
+    it('says plainly that a project has no deployment files and leads to its endpoints', async () => {
+        vi.mocked(loadContainerInventory).mockResolvedValue({ project: 'p', rootPath: '/p', files: new Map(), manifests: [], warnings: [] });
+        const showEndpoints = vi.fn();
+        await act(async () => root.render(<ContainerMap project="p" active filter="" onNavigate={vi.fn()} onShowEndpoints={showEndpoints} />));
+        expect(container.textContent).toContain('No Docker Compose deployment files were found in this index. Endpoints shows the routes.');
+        expect(container.textContent).not.toContain('Could not read');
+        await act(async () => button('Show endpoints →').click());
+        expect(showEndpoints).toHaveBeenCalledOnce();
+        expect(loadContainerTopology).not.toHaveBeenCalled();
+    });
+    it('keeps a failed read distinct from a project without deployment files', async () => {
+        vi.mocked(loadContainerInventory).mockRejectedValue(new Error('query_graph: Incomplete query results'));
+        await act(async () => root.render(<ContainerMap project="p" active filter="" onNavigate={vi.fn()} onShowEndpoints={vi.fn()} />));
+        expect(container.textContent).toContain('Could not read the indexed deployment files. Refresh to try again.');
+        expect(container.textContent).not.toContain('No Docker Compose deployment files');
+        expect(button('Show endpoints →')).toBeUndefined();
+    });
     it('does not request deployment source while the workspace is inactive', async () => {
         await act(async () => root.render(<ContainerMap project="p" active={false} filter="" onNavigate={vi.fn()} />));
         expect(loadContainerTopology).not.toHaveBeenCalled(); expect(loadContainerInventory).not.toHaveBeenCalled();
