@@ -16,8 +16,13 @@
  * -Filter, System-Fokus und aufgeklappte Gruppen, Behavior-Start und die
  * Tooltips von Zurueck und Vor gemessen. Danach Alt+Links/Rechts (auch beim
  * Tippen im Filter, wo sie nichts tun duerfen), ein Sprung aus "Recent",
- * eine neue Navigation nach Zurueck (Vor faellt weg), Galaxy als eigener
- * Arbeitsbereich und der Projektwechsel nach cbm (frischer Verlauf).
+ * eine neue Navigation nach Zurueck (Vor faellt weg) und Galaxy als eigener
+ * Arbeitsbereich. Nach der Pruefung (Review zu K27) dazu: Plan oder 3D in
+ * System structure und in Behavior als Schritt, der Stand in einer Aufrufkette
+ * (Pfad und Operation), der nach Zurueck und Vor wieder da ist, Text im
+ * Routen-Filter, der beim sofortigen Zurueck nicht verloren geht, und an jedem
+ * Schritt kein zweites "← Back" mehr in den Ansichten. Zum Schluss der
+ * Projektwechsel nach cbm (frischer Verlauf).
  *
  * Jeder Schritt schreibt ein Bild <out>/NN-name.png; <out>/index.md fuehrt
  * jedes Bild mit dem, was es zeigt, und dem Messwert, <out>/report.json alle
@@ -57,7 +62,9 @@ function check(id, title, pass, measured) {
 async function shot(page, name, note, measured) {
     counter += 1;
     const file = `${String(counter).padStart(2, '0')}-${name}.png`;
-    await page.evaluate(() => { const section = document.querySelector('.atlas-architecture'); if (section) section.scrollTop = 0; });
+    // Ein Klick tief in der Ansicht (Next, ein Pfad) rollt den Container, der ihn haelt; das Bild zeigt die Reiter und den Verlauf.
+    await page.evaluate(() => { window.scrollTo(0, 0); for (const element of document.querySelectorAll('*')) if (element.scrollTop > 0) element.scrollTop = 0; });
+    await wait(150);
     await page.screenshot({ path: join(OUT, file) });
     images.push({ file, note, measured });
 }
@@ -74,7 +81,9 @@ async function state(page) {
         const button = (label) => { const element = history?.querySelector(`button[aria-label="${label}"]`); return element ? { disabled: element.disabled, title: element.getAttribute('title') } : null; };
         const location = root.querySelector('[aria-label="Architecture location"]');
         const select = root.querySelector('select[aria-label="Behavior entry point"]');
+        const destination = root.querySelector('select[aria-label="Behavior destination"]');
         const systemLabels = [...root.querySelectorAll('.system-scene-node-label')];
+        const paths = [...root.querySelectorAll('[aria-label="Indexed paths"] button')];
         return {
             view: root.querySelector('.atlas-arch-tab[aria-pressed="true"]')?.getAttribute('data-view') ?? null,
             trail: location ? [...location.children].filter((element) => element.tagName === 'BUTTON' || (element.tagName === 'SPAN' && element.textContent !== '/')).map((element) => element.textContent) : null,
@@ -86,6 +95,13 @@ async function state(page) {
             expanded: systemLabels.filter((element) => element.dataset.expanded === 'true').map((element) => text(element.querySelector('strong'))),
             heading: text(root.querySelector('.behavior-heading h2')),
             start: select ? text(select.selectedOptions[0]) : null,
+            destination: destination ? text(destination.selectedOptions[0]) : null,
+            systemCamera: text(root.querySelector('[aria-label="System camera"] button[aria-pressed="true"]')),
+            behaviorCamera: text(root.querySelector('[aria-label="Behavior camera"] button[aria-pressed="true"]')),
+            chain: text(root.querySelector('[aria-label="Walk the call chain"] span')),
+            path: paths.length ? paths.findIndex((element) => element.getAttribute('aria-pressed') === 'true') + 1 : null,
+            /* Das "← Back", das System structure und Behavior frueher in der eigenen Leiste hatten. */
+            inViewBack: [...root.querySelectorAll('button')].filter((element) => element.textContent?.trim() === '← Back').length,
             back: button('Back'), forward: button('Forward'),
             position: history?.getAttribute('data-position') ?? null,
             recent: [...(history?.querySelectorAll('[aria-label="Recently visited places"] li button') ?? [])].map((element) => ({
@@ -144,7 +160,9 @@ page.on('pageerror', (error) => { pageErrors.push(error.message); console.error(
 
 /** Die Schritte des Hinwegs: was jeder zeigt und wie sein Tooltip ihn nennt. */
 const steps = [];
-async function record(name, note, expected, label) {
+async function record(name, note, expectedHere, label) {
+    // An jedem Schritt: ein Zurueck fuer ganz Architecture, keines mehr in den Ansichten.
+    const expected = { ...expectedHere, inViewBack: 0 };
     const measured = await settle(page, expected);
     const misses = matches(measured, expected);
     steps.push({ name, expected, label });
@@ -315,6 +333,118 @@ try {
     measured = await state(page);
     check('G-separate', 'Alt+Links in Galaxy aendert den Architecture-Verlauf nicht', workspace === 'galaxy' && measured?.view === 'hotspots' && measured.position === before, { workspace, before, after: measured?.position, view: measured?.view });
 
+    // Plan oder 3D in System structure ist ein Schritt, den Zurueck wiederherstellt
+    const structureLabel = `System structure · ${group.name} · 1 group open`;
+    await tab(page, 'structure').click();
+    await page.waitForFunction(() => document.querySelectorAll('.atlas-architecture .system-scene-node-label[data-kind="group"]').length > 0, null, { timeout: 180000 });
+    measured = await settle(page, { view: 'structure', focus: [group.name], systemCamera: '3D' });
+    await page.locator('.atlas-architecture [aria-label="System camera"] button', { hasText: /^Plan$/ }).click();
+    const structurePlan = { view: 'structure', systemCamera: 'Plan', focus: [group.name], inViewBack: 0, back: { disabled: false, title: `Back to ${structureLabel} (Alt+Left)` } };
+    measured = await settle(page, structurePlan);
+    check('S-plan', 'System structure: Plan ist ein eigener Schritt, Zurueck nennt die 3D-Ansicht', matches(measured, structurePlan).length === 0, { misses: matches(measured, structurePlan), measured });
+    await shot(page, 'structure-plan', `System structure in Plan; Zurueck nennt ${structureLabel}`, measured);
+    await tab(page, 'overview').click();
+    const leftPlan = { view: 'overview', back: { disabled: false, title: `Back to ${structureLabel} · Plan (Alt+Left)` } };
+    measured = await settle(page, leftPlan);
+    check('S-plan-label', 'Overview danach: Zurueck nennt System structure mit Plan', matches(measured, leftPlan).length === 0, { misses: matches(measured, leftPlan), measured });
+    await historyButton(page, 'Back').click();
+    const backPlan = { view: 'structure', systemCamera: 'Plan', focus: [group.name], expanded: [group.name], inViewBack: 0 };
+    measured = await settle(page, backPlan);
+    check('S-plan-back', 'Zurueck: System structure kommt in Plan wieder, mit Fokus und Gruppe', matches(measured, backPlan).length === 0, { misses: matches(measured, backPlan), measured });
+    await shot(page, 'structure-plan-zurueck', 'Zurueck auf System structure: wieder in Plan, Fokus und Gruppe wie vorher', measured);
+    await historyButton(page, 'Back').click();
+    const back3d = { view: 'structure', systemCamera: '3D', focus: [group.name] };
+    measured = await settle(page, back3d);
+    check('S-3d-back', 'Noch einmal Zurueck: System structure in 3D', matches(measured, back3d).length === 0, { misses: matches(measured, back3d), measured });
+    await shot(page, 'structure-3d-zurueck', 'Noch einmal Zurueck: System structure in 3D', measured);
+
+    // Behavior: Pfad, Operation in der Aufrufkette und Plan oder 3D gehoeren zum Eintrag
+    await tab(page, 'behavior').click();
+    await page.waitForFunction(() => /What can .+ call\?/.test(document.querySelector('.behavior-heading h2')?.textContent ?? ''), null, { timeout: 180000 });
+    await page.waitForFunction(() => [...document.querySelectorAll('select[aria-label="Behavior entry point"] option')].some((option) => /^handle · .*loaddata\.py$/.test(option.textContent.trim())), null, { timeout: 180000 });
+    const startOptions = await select.locator('option').allTextContents();
+    await select.selectOption({ index: startOptions.findIndex((option) => /^handle · .*loaddata\.py$/.test(option.trim())) });
+    await page.waitForFunction(() => document.querySelector('.behavior-heading h2')?.textContent === 'What can handle call?', null, { timeout: 180000 });
+    await page.waitForFunction(() => document.querySelectorAll('.atlas-architecture select[aria-label="Behavior destination"] option').length > 1, null, { timeout: 180000 });
+    const destination = page.locator('.atlas-architecture select[aria-label="Behavior destination"]');
+    const destinations = await destination.locator('option').evaluateAll((elements) => elements.map((element) => ({ value: element.value, text: element.textContent?.trim() ?? '' })));
+    const reach = destinations.find((option) => /^CommandError · /.test(option.text)) ?? destinations[1];
+    const reachName = reach.text.split(' · ')[0];
+    await destination.selectOption(reach.value);
+    await page.waitForFunction(() => /^1 \/ \d+$/.test(document.querySelector('[aria-label="Walk the call chain"] span')?.textContent ?? ''), null, { timeout: 180000 });
+    const reachLabel = `Behavior · handle → ${reachName}`;
+    measured = await settle(page, { view: 'behavior', heading: `handle → ${reachName}`, chain: /^1 \/ \d+$/ });
+    const operations = Number(measured?.chain?.split(' / ')[1] ?? 0);
+    const manyPaths = (measured?.path ?? 0) > 0;
+    await shot(page, 'behavior-ziel', `Behavior: handle bis ${reachName}, ${operations} Operationen, ${manyPaths ? 'mehrere Pfade' : 'ein Pfad'}`, measured);
+    await page.locator('.atlas-architecture [aria-label="Walk the call chain"] button', { hasText: /^Next/ }).click();
+    const walked = { view: 'behavior', chain: `2 / ${operations}`, back: { disabled: false, title: 'Back to Behavior · handle (Alt+Left)' } };
+    measured = await settle(page, walked);
+    check('J-walk', 'Next in der Aufrufkette ist kein eigener Schritt: Zurueck nennt weiter den Start ohne Ziel', operations >= 3 && matches(measured, walked).length === 0, { operations, misses: matches(measured, walked), measured });
+    await shot(page, 'behavior-kette-2', `Behavior: Operation 2 von ${operations}; Zurueck nennt Behavior · handle`, measured);
+    let pathLabel = reachLabel;
+    let secondOperations = operations;
+    if (manyPaths) {
+        await page.locator('.atlas-architecture [aria-label="Indexed paths"] button').nth(1).click();
+        measured = await settle(page, { view: 'behavior', path: 2, chain: /^1 \/ \d+$/, back: { disabled: false, title: `Back to ${reachLabel} (Alt+Left)` } });
+        check('J-path', 'Ein anderer Pfad zum Ziel ist ein Schritt', measured?.path === 2 && measured?.back?.title === `Back to ${reachLabel} (Alt+Left)`, measured);
+        secondOperations = Number(measured?.chain?.split(' / ')[1] ?? 0);
+        pathLabel = `${reachLabel} · Path 2`;
+        await shot(page, 'behavior-pfad-2', `Behavior: Pfad 2; Zurueck nennt ${reachLabel}`, measured);
+    }
+    await page.locator('.atlas-architecture [aria-label="Behavior camera"] button', { hasText: /^Plan$/ }).click();
+    const behaviorPlan = { view: 'behavior', behaviorCamera: 'Plan', inViewBack: 0, back: { disabled: false, title: `Back to ${pathLabel} (Alt+Left)` } };
+    measured = await settle(page, behaviorPlan);
+    check('J-plan', 'Behavior: Plan ist ein eigener Schritt', matches(measured, behaviorPlan).length === 0, { misses: matches(measured, behaviorPlan), measured });
+    await shot(page, 'behavior-plan', `Behavior in Plan; Zurueck nennt ${pathLabel}`, measured);
+    await tab(page, 'overview').click();
+    measured = await settle(page, { view: 'overview', back: { disabled: false, title: `Back to ${pathLabel} · Plan (Alt+Left)` } });
+    check('J-plan-label', 'Overview danach: Zurueck nennt Behavior mit Pfad und Plan', measured?.back?.title === `Back to ${pathLabel} · Plan (Alt+Left)`, measured?.back);
+    await historyButton(page, 'Back').click();
+    const againPlan = { view: 'behavior', heading: `handle → ${reachName}`, behaviorCamera: 'Plan', chain: `1 / ${secondOperations}`, ...(manyPaths ? { path: 2 } : {}) };
+    measured = await settle(page, againPlan);
+    check('J-back-plan', 'Zurueck: Behavior kommt in Plan wieder, auf demselben Pfad', matches(measured, againPlan).length === 0, { misses: matches(measured, againPlan), measured });
+    await shot(page, 'behavior-plan-zurueck', 'Zurueck auf Behavior: Plan und Pfad wie vorher', measured);
+    await historyButton(page, 'Back').click();
+    const again3d = { view: 'behavior', behaviorCamera: '3D', ...(manyPaths ? { path: 2 } : { chain: `2 / ${operations}` }) };
+    measured = await settle(page, again3d);
+    check('J-back-3d', 'Noch einmal Zurueck: Behavior in 3D', matches(measured, again3d).length === 0, { misses: matches(measured, again3d), measured });
+    await shot(page, 'behavior-3d-zurueck', 'Noch einmal Zurueck: Behavior in 3D', measured);
+    if (manyPaths) {
+        await historyButton(page, 'Back').click();
+        const againWalked = { view: 'behavior', heading: `handle → ${reachName}`, path: 1, chain: `2 / ${operations}`, behaviorCamera: '3D' };
+        measured = await settle(page, againWalked);
+        check('J-back-step', 'Zurueck auf Pfad 1: die Kette steht wieder auf Operation 2', matches(measured, againWalked).length === 0, { misses: matches(measured, againWalked), measured });
+        await shot(page, 'behavior-kette-zurueck', `Zurueck auf Pfad 1: wieder Operation 2 von ${operations}`, measured);
+        await historyButton(page, 'Forward').click();
+        measured = await settle(page, { view: 'behavior', path: 2, behaviorCamera: '3D' });
+    }
+    await historyButton(page, 'Forward').click();
+    measured = await settle(page, againPlan);
+    check('J-forward-plan', 'Vor: Behavior wieder in Plan auf demselben Pfad', matches(measured, againPlan).length === 0, { misses: matches(measured, againPlan), measured });
+    await shot(page, 'behavior-plan-vor', 'Vor auf Behavior: Plan und Pfad wieder da', measured);
+
+    // Tippen im Routen-Filter und sofort Zurueck: der Text geht nicht verloren
+    await tab(page, 'routes').click();
+    measured = await settle(page, { view: 'routes' });
+    const filterBefore = measured?.filter ?? '';
+    const perspectiveName = measured?.perspective ?? 'Endpoints';
+    await page.locator('.atlas-architecture input[type="search"]').click();
+    await page.keyboard.press('ControlOrMeta+A');
+    await page.keyboard.type('/adm');
+    const typedAt = Date.now();
+    await historyButton(page, 'Back').click();
+    const typingElapsed = Date.now() - typedAt;
+    const typedBack = { view: 'routes', filter: filterBefore, forward: { disabled: false, title: `Forward to Routes · ${perspectiveName} · /adm (Alt+Right)` } };
+    measured = await settle(page, typedBack);
+    check('T-back', 'Getippt und sofort Zurueck (vor der Pause von 600 ms): Zurueck verlaesst den Text, Vor nennt ihn', typingElapsed < 600 && matches(measured, typedBack).length === 0,
+        { typingElapsed, misses: matches(measured, typedBack), measured });
+    await shot(page, 'tippen-zurueck', `Nach "/adm" sofort Zurueck (${typingElapsed} ms): Filter ${JSON.stringify(filterBefore)}, Vor nennt /adm`, measured);
+    await historyButton(page, 'Forward').click();
+    measured = await settle(page, { view: 'routes', filter: '/adm' });
+    check('T-forward', 'Vor: der getippte Text ist wieder da', measured?.filter === '/adm', measured);
+    await shot(page, 'tippen-vor', 'Vor: Routes mit dem Filter /adm', measured);
+
     // Projektwechsel nach cbm: frischer Verlauf
     await page.locator('.atlas-shell details summary', { hasText: PROJECT }).first().click();
     const entry = page.locator('.atlas-project-results button', { has: page.locator('.atlas-project-result-name', { hasText: new RegExp(`^${CONTROL}$`) }) }).first();
@@ -345,7 +475,7 @@ await context.close();
 
 const lines = ['# K27: Zurueck und Vor in Architecture', '', `Ursprung ${ORIGIN}, Projekt ${PROJECT}, Kontrolle ${CONTROL}, Ansicht ${VIEWPORT.width}x${VIEWPORT.height}, ohne Fenster.`, '',
     ...checks.map((item) => `- ${item.pass ? 'PASS' : 'FAIL'} ${item.id}: ${item.title}`), '', '| Bild | Zeigt | Gemessen |', '|---|---|---|',
-    ...images.map((item) => `| ${item.file} | ${item.note} | ${item.measured ? `${item.measured.view ?? ''} · ${JSON.stringify(item.measured.trail ?? '')} · ${item.measured.perspective ?? ''} · filter ${JSON.stringify(item.measured.filter)} · focus ${JSON.stringify(item.measured.focus)} · ${item.measured.heading ?? ''} · ${item.measured.position ?? ''} · ${item.measured.back?.title ?? ''} / ${item.measured.forward?.title ?? ''}`.replaceAll('|', '/') : ''} |`), ''];
+    ...images.map((item) => `| ${item.file} | ${item.note} | ${item.measured ? `${item.measured.view ?? ''} · ${JSON.stringify(item.measured.trail ?? '')} · ${item.measured.perspective ?? ''} · filter ${JSON.stringify(item.measured.filter)} · focus ${JSON.stringify(item.measured.focus)} · system ${item.measured.systemCamera ?? '-'} · ${item.measured.heading ?? ''} · behavior ${item.measured.behaviorCamera ?? '-'} · path ${item.measured.path ?? '-'} · chain ${item.measured.chain ?? '-'} · in-view Back ${item.measured.inViewBack ?? '-'} · ${item.measured.position ?? ''} · ${item.measured.back?.title ?? ''} / ${item.measured.forward?.title ?? ''}`.replaceAll('|', '/') : ''} |`), ''];
 await writeFile(join(OUT, 'index.md'), lines.join('\n'));
 await writeFile(join(OUT, 'report.json'), JSON.stringify({ origin: ORIGIN, project: PROJECT, control: CONTROL, checks }, null, 2));
 const failed = checks.filter((item) => !item.pass);
