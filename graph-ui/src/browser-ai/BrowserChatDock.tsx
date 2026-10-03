@@ -146,6 +146,8 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     const [explanation, setExplanation] = useState<Explanation>();
     const explanations = useRef(new Map<string, Explanation>());
     const symbolSources = useRef(new Map<string, Promise<BrowserChatSource | undefined>>());
+    /** The same sources once read, for answers listed at once from the graph. */
+    const readSources = useRef(new Map<string, BrowserChatSource>());
     const [retryExplanation, setRetryExplanation] = useState(0);
     const autoRun = useRef<{ key: string; cancelled: boolean; settled: Promise<void> } | undefined>(undefined);
     const manualRequest = useRef<{ cancelled: boolean } | undefined>(undefined);
@@ -215,7 +217,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     useEffect(() => {
         if (historyProject.current === historyKey) return;
         historyProject.current = historyKey;
-        explanations.current.clear(); symbolSources.current.clear(); resetProject();
+        explanations.current.clear(); symbolSources.current.clear(); readSources.current.clear(); resetProject();
         setSelectedContext([]); setHandledContextId(undefined); setNewExplanation(false);
     }, [historyKey]);
     useEffect(() => {
@@ -303,12 +305,20 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const cache = symbolSources.current;
         let read = cache.get(target.qualifiedName);
         if (!read) {
-            read = readSource(target.qualifiedName, { maxLines: SYMBOL_SOURCE_LINES }).then(snippet => symbolSource(target, snippet, 'indexed-snippet'),
-                () => { cache.delete(target.qualifiedName); return undefined; });
+            read = readSource(target.qualifiedName, { maxLines: SYMBOL_SOURCE_LINES }).then(snippet => {
+                const source = symbolSource(target, snippet, 'indexed-snippet');
+                if (source) readSources.current.set(target.qualifiedName, source);
+                return source;
+            }, () => { cache.delete(target.qualifiedName); return undefined; });
             cache.set(target.qualifiedName, read);
             while (cache.size > SOURCE_CACHE_SIZE) cache.delete(cache.keys().next().value!);
         }
         return read;
+    };
+    /** A source already at hand, so a listed answer does not claim "Source unavailable". */
+    const knownSource = (context: BrowserChatContext): BrowserChatSource | undefined => {
+        const target = sourceTargetOf(context);
+        return carriedSource(context) ?? (target ? readSources.current.get(target.qualifiedName) : undefined);
     };
     const remember = (entry: Explanation): void => {
         const cache = explanations.current;
@@ -505,7 +515,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const listed = !retry && !source ? relationshipAnswer(prompt, [...currentGraph, ...extra]) : undefined;
         if (listed) {
             setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, context: extra, topic,
-                evidence: prepareExplanationContext(undefined, listed.context, chatEvidence), modelId: model.id, request: [],
+                evidence: prepareExplanationContext(undefined, listed.context, chatEvidence, knownSource(listed.context)), modelId: model.id, request: [],
                 answer: listed.markdown, status: 'complete', answeredFrom: 'graph' }]);
             consume();
             return;
@@ -514,7 +524,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const suggested = !retry && !source ? relationshipSuggestion(prompt, [...currentGraph, ...extra]) : undefined;
         if (suggested) {
             setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, context: extra, topic,
-                evidence: prepareExplanationContext(undefined, suggested.context, chatEvidence), modelId: model.id, request: [],
+                evidence: prepareExplanationContext(undefined, suggested.context, chatEvidence, knownSource(suggested.context)), modelId: model.id, request: [],
                 answer: suggested.markdown, status: 'complete', answeredFrom: 'suggestion', suggestion: { question: suggested.question, context: suggested.context } }]);
             consume();
             return;
@@ -603,7 +613,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const listed = turn.suggestion && relationshipAnswer(turn.suggestion.question, [turn.suggestion.context]);
         if (!listed) return;
         setTurns(previous => previous.map(item => item.id === turn.id ? { ...item, answer: listed.markdown, answeredFrom: 'graph', suggestion: undefined,
-            evidence: prepareExplanationContext(undefined, listed.context, chatEvidence) } : item));
+            evidence: prepareExplanationContext(undefined, listed.context, chatEvidence, knownSource(listed.context)) } : item));
     };
     const deleteCache = async (): Promise<void> => {
         if (pending.current) return;

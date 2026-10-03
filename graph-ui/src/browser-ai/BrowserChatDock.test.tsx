@@ -1314,6 +1314,11 @@ describe('grounded automatic explanations (K14, K7)', () => {
         await type('What does it configure?'); await click('Send ↑');
         expect(readSource).toHaveBeenCalledOnce();
         expect(runtime.chat.mock.calls[1][0].at(-1)!.content).toContain('function = "JSONB_AGG"');
+        // A listed answer does not claim the source is unavailable once it was read.
+        await type('Who calls JSONBAgg?'); await click('Send ↑');
+        const listed = [...container.querySelectorAll('.cbm-chat-turn')].at(-1)!.querySelector('.cbm-chat-source-content')!;
+        expect(listed.textContent).not.toContain('Source unavailable');
+        expect(listed.textContent).toContain('class JSONBAgg(OrderableAggMixin, Aggregate):');
     });
 
     it('shows only the listed facts when the model names what the evidence lacks', async () => {
