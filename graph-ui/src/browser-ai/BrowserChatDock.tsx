@@ -263,7 +263,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         if (!settingsOpen || !focusOutputLimit.current) return;
         focusOutputLimit.current = false;
         const field = document.getElementById('cbm-chat-output-tokens');
-        if (field instanceof HTMLInputElement) { field.focus(); field.select(); field.scrollIntoView?.({ block: 'center' }); }
+        if (field instanceof HTMLInputElement) { field.focus({ preventScroll: true }); field.select(); field.scrollIntoView?.({ block: 'nearest' }); }
     }, [settingsOpen]);
     const openOutputLimit = (): void => { focusOutputLimit.current = true; setSettingsOpen(true); };
     const limitNote = (shortened: boolean | undefined, limit: TokenLimits | undefined, automatic?: boolean): LimitNote | undefined => shortened
