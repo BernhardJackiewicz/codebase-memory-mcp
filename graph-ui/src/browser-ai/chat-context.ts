@@ -27,7 +27,9 @@ export function followedTopic(turns: readonly BrowserChatTurn[], scope: string):
     for (let index = turns.length - 1; index >= 0; index--) {
         const topic = turns[index].topic;
         if (!topic || turns[index].answeredFrom === 'local') continue;
-        const [turnScope] = JSON.parse(topic.key) as [string];
+        // Stored history is data: a damaged key ends the follow-up instead of the send.
+        let turnScope: unknown;
+        try { [turnScope] = JSON.parse(topic.key) as unknown[]; } catch { return undefined; }
         return turnScope === scope && (topic.kind === 'attachment' || topic.kind === 'context') ? topic : undefined;
     }
     return undefined;

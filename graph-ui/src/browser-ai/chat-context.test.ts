@@ -50,5 +50,6 @@ describe('what a question is about', () => {
         expect(followedTopic([turn(attached)], 'p:explore')).toBeUndefined();
         expect(followedTopic([turn(attached), turn(selected)], 'p:galaxy')).toBeUndefined();
         expect(followedTopic([], 'p:galaxy')).toBeUndefined();
+        expect(followedTopic([turn({ key: '{damaged', label: 'x', kind: 'attachment' })], 'p:galaxy')).toBeUndefined();
     });
 });
