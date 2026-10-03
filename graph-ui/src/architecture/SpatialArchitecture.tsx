@@ -124,11 +124,31 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
         target: nodesById.get(edge.target)?.label ?? edge.target, type: edge.type, count: edge.count,
         evidence: edge.evidence.slice(0, 24).map(item => ({ ...item, source: graphNodeEvidence(item.source), target: graphNodeEvidence(item.target) })),
         omittedEvidence: Math.max(0, edge.evidence.length - 24) });
+    // Inside an opened area, file or hotspot area with nothing selected, the chat explains that scope (K7):
+    // its measure, the parts shown, its hotspot findings and the connections between the parts.
+    const openedEvidence = () => {
+        const scopeNode = (kind: 'area' | 'file', path: string): SemanticNode => ({ id: `${kind}:${path}`, kind, label: path, detail: '', position: [0, 0, 0], count: 0, members: [],
+            ...kind === 'area' ? { areaPath: path } : { filePath: path } });
+        // Largest first, areas before files: the first parts named are the ones that make up the area.
+        const parts = model.nodes.filter(node => (node.kind === 'area' || node.kind === 'file') && !node.external)
+            .map(node => ({ node, measure: measureSourceNode(node, catalog) }))
+            .sort((a, b) => a.node.kind !== b.node.kind ? a.node.kind === 'area' ? -1 : 1 : (b.measure?.lines ?? -1) - (a.measure?.lines ?? -1) || (a.node.label < b.node.label ? -1 : 1));
+        const links = [...model.edges].sort((a, b) => b.count - a.count);
+        return {
+            selected: { areaPath, filePath, hotspotArea, measurement: openedScope?.measure,
+                hotspots: hotspotArea ? hotspotCatalog.byArea.get(hotspotArea) : filePath ? hotspotsForNode(scopeNode('file', filePath), hotspotCatalog) : areaPath ? hotspotsForNode(scopeNode('area', areaPath), hotspotCatalog) : undefined,
+                parts: hotspotArea ? [] : parts.slice(0, 24).map(({ node, measure }) => ({ kind: node.kind, label: node.label, files: measure?.files, lines: measure?.lines })),
+                partCount: hotspotArea ? 0 : parts.length, outside: hotspotArea ? [] : model.nodes.filter(node => node.external).slice(0, 24).map(node => node.label) },
+            relationships: hotspotArea ? undefined : { count: links.length, items: links.slice(0, 24).map(edge => ({ source: nodesById.get(edge.source)?.label ?? edge.source,
+                target: nodesById.get(edge.target)?.label ?? edge.target, type: edge.type, count: edge.count })), omitted: Math.max(0, links.length - 24) },
+        };
+    };
+    const opened = !selectedNode && !selectedEdge && (areaPath || filePath || hotspotArea) ? openedEvidence() : undefined;
     useSelectionEvidence(onSelectionEvidence, selectedNode || selectedEdge || areaPath || filePath || hotspotArea ? {
         project, generation, view: `architecture-${view}`, source: 'indexed repository graph and architecture summary',
         label: selectedNode?.label ?? (selectedEdge ? `${nodesById.get(selectedEdge.source)?.label} → ${nodesById.get(selectedEdge.target)?.label}` : filePath ?? areaPath ?? hotspotArea ?? model.title),
-        selected: selectedEdge ? edgeEvidence(selectedEdge) : selectedNode ? { ...nodeEvidence(selectedNode), measurement: selectedMeasure, hotspots: selectedHotspots } : { areaPath, filePath, hotspotArea },
-        relationships: selectedNode ? { count: edges.length, items: edges.slice(0, 24).map(edgeEvidence), omitted: Math.max(0, edges.length - 24) } : undefined,
+        selected: selectedEdge ? edgeEvidence(selectedEdge) : selectedNode ? { ...nodeEvidence(selectedNode), measurement: selectedMeasure, hotspots: selectedHotspots } : opened?.selected,
+        relationships: selectedNode ? { count: edges.length, items: edges.slice(0, 24).map(edgeEvidence), omitted: Math.max(0, edges.length - 24) } : opened?.relationships,
         scope: { view, areaPath, filePath, hotspotArea, visibleNodes: model.nodes.length, visibleEdges: model.edges.length },
         limitations: { omittedNodes: model.omittedNodes, omittedEdges: model.omittedEdges, warnings: model.warnings,
             graphNote, interpretation: 'Source areas group source locations. Hotspots measure static references, not runtime frequency. Relationships do not prove execution.' },

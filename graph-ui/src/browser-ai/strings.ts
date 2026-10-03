@@ -196,7 +196,14 @@ export const architectureWords = {
     more: (value: number) => `+${count(value)} more`,
     selected: (kind: string, name: string, detail?: string) => `Selected ${kind}: ${name}${detail ? ` (${detail})` : ''}.`,
     selectedSymbol: (symbol: string) => `Selected symbol: ${symbol}.`,
-    opened: (path: string) => `Opened: ${path}.`,
+    openedArea: (path: string) => `Opened source area: ${path}.`,
+    openedFile: (path: string) => `Opened file: ${path}.`,
+    openedHotspots: (path: string) => `Opened hotspot area: ${path}.`,
+    scopePart: (name: string, kind: string, files?: number, lines?: number) =>
+        `${name} (${kind}${files !== undefined ? `, ${plural(files, 'file', 'files')}` : ''}${lines !== undefined ? `, ${plural(lines, 'indexed line', 'indexed lines')}` : ''})`,
+    parts: (items: readonly string[], total: number) => `Parts shown (${count(total)}, largest first): ${items.join(', ')}${total > items.length ? `; ${count(total - items.length)} more` : ''}.`,
+    outside: (name: string) => `${name} (outside)`,
+    partConnections: (described: readonly string[], omitted: number) => `Connections of its parts: ${described.join('; ')}${omitted ? `; ${plural(omitted, 'more connection', 'more connections')} not listed` : ''}.`,
     measured: (lines: number, measured: number, files: number, languages: readonly string[]) =>
         `${plural(lines, 'indexed line', 'indexed lines')} in ${plural(measured, 'measured file', 'measured files')} of ${count(files)}${languages.length ? `; files by language: ${languages.join(', ')}` : ''}.`,
     fanIn: (value: number) => `fan-in ${count(value)}`,
