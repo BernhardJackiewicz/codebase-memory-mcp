@@ -1101,7 +1101,10 @@ describe('graph answers and answer limits', () => {
             const note = container.querySelector<HTMLDetailsElement>('.cbm-chat-explanation details.cbm-chat-limit-note');
             expect(note?.querySelector('summary')?.textContent).toBe('Token limit reached: the answer was cut short');
             expect(note?.textContent).toContain('Automatic explanations stop after 128 output tokens');
+            // Both limits it ran into, as the note of a question names them: the input limit too.
+            expect(note?.textContent).toContain('read at most 1,536 input tokens');
             expect(note?.textContent).toContain('up to 512 output tokens');
+            expect(note?.textContent).toContain('2,048 input tokens');
         } finally { vi.useRealTimers(); }
     });
 

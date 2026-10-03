@@ -88,13 +88,13 @@ function SourceDisclosure({ children, title }: { children?: ReactNode; title?: s
 
 /** Where an answer stopped and what can be changed: the limits it ran into, the way to
  * the output limit and the larger models with their download. */
-interface LimitNote { limit: TokenLimits; automatic?: boolean; chatOutput: number; model: BrowserModel; onChangeOutput: () => void }
-function TokenLimitNote({ limit, automatic, chatOutput, model, onChangeOutput }: LimitNote): JSX.Element {
+interface LimitNote { limit: TokenLimits; automatic?: boolean; chat: TokenLimits; model: BrowserModel; onChangeOutput: () => void }
+function TokenLimitNote({ limit, automatic, chat, model, onChangeOutput }: LimitNote): JSX.Element {
     const larger = BROWSER_MODELS.filter(candidate => candidate.availability === 'available' && candidate.bytes > model.bytes);
     return <details className="cbm-chat-limit-note">
         <summary>{browserChatText.shortened}</summary>
-        <p>{automatic ? browserChatText.limitAutomatic(limit.outputTokens, chatOutput) : browserChatText.limitReached(limit.inputTokens, limit.outputTokens)}</p>
-        <p>{browserChatText.outputRoom(chatOutput, model.maxOutputTokens)}</p>
+        <p>{automatic ? browserChatText.limitAutomatic(limit.inputTokens, limit.outputTokens, chat.inputTokens, chat.outputTokens) : browserChatText.limitReached(limit.inputTokens, limit.outputTokens)}</p>
+        <p>{browserChatText.outputRoom(chat.outputTokens, model.maxOutputTokens)}</p>
         <button type="button" onClick={onChangeOutput}>{browserChatText.changeOutputLimit}</button>
         {larger.length > 0 && <><p>{browserChatText.largerModels}</p>
             <ul>{larger.map(candidate => <li key={candidate.id}>{browserChatText.modelDownload(candidate.displayName, sizeLabel(candidate.bytes))}</li>)}</ul></>}
@@ -296,7 +296,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     }, [settingsOpen]);
     const openOutputLimit = (): void => { focusOutputLimit.current = true; setSettingsOpen(true); };
     const limitNote = (shortened: boolean | undefined, limit: TokenLimits | undefined, automatic?: boolean): LimitNote | undefined => shortened
-        ? { limit: limit ?? (automatic ? { inputTokens: autoInput, outputTokens: autoOutput } : limits), automatic, chatOutput: limits.outputTokens, model, onChangeOutput: openOutputLimit } : undefined;
+        ? { limit: limit ?? (automatic ? { inputTokens: autoInput, outputTokens: autoOutput } : limits), automatic, chat: limits, model, onChangeOutput: openOutputLimit } : undefined;
     useEffect(() => {
         const run = autoRun.current;
         if (run && !run.cancelled && (run.key !== selected?.key || !automatic || !proactive)) {
