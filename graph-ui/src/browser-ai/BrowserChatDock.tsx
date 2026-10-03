@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type JSX, type Re
 import type { BrowserAiProgress } from './browser-ai-controller';
 import { createBrowserChatRuntime, type BrowserChatRuntime } from './browser-ai-runtime';
 import { BROWSER_MODELS, getBrowserModel, isBrowserModelCached, removeBrowserModelCache, type BrowserModel } from './model-policy';
-import { takeAgentResume } from './agent-resume';
+import { keepAgent, offerAgent, peekAgent, takeAgent, type AgentHandover } from './agent-handover';
 import { buildChatMessages, selectionLocation, snapshotAttachment, snapshotReaderContext, trimChatHistory, type BrowserChatAttachment, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatSource, type BrowserChatTurn } from './chat-model';
 import { explanationInput, EXPLANATION_DELAY_MS, type ExplanationInput } from './proactive-selection';
 import { prepareExplanationContext, selectionSummary, type PreparedExplanationContext } from './explanation-context';
@@ -175,7 +175,8 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     // Evidence for a manual question grows with the input limit: about 1.5 characters per
     // token leave room for the question, history and instructions (2048 tokens: 3200).
     const chatEvidence = Math.max(800, Math.floor(limits.inputTokens * 25 / 16));
-    const [phase, setPhase] = useState<Phase>('off');
+    // A model handed over by the dock of the last project is loaded from the first frame (K24).
+    const [phase, setPhase] = useState<Phase>(() => { const handover = peekAgent(model.id); return !handover ? 'off' : handover.ready ? 'preparing' : handover.settled ? 'counting' : 'ready'; });
     const { draft, setDraft, turns, setTurns, ready: historyReady, historyNotice, clearHistory } = useChatHistory<ChatTurn>(historyKey);
     const [error, setError] = useState<string>();
     const [runtimeFailed, setRuntimeFailed] = useState(false);
@@ -196,6 +197,8 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     const runtime = useRef<BrowserChatRuntime | undefined>(undefined);
     /** The model the worker was created for; the stored choice can change in another tab. */
     const runtimeModel = useRef<string | undefined>(undefined);
+    /** The model still loading, so a project switch can hand it over unfinished (K24). */
+    const loading = useRef<Promise<void> | undefined>(undefined);
     const epoch = useRef(0);
     const pending = useRef(false);
     const stopRequested = useRef(false);
@@ -206,24 +209,37 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     const input = useRef<HTMLTextAreaElement>(null);
     const busy = phase === 'preparing' || phase === 'counting' || phase === 'generating' || phase === 'removing';
 
-    useEffect(() => () => { epoch.current += 1; runtime.current?.dispose(); runtime.current = undefined; }, []);
     useEffect(() => {
-        // A model active before a project switch comes back, as does the chosen one when asked
-        // to load on start; both only from the cache (K10, K24).
-        const resume = takeAgentResume();
+        // A project switch hands this dock the model of the last project's dock (K24).
+        const handover = takeAgent(model.id);
+        if (handover) adopt(handover);
+        const withdraw = offerAgent(handOver);
+        return () => {
+            withdraw(); epoch.current += 1;
+            const current = runtime.current, id = runtimeModel.current;
+            runtime.current = undefined; runtimeModel.current = undefined;
+            // Inside a switch (also React's development double effect) the model stays for the next dock.
+            if (current && !(id && keepAgent(handoverOf(current, id)))) current.dispose();
+        };
+    }, []);
+    useEffect(() => {
+        // The chosen model loads on start when asked to, only from the cache (K10).
         let alive = true;
         void Promise.all(BROWSER_MODELS.filter(candidate => candidate.availability === 'available').map(async candidate => [candidate.id, await isCached(candidate.id)] as const))
             .then(entries => {
                 if (!alive) return;
                 const found = new Set(entries.filter(([, inCache]) => inCache).map(([id]) => id));
                 setCached(found);
-                if ((resume || preferences.autoLoad) && found.has(model.id) && !runtime.current && !pending.current) void prepare(true);
+                if (preferences.autoLoad && found.has(model.id) && !runtime.current && !pending.current) void prepare(true);
             });
         return () => { alive = false; };
     }, []);
     useEffect(() => {
         if (historyProject.current === historyKey) return;
+        const previous = historyProject.current;
         historyProject.current = historyKey;
+        // The first project of this window is no switch: there is nothing of another project to drop.
+        if (previous === undefined) return;
         explanations.current.clear(); symbolSources.current.clear(); readSources.current.clear(); resetProject();
         setSelectedContext([]); setHandledContextId(undefined); setNewExplanation(false);
     }, [historyKey]);
@@ -442,6 +458,42 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             pending.current = false; stopRequested.current = false; setStopping(false); setPhase('ready');
         });
     };
+    const handoverOf = (current: BrowserChatRuntime, modelId: string): AgentHandover => ({ runtime: current, modelId,
+        ...operationSettled.current ? { settled: operationSettled.current } : {}, ...loading.current ? { ready: loading.current } : {} });
+    /** Gives the model to the dock of the next project (K24). What this dock was doing stops,
+     * and its late results land nowhere: its epoch has moved on. */
+    const handOver = (): AgentHandover | undefined => {
+        const current = runtime.current, id = runtimeModel.current;
+        if (!current || !id) return undefined;
+        if (autoRun.current) autoRun.current.cancelled = true;
+        if (manualRequest.current) manualRequest.current.cancelled = true;
+        epoch.current += 1; current.stop();
+        const handover = handoverOf(current, id);
+        runtime.current = undefined; runtimeModel.current = undefined;
+        return handover;
+    };
+    /** The model the last project's dock handed over: no new worker and no second load. A
+     * stopped answer settles, and a model still loading finishes, before this project uses it. */
+    const adopt = (handover: AgentHandover): void => {
+        const adopted = handover.runtime;
+        runtime.current = adopted; runtimeModel.current = handover.modelId;
+        adopted.setFatalHandler?.(failure => { if (runtime.current === adopted) invalidateRuntime(failure); });
+        const waiting = handover.ready ?? handover.settled;
+        if (!waiting) { setPhase('ready'); return; }
+        const ticket = epoch.current;
+        pending.current = true;
+        if (handover.ready) { loading.current = handover.ready; setPhase('preparing'); }
+        else { stopRequested.current = true; setStopping(true); setPhase('counting'); }
+        void waiting.then(() => {
+            if (epoch.current !== ticket || runtime.current !== adopted) return;
+            pending.current = false; stopRequested.current = false; loading.current = undefined; setStopping(false);
+            if (handover.ready) setCached(previous => new Set(previous).add(handover.modelId));
+            setPhase('ready');
+        }, (failure: unknown) => {
+            if (epoch.current !== ticket || runtime.current !== adopted) return;
+            release(); setError(messageOf(failure));
+        });
+    };
     const release = (): void => {
         if (manualRequest.current) manualRequest.current.cancelled = true;
         manualRequest.current = undefined; operationSettled.current = undefined; setQuestionQueued(false);
@@ -451,7 +503,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         if (id) setTurns(previous => previous.map(turn => turn.id === id ? { ...turn, status: 'stopped' } : turn));
         epoch.current += 1; pending.current = false; activeTurn.current = undefined;
         stopRequested.current = false; setStopping(false);
-        runtime.current?.dispose(); runtime.current = undefined; runtimeModel.current = undefined;
+        runtime.current?.dispose(); runtime.current = undefined; runtimeModel.current = undefined; loading.current = undefined;
         setProgress(undefined); setPhase('off'); setRuntimeFailed(false);
     };
     const invalidateRuntime = (failure: unknown): void => {
@@ -469,8 +521,11 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             const nextRuntime = createRuntime(model.id);
             runtime.current = nextRuntime; runtimeModel.current = model.id;
             nextRuntime.setFatalHandler?.(failure => { if (runtime.current === nextRuntime) invalidateRuntime(failure); });
-            await nextRuntime.prepare(value => { if (epoch.current === ticket) setProgress(value); }, cacheOnly ? { cacheOnly } : undefined);
+            const loaded = nextRuntime.prepare(value => { if (epoch.current === ticket) setProgress(value); }, cacheOnly ? { cacheOnly } : undefined);
+            loading.current = loaded;
+            await loaded;
             if (epoch.current !== ticket) return;
+            loading.current = undefined;
             setCached(previous => new Set(previous).add(model.id));
             setPhase('ready'); setProgress(undefined); setSettingsOpen(false); pending.current = false;
         } catch (failure) {

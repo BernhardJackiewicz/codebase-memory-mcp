@@ -1494,14 +1494,12 @@ describe('a cached model across reloads and project switches (K10, K24)', () => 
         expect(props.createRuntime).not.toHaveBeenCalled();
     });
 
-    it('resumes a model that was active before a project switch, once, without the automatic option', async () => {
-        window.sessionStorage.setItem('cbm-agent-resume', JSON.stringify({ at: Date.now() }));
-        const { props, runtime } = fixture();
+    it('does not load by itself on a page that opens after another project, without the automatic option', async () => {
+        // A project switch stays in the page and hands the model over (BrowserChatDock.handover.test.tsx);
+        // a page that is opened or reloaded starts with the agent off unless asked to load on start.
+        const { props } = fixture();
         await render({ ...props, isCached: vi.fn(async () => true) });
-        expect(props.createRuntime).toHaveBeenCalledOnce();
-        expect(runtime.prepare.mock.calls[0][1]).toEqual({ cacheOnly: true });
-        // A later reload of this tab starts with the agent off again.
-        expect(JSON.parse(window.sessionStorage.getItem('cbm-agent-resume')!).page).toBe(performance.timeOrigin);
+        expect(props.createRuntime).not.toHaveBeenCalled();
     });
 });
 

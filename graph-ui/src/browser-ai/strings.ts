@@ -139,7 +139,7 @@ export const browserChatText = {
     cached: 'Cached',
     loadCached: 'Load model (cached, no download)',
     autoLoad: 'Load the chosen model on start when it is cached',
-    autoLoadNote: 'Only from this browser\'s cache; nothing is downloaded on start. Switching projects keeps a loaded model either way.',
+    autoLoadNote: 'Only from this browser\'s cache; nothing is downloaded on start. A project switch stays in this page and keeps a loaded model without loading it again, so this option only matters when the page is opened or reloaded.',
     resumeFailed: 'The cached model could not be loaded without a download. Load it in the agent configuration.',
     /** Under an answer that names what its source and graph facts do not contain (K12). */
     unsupportedNames: (names: readonly string[]) => `Not in the source or graph facts this answer was given: ${names.join(', ')}. Check these names before relying on them.`,
