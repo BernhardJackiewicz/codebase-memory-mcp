@@ -166,13 +166,13 @@ export const browserChatText = {
 /** The chat's own reply when a question has no code or graph context (K11), in the language of the question. */
 export const browserChatContextText = {
     en: {
-        nothingSelected: 'Nothing is selected for me to explain yet. Select a node in Galaxy or a part in Architecture, or open a file in Explore, then ask again.',
+        nothingSelected: 'Nothing is selected for me to explain. Select a node in Galaxy or a part in Architecture, or open a file in Explore, then ask again.',
         noFileOpen: 'No file is open in Explore. Open a file, or mark code in it, then ask again.',
         sourceUnavailable: (path: string) => `The source of \`${path.replace(/`/g, "'")}\` is not available. Open the file again or choose another one, then ask again.`,
         notAsked: 'Answered without the model: without code or graph facts it could only guess.',
     },
     de: {
-        nothingSelected: 'Es ist noch nichts ausgewählt, das ich erklären könnte. Wähle einen Knoten in Galaxy oder einen Teil in Architecture, oder öffne eine Datei in Explore, und frage dann noch einmal.',
+        nothingSelected: 'Es ist nichts ausgewählt, das ich erklären könnte. Wähle einen Knoten in Galaxy oder einen Teil in Architecture, oder öffne eine Datei in Explore, und frage dann noch einmal.',
         noFileOpen: 'In Explore ist keine Datei geöffnet. Öffne eine Datei oder markiere Code darin und frage dann noch einmal.',
         sourceUnavailable: (path: string) => `Der Quelltext von \`${path.replace(/`/g, "'")}\` ist nicht verfügbar. Öffne die Datei noch einmal oder wähle eine andere und frage dann noch einmal.`,
         notAsked: 'Ohne das Modell beantwortet: ohne Code oder Graph-Fakten könnte es nur raten.',

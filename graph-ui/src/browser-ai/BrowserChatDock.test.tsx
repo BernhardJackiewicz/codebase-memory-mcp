@@ -311,7 +311,7 @@ describe('persistent local browser chat', () => {
         expect(onContextRemoved).toHaveBeenCalledExactlyOnceWith('galaxy-1'); expect(onContextConsumed).not.toHaveBeenCalled();
         await click('Download & load'); await type('Question'); await click('Send ↑');
         expect(runtime.chat).not.toHaveBeenCalled();
-        expect(container.querySelector('.cbm-chat-answer-text')?.textContent).toContain('Nothing is selected for me to explain yet.');
+        expect(container.querySelector('.cbm-chat-answer-text')?.textContent).toContain('Nothing is selected for me to explain.');
     });
 
     it('keeps a newer graph selection when an earlier send finishes checking context', async () => {

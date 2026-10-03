@@ -16,8 +16,8 @@ describe('questions without context (K11)', () => {
     });
 
     it('names what is missing and how to give context, without blaming the model', () => {
-        expect(missingContextAnswer('was kannst du mir über den code sagen')).toMatch(/^Es ist noch nichts ausgewählt.*Wähle einen Knoten in Galaxy.*öffne eine Datei in Explore/);
-        expect(missingContextAnswer('test')).toMatch(/^Nothing is selected for me to explain yet\. Select a node in Galaxy/);
+        expect(missingContextAnswer('was kannst du mir über den code sagen')).toMatch(/^Es ist nichts ausgewählt.*Wähle einen Knoten in Galaxy.*öffne eine Datei in Explore/);
+        expect(missingContextAnswer('test')).toMatch(/^Nothing is selected for me to explain\. Select a node in Galaxy/);
         expect(missingContextAnswer('what is this?', { project: 'p', status: 'empty' })).toMatch(/^No file is open in Explore\./);
         expect(missingContextAnswer('what is this?', { project: 'p', path: 'a.yml', status: 'unavailable' })).toMatch(/^The source of `a\.yml` is not available\./);
         expect(missingContextAnswer('test')).toContain('_Answered without the model');
