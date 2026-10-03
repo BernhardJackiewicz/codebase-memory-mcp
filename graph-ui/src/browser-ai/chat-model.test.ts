@@ -125,5 +125,16 @@ describe('browser chat context', () => {
         expect(system.content).toContain('never name tools, libraries, languages or values that are not in the file');
         expect(user.content).toBe('was kannst du mir über dieses aktuelle File sagen');
     });
+
+    it('gives the model the jobs, triggers and actions of a workflow counted from the file (K12)', () => {
+        const text = 'name: New contributor message\n\non:\n  pull_request_target:\n    types: [opened]\n\njobs:\n  build:\n    name: Hello new contributor\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/first-interaction@v1\n';
+        const workflow = { project: 'django-demo', path: '.github/workflows/new_contributor_pr.yml', status: 'ready' as const, source: { ...source, kind: 'file' as const,
+            project: 'django-demo', path: '.github/workflows/new_contributor_pr.yml', text } };
+        const [system] = buildChatMessages([], 'Wie viele Jobs gibt es?', undefined, [], workflow);
+        expect(system.content).toContain('Facts read from the file (counted, not guessed):\n- Workflow name: `New contributor message`.\n- Trigger: `pull_request_target` (types: opened).\n- 1 job: `build`');
+        // A marked part of the file is not the whole workflow: nothing is counted from it.
+        const marked = { ...workflow, source: { ...workflow.source, kind: 'selection' as const } };
+        expect(buildChatMessages([], 'Wie viele Jobs gibt es?', undefined, [], marked)[0].content).not.toContain('Facts read from the file');
+    });
 });
 

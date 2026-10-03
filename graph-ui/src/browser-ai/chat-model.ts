@@ -1,6 +1,8 @@
 import type { BrowserChatMessage } from './browser-ai-runtime';
 import type { ChatTopic } from './chat-context';
 import { fileKind } from './file-kind';
+import { readerFacts } from './workflow-facts';
+import { workflowWords } from './strings';
 
 /** An immutable snapshot, not a live reference to the reader selection. */
 export interface BrowserChatAttachment {
@@ -81,10 +83,11 @@ export function snapshotReaderContext(context?: BrowserChatReaderContext): Brows
         ...(currentSource ? { source: currentSource } : {}) };
 }
 
-/** What the open file is and what an answer about it may say (K12). */
+/** What the open file is, what is counted from it, and what an answer about it may say (K12). */
 function readerRules(context: BrowserChatReaderContext): string {
     const kind = fileKind(context.source?.path ?? context.path ?? '');
-    return `${kind ? `\nThe current file is a ${kind}.` : ''}\nAnswer from the current file and describe what it literally contains. Unless the user asks for it, do not write new code, scripts or commands, `
+    const facts = readerFacts(context);
+    return `${kind ? `\nThe current file is a ${kind}.` : ''}${facts.length ? `\n${workflowWords.heading}\n${facts.map(line => `- ${line}`).join('\n')}` : ''}\nAnswer from the current file and describe what it literally contains. Unless the user asks for it, do not write new code, scripts or commands, `
         + 'and never name tools, libraries, languages or values that are not in the file. Do not repeat the file; summarize it. If the file does not answer the question, say so.';
 }
 

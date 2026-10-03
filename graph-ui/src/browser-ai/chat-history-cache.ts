@@ -79,6 +79,7 @@ function isPreparedEvidence(value: unknown): value is PreparedExplanationContext
     return isObject(value) && typeof value.label === 'string' && typeof value.fallback === 'string'
         && typeof value.characterCount === 'number' && Number.isSafeInteger(value.characterCount) && value.characterCount >= 0
         && Array.isArray(value.limitations) && value.limitations.every(item => typeof item === 'string')
+        && (value.fileFacts === undefined || (Array.isArray(value.fileFacts) && value.fileFacts.every(item => typeof item === 'string')))
         && Array.isArray(value.evidence) && value.evidence.every(item => isObject(item)
             && typeof item.id === 'string' && typeof item.text === 'string' && ['code', 'graph'].includes(String(item.source))
             && (item.location === undefined || (isObject(item.location)

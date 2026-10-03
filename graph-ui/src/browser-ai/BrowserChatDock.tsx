@@ -16,6 +16,7 @@ import ChatMarkdown from './ChatMarkdown';
 import AgentSettingsDialog from './AgentSettingsDialog';
 import { useChatHistory } from './use-chat-history';
 import { chatTopic, followedTopic, missingContextAnswer, topicHistory } from './chat-context';
+import { readerFacts } from './workflow-facts';
 import './browser-chat.css';
 
 export type { BrowserChatAttachment, BrowserChatContext, BrowserChatReaderContext, BrowserChatSource } from './chat-model';
@@ -60,9 +61,11 @@ const sizeLabel = (bytes: number): string => bytes >= 1_000_000_000 ? `${(bytes 
 /** Symbol sources read for explanations and questions, newest last. */
 const SOURCE_CACHE_SIZE = 32;
 
-/** The listed facts first, then the model's sentence if it stood the check, then who wrote what (K7). */
-function groundedExplanation(summary: readonly string[], sentence: string | undefined, dropped: boolean): string {
-    const note = sentence ? browserChatText.factsAndSentence : dropped ? browserChatText.sentenceDropped : browserChatText.factsOnly;
+/** The listed facts first, then the model's sentence if it stood the check, then who wrote what (K7).
+ * The facts come from the indexed graph, or for an open workflow from the file itself (K12). */
+function groundedExplanation(summary: readonly string[], sentence: string | undefined, dropped: boolean, from: 'graph' | 'file' = 'graph'): string {
+    const note = from === 'file' ? sentence ? browserChatText.fileFactsAndSentence : dropped ? browserChatText.fileSentenceDropped : browserChatText.fileFactsOnly
+        : sentence ? browserChatText.factsAndSentence : dropped ? browserChatText.sentenceDropped : browserChatText.factsOnly;
     return [summary.map(line => `- ${line}`).join('\n'), ...sentence ? [sentence] : [], `_${note}_`].join('\n\n');
 }
 
@@ -351,8 +354,9 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const run = { key: snapshot.key, cancelled: false, settled }; autoRun.current = run; lastAttempt.current = snapshot.key;
         const valid = () => epoch.current === ticket && !run.cancelled && !stopRequested.current && selectionRef.current?.key === snapshot.key;
         // Graph selections show their listed facts at once; the model only adds a sentence.
-        const summary = snapshot.reader ? [] : selectionSummary(snapshot.graph);
-        const writing = summary.length ? `${summary.map(line => `- ${line}`).join('\n')}\n\n_${sourceTargetOf(snapshot.graph) || carriedSource(snapshot.graph) ? browserChatText.writingSentence : browserChatText.readingFacts}_` : '';
+        const summary = snapshot.reader ? readerFacts(snapshot.reader) : selectionSummary(snapshot.graph);
+        const from = snapshot.reader ? 'file' : 'graph';
+        const writing = summary.length ? `${summary.map(line => `- ${line}`).join('\n')}\n\n_${snapshot.reader || sourceTargetOf(snapshot.graph) || carriedSource(snapshot.graph) ? browserChatText.writingSentence : browserChatText.readingFacts}_` : '';
         setExplanation({ key: snapshot.key, label: snapshot.label, answer: writing, status: 'generating' });
         setPhase('counting');
         try {
@@ -394,7 +398,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 // One sentence beside the facts (two for reader code), and none that names what the evidence lacks.
                 const checked = result.status === 'generated' ? explanationSentence(result.markdown, packet, request.map(message => message.content).join('\n')) : {};
                 if (summary.length || (result.status === 'generated' && checked.dropped)) {
-                    const markdown = summary.length ? groundedExplanation(summary, checked.sentence, checked.dropped !== undefined) : `_${browserChatText.explanationDropped}_`;
+                    const markdown = summary.length ? groundedExplanation(summary, checked.sentence, checked.dropped !== undefined, from) : `_${browserChatText.explanationDropped}_`;
                     const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: markdown, status: 'complete', mode: 'interpretation', packet, grounded: summary.length > 0,
                         ...shortened && checked.sentence ? { shortened, limit: { inputTokens: autoInput, outputTokens: autoOutput } } : {}, ...snapshot.evidence ? { evidence: snapshot.evidence } : {} };
                     remember(complete); setExplanation(complete);

@@ -2,6 +2,7 @@ import { snapshotReaderContext, type BrowserChatContext, type BrowserChatReaderC
 import { fairShares, readGalaxyEvidence, relationshipLine, scopeSentence, selectionSentence, sideLoaded, type GalaxyEvidence } from './galaxy-evidence';
 import { relationshipWords } from './strings';
 import { architectureFacts } from './architecture-evidence';
+import { readerFacts } from './workflow-facts';
 
 export interface ExplanationEvidence {
     id: string;
@@ -19,6 +20,8 @@ export interface PreparedExplanationContext {
     characterCount: number;
     /** Set when the prompt could not name every related symbol the evidence carried: scope size and how many are named. */
     capacity?: { nodes: number; edges: number; shown: number };
+    /** Facts counted from a whole open workflow file, whatever part of its text fits (K12). */
+    fileFacts?: string[];
 }
 
 const record = (value: unknown): Record<string, unknown> | undefined => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -330,7 +333,8 @@ export function prepareExplanationContext(reader?: BrowserChatReaderContext,
             break;
         }
     }
+    const fileFacts = readerFacts(snapshot);
     const characterCount = label.length + fallback.length + evidence.reduce((count, item) => count + item.text.length, 0)
-        + limitations.reduce((count, item) => count + item.length, 0);
-    return { label, evidence, limitations, fallback, characterCount, ...capacity ? { capacity } : {} };
+        + limitations.reduce((count, item) => count + item.length, 0) + fileFacts.reduce((count, item) => count + item.length, 0);
+    return { label, evidence, limitations, fallback, characterCount, ...capacity ? { capacity } : {}, ...fileFacts.length ? { fileFacts } : {} };
 }

@@ -1,6 +1,7 @@
 import type { BrowserChatMessage } from './browser-ai-controller';
 import type { PreparedExplanationContext } from './explanation-context';
 import { fileKind } from './file-kind';
+import { workflowWords } from './strings';
 
 export const AUTO_INPUT_TOKENS = 1536;
 export const AUTO_OUTPUT_TOKENS = 128;
@@ -13,6 +14,7 @@ export function formatExplanationEvidence(packet: PreparedExplanationContext): s
     const kind = (path: string) => { const name = fileKind(path); return name ? `, a ${name}` : ''; };
     return [packet.label, ...packet.evidence.map(item => item.source === 'code'
         ? `Source${item.location ? ` ${item.location.path}:${item.location.startLine}-${item.location.endLine}${kind(item.location.path)}` : ''}:\n${item.text}` : item.text),
+    ...packet.fileFacts?.length ? [`${workflowWords.heading}\n${packet.fileFacts.map(line => `- ${line}`).join('\n')}`] : [],
     ...packet.limitations.map(limit => `Limit: ${limit}`)].join('\n\n');
 }
 

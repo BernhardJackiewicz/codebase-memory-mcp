@@ -11,12 +11,15 @@ const KINDS: Readonly<Record<string, string>> = {
     html: 'HTML document', css: 'CSS stylesheet', sql: 'SQL script', xml: 'XML data, not program code',
 };
 
+/** A GitHub Actions workflow, by where GitHub reads it from. */
+export const isGithubWorkflow = (path: string): boolean => /(?:^|\/)\.github\/workflows\/[^/]+\.ya?ml$/i.test(path);
+
 export function fileKind(path: string): string | undefined {
     const name = path.split('/').pop() ?? path;
     const template = /^(.+)-tpl$/.exec(name);
     const extension = (template?.[1] ?? name).split('.').slice(1).pop()?.toLowerCase();
     const kind = extension ? KINDS[extension] : undefined;
     if (!kind) return undefined;
-    if (/(?:^|\/)\.github\/workflows\/[^/]+\.ya?ml$/i.test(path)) return `GitHub Actions workflow (${kind})`;
+    if (isGithubWorkflow(path)) return `GitHub Actions workflow (${kind})`;
     return template ? kind.replace(/ file$/, ' template') : kind;
 }
