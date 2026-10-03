@@ -445,7 +445,9 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             consume();
             return;
         }
-        const earlier = ask ? turns.filter(item => item.id !== retry.id) : turns;
+        // Answers about another file or selection stay out: an earlier wrong answer must not
+        // become evidence for this one (K17).
+        const earlier = (ask ? turns.filter(item => item.id !== retry.id) : turns).filter(item => item.topic?.key === topic?.key);
         let history: ChatTurn[] = earlier;
         const makeRequest = () => buildChatMessages(history, prompt, source, extra, reader, currentGraph, packet ? formatExplanationEvidence(packet) : undefined);
         if (!retry && ((reader?.source?.text.length ?? 0) > 5000 || currentGraph.length)) packet = prepareExplanationContext(reader, currentGraph, chatEvidence);
@@ -587,6 +589,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         </aside> : <aside className="cbm-chat-dock" hidden={!open} aria-label="Local chat">
         <header className="cbm-chat-header">
             <h2>Chat</h2>
+            {turns.length > 0 && <button type="button" className="cbm-chat-new" disabled={busy} onClick={clear}>{browserChatText.newConversation}</button>}
             <button type="button" className="cbm-chat-icon" aria-label="Collapse local chat" title="Collapse chat; keep conversation" onClick={onClose}>›</button>
         </header>
         {needsEnable && <div className="cbm-chat-enable"><p>Enable the local agent to explain selections and chat.</p><button type="button" onClick={() => setSettingsOpen(true)}>Enable agent</button></div>}
@@ -615,6 +618,8 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             </section>}
             {turns.length === 0 && !(proactive && automatic && selected) && <div className="cbm-chat-empty"><span aria-hidden="true">⌁</span><h3>Ask about the code.</h3><p>{readerContext ? 'The current file is included automatically. Mark code to focus your next message on that exact selection.' : 'Ask a question, or add source and graph context to your next message.'}</p></div>}
             {turns.map((turn, index) => <article className="cbm-chat-turn" key={turn.id}>
+                {turn.topic && index > 0 && turn.topic.key !== turns.slice(0, index).reverse().find(item => item.topic)?.topic?.key
+                    && <p className="cbm-chat-topic-break">{browserChatText.topicBreak(turn.topic.label)}</p>}
                 <div className="cbm-chat-question"><span className="cbm-chat-speaker">You</span><ChatMarkdown text={turn.prompt} /></div>
                 <div className="cbm-chat-answer"><SourceDisclosure>
                     {turn.evidence || turn.attachment || turn.readerContext?.source || turn.context?.length ? <>
@@ -652,7 +657,6 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             }} />
                 {(phase === 'counting' || phase === 'generating') && !(autoRun.current && !manualRequest.current && draft.trim() && !stopping) ? <button type="button" className="cbm-chat-send" aria-label={stopping ? 'Stopping…' : 'Stop'} title="Stop generating" disabled={stopping} onClick={stop}>■</button> : <button className="cbm-chat-primary cbm-chat-send" type="submit" aria-label="Send ↑" title="Send message" disabled={!historyReady || (!autoRun.current && phase !== 'ready') || !!manualRequest.current || !draft.trim() || readerContext?.status === 'loading'}>↑</button>}
             </div>
-            {turns.length > 0 && <div className="cbm-chat-compose-actions"><button type="button" className="cbm-chat-clear" disabled={busy} onClick={clear}>New conversation</button></div>}
 
             </>}
         </form>

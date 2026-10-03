@@ -131,6 +131,9 @@ export const browserChatText = {
     changeOutputLimit: 'Change the output limit',
     largerModels: 'A larger model may stay closer to the question. Each needs a one-time download, and its memory use is higher than the download:',
     modelDownload: (name: string, size: string) => `${name} · ${size} download`,
+    newConversation: 'New conversation',
+    /** Above the first question about another file or selection (K17). */
+    topicBreak: (label: string) => `New topic: ${label}. Earlier messages are not sent with these questions.`,
     /** Offered under a listed answer, which the model did not write. */
     askModel: 'Ask the model',
     capacity: (nodes: number, edges: number, model: string, shown: number) =>

@@ -367,7 +367,9 @@ describe('persistent local browser chat', () => {
         expect(requests[2][0].content).toContain('WHOLE_SECOND_FILE');
         expect(requests[2].map(message => message.content).join('\n')).not.toContain('WHOLE_FIRST_FILE');
         expect(requests[2].map(message => message.content).join('\n')).not.toContain(selection.text);
-        expect(requests[2].filter(message => message.role === 'user').map(message => message.content)).toEqual(['Explain the file', 'Explain the marked code', 'Explain this other file']);
+        // The marked code is in the same file and keeps the conversation; another file starts a new topic (K17).
+        expect(requests[1].filter(message => message.role === 'user').map(message => message.content)).toEqual(['Explain the file', 'Explain the marked code']);
+        expect(requests[2].filter(message => message.role === 'user').map(message => message.content)).toEqual(['Explain this other file']);
         expect(props.onAttachmentConsumed).not.toHaveBeenCalled();
         expect(container.querySelectorAll('.cbm-chat-answer .cbm-chat-attachment')).toHaveLength(3);
         await render(props); await type('Ask from another workspace'); await click('Send ↑');
@@ -745,7 +747,7 @@ describe('live-browser regressions', () => {
         const textarea = container.querySelector('textarea')!;
         expect(textarea.rows).toBe(1);
         expect(textarea.parentElement?.querySelector('[aria-label="Send ↑"]')).not.toBeNull();
-        expect(container.querySelector('.cbm-chat-clear')).toBeNull();
+        expect(container.querySelector('.cbm-chat-new')).toBeNull();
         expect(container.querySelector('.cbm-chat-reader-source')).toBeNull();
         expect(container.querySelector('[aria-label="Remove graph selection"]')).not.toBeNull();
         await type('Explain the source'); await click('Send ↑');
@@ -762,7 +764,7 @@ describe('live-browser regressions', () => {
         expect(source.querySelector('pre')?.textContent).toBe('ORIGINAL_SOURCE');
         expect(source.textContent).not.toContain('NEW_SOURCE');
         expect(container.querySelector('.cbm-chat-composer pre')).toBeNull();
-        expect(container.querySelector('.cbm-chat-clear')).not.toBeNull();
+        expect(container.querySelector('.cbm-chat-header .cbm-chat-new')).not.toBeNull();
         expect(runtime.chat.mock.calls[0][0][0].content).toContain('ORIGINAL_SOURCE');
     });
 
@@ -961,6 +963,28 @@ describe('graph answers and answer limits', () => {
         await type('What does this class do?'); await click('Send ↑');
         expect(runtime.chat).toHaveBeenCalledOnce();
         expect(runtime.chat.mock.calls[0][0].some(message => /Wähle einen Knoten|Select a node in Galaxy/.test(message.content))).toBe(false);
+    });
+
+    it('does not resend earlier answers about another file or selection and marks the new topic (K17)', async () => {
+        const { props, runtime } = fixture();
+        runtime.chat.mockResolvedValueOnce('This runs the flake8 linter on Python files.');
+        const workflow = reader('name: New contributor message', 'file', '.github/workflows/new_contributor_pr.yml');
+        await render({ ...props, selectionScope: 'django-demo:explore', readerContext: workflow }); await click('Download & load');
+        await type('was kannst du mir über dieses File sagen'); await click('Send ↑');
+        expect(container.querySelector('.cbm-chat-header')?.textContent).toContain('New conversation');
+        await render({ ...props, selectionScope: 'django-demo:galaxy', proactiveSelection: jsonbAggEvidence() });
+        await type('What does JSONBAgg do?'); await click('Send ↑');
+        const request = runtime.chat.mock.calls[1][0];
+        const text = request.map(message => message.content).join('\n');
+        expect(text).not.toContain('flake8');
+        expect(text).not.toContain('was kannst du mir');
+        expect(request.filter(message => message.role === 'assistant')).toHaveLength(0);
+        expect(container.querySelector('.cbm-chat-topic-break')?.textContent).toBe('New topic: JSONBAgg. Earlier messages are not sent with these questions.');
+        // A follow-up on the same selection keeps its own history.
+        await type('Which tests use it?'); await click('Send ↑');
+        expect(runtime.chat.mock.calls[2][0].filter(message => message.role === 'user').map(message => message.content.split('\n').at(-1)))
+            .toEqual(['What does JSONBAgg do?', 'Which tests use it?']);
+        expect(runtime.chat.mock.calls[2][0].map(message => message.content).join('\n')).not.toContain('flake8');
     });
 
     it('hands a listed answer to the model on request, with its evidence and without the list as history', async () => {
