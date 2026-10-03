@@ -54,7 +54,7 @@ const GENERAL: { side: Side; pattern: RegExp }[] = [
     { side: 'outgoing', pattern: /\b(?:callees?|was\s+ruft)\b/i },
 ];
 /** Why, how, what-if and explain questions want reasoning, not a list; "how many" still asks for one. */
-const REASONING = /\b(?:why|how(?!\s+(?:many|often))|explain\w*|describe\w*|would|could|should|if|when|rename\w*|break\w*|impact\w*|warum|wieso|weshalb|wie(?!\s+(?:viele|oft))|erkl(?:ä|ae)r\w*|beschreib\w*|passiert|wäre|waere|würde|wuerde|könnte|koennte|sollte|wenn|falls|umbenenn\w*|auswirkung\w*)\b/iu;
+const REASONING = /\b(?:why|how(?!\s+(?:many|often))|explain\w*|describe\w*|summar\w*|would|could|should|if|when|rename\w*|break\w*|impact\w*|warum|wieso|weshalb|wie(?!\s+(?:viele|oft))|erkl(?:ä|ae)r\w*|beschreib\w*|fasse|zusammenfass\w*|passiert|wäre|waere|würde|wuerde|könnte|koennte|sollte|wenn|falls|umbenenn\w*|auswirkung\w*)\b/iu;
 const GERMAN = /\b(?:wer|welche\w*|ruft|rufen|ruf|aufruf\w*|aufgerufen|wem|wird|werden)\b/i;
 /** Subjects that mean the current selection. */
 const SELF = new Set(['it', 'this', 'that', 'these', 'those', 'here', 'es', 'dies', 'diese', 'dieser', 'dieses', 'diesen', 'diesem', 'sie', 'ihn',
@@ -67,10 +67,11 @@ const NOT_A_NAME = new Set(['in', 'into', 'from', 'at', 'on', 'to', 'for', 'with
 /** Relation words a typo is corrected to. */
 const RELATION_WORDS = ['ruft', 'rufen', 'aufgerufen', 'aufrufer', 'benutzt', 'verwendet', 'calls', 'call', 'callers', 'caller', 'called', 'calling',
     'callees', 'callee', 'invokes', 'invoked'];
-/** Short forms that mean a relation word. */
-const VARIANTS: Readonly<Record<string, string>> = { ruf: 'ruft', rufe: 'ruft', rufst: 'ruft', cal: 'call' };
+/** Short forms that mean a relation word; words under four letters are not corrected otherwise. */
+const VARIANTS: Readonly<Record<string, string>> = { ruf: 'ruft', rufe: 'ruft', rufst: 'ruft', rft: 'ruft', uft: 'ruft', cal: 'call' };
 /** Real words one edit away from a relation word; they are never "corrected". */
-const OWN_WORDS = new Set(['falls', 'fall', 'cells', 'cell', 'halls', 'hall', 'walls', 'wall', 'balls', 'ball', 'tall', 'all', 'auf', 'aufruf', 'aufrufe',
+const OWN_WORDS = new Set(['falls', 'fall', 'cells', 'cell', 'halls', 'hall', 'walls', 'wall', 'balls', 'ball', 'tall', 'all', 'mall', 'gall', 'calm', 'calf',
+    'calms', 'calmed', 'falling', 'calming', 'rust', 'raft', 'rift', 'luft', 'duft', 'ruht', 'auf', 'aufruf', 'aufrufe',
     'aufrufen', 'rufen', 'gerufen', 'cache', 'caches']);
 
 /** Optimal string alignment distance, stopped once it exceeds one. */
@@ -164,7 +165,7 @@ const RELATION_HINT = /\b(?:ruft|ruf|rufen|aufruf\w*|aufgerufen|calls?|callers?|
 
 /** A question that sounds like callers or callees of the selection, but not certainly:
  * the listed answer is offered, never given in its place. The selection must be named. */
-export function relationshipSuggestion(typed: string, contexts: readonly BrowserChatContext[]): { markdown: string; question: string; context: BrowserChatContext } | undefined {
+export function relationshipSuggestion(typed: string, contexts: readonly BrowserChatContext[]): { markdown: string; question: string; context: BrowserChatContext; language: 'en' | 'de' } | undefined {
     if (REASONING.test(typed) || relationshipQuestion(typed)) return undefined;
     const prompt = correctRelationWords(typed);
     if (!RELATION_HINT.test(prompt)) return undefined;
@@ -173,27 +174,35 @@ export function relationshipSuggestion(typed: string, contexts: readonly Browser
         const evidence = readGalaxyEvidence(context.text);
         if (!evidence) continue;
         const names = new Set([evidence.label, ...evidence.roots.map(root => root.name)].map(name => name.toLowerCase()));
-        const at = words.findIndex(word => names.has(word) || names.has(word.split(/[.:]/).pop()!) || SELF.has(word));
+        const selection = (word: string) => names.has(word) || names.has(word.split(/[.:]/).pop()!) || SELF.has(word);
+        const at = words.findIndex(selection);
         if (at < 0) continue;
-        // "X calls" / "X ruft" puts the selection first: what it calls. Otherwise its callers.
-        const outgoing = !/\b(?:wer|who|aufrufer|callers?|aufrufe)\b/i.test(prompt) && /^(?:ruft|calls?|invokes?)$/.test(words[at + 1] ?? '');
+        // The selection may take several words ("this class"); what follows them is the verb.
+        let after = at + 1;
+        while (after < words.length && SELF.has(words[after])) after++;
+        // "X calls" / "X ruft" puts the selection first: what it calls. "calls in/from X" are its
+        // own calls too, "calls to X" its callers. Otherwise its callers.
+        const relation = words.findIndex(word => /^(?:ruft|calls?|invokes?)$/.test(word));
+        const before = relation >= 0 && relation < at ? words[relation + 1] : undefined;
+        const outgoing = !/\b(?:wer|who|aufrufer|callers?|aufrufe)\b/i.test(prompt)
+            && (/^(?:ruft|calls?|invokes?)$/.test(words[after] ?? '') || /^(?:in|inside|within|from|made)$/.test(before ?? ''));
         const language = GERMAN.test(prompt) ? 'de' : 'en';
         const name = evidence.label;
         const question = language === 'de' ? outgoing ? `Was ruft ${name} auf?` : `Wer ruft ${name} auf?` : outgoing ? `What does ${name} call?` : `Who calls ${name}?`;
         const text = relationshipWords[language];
-        return { markdown: `${text.didYouMean(outgoing ? 'outgoing' : 'incoming', quote(name))}\n\n_${text.uncertain}_`, question, context };
+        return { markdown: `${text.didYouMean(outgoing ? 'outgoing' : 'incoming', quote(name))}\n\n_${text.uncertain}_`, question, context, language };
     }
     return undefined;
 }
 
 /** A complete, deterministic answer from the current Galaxy evidence, or undefined
  * when the question is not a list of callers or callees of the selection. */
-export function relationshipAnswer(prompt: string, contexts: readonly BrowserChatContext[]): { markdown: string; context: BrowserChatContext } | undefined {
+export function relationshipAnswer(prompt: string, contexts: readonly BrowserChatContext[]): { markdown: string; context: BrowserChatContext; language: 'en' | 'de' } | undefined {
     const question = relationshipQuestion(prompt);
     if (!question) return undefined;
     for (const context of contexts) {
         const evidence = readGalaxyEvidence(context.text);
-        if (evidence && aboutSelection(prompt, question, evidence)) return { markdown: listed(question, evidence), context };
+        if (evidence && aboutSelection(prompt, question, evidence)) return { markdown: listed(question, evidence), context, language: question.language };
     }
     return undefined;
 }

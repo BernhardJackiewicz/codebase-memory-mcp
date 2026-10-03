@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { selectionEvidenceContext } from '../galaxy/selection-evidence';
 import { JSONB_AGG_CALLERS, jsonbAggEvidence, largeFolderScope } from './galaxy-evidence.fixture';
-import { relationshipAnswer, relationshipQuestion, relationshipSuggestion } from './relationship-answer';
+import { correctRelationWords, relationshipAnswer, relationshipQuestion, relationshipSuggestion } from './relationship-answer';
 
 const line = (markdown: string, type: string) => markdown.split('\n').find(item => item.startsWith(`- **${type}** `)) ?? '';
 
@@ -147,6 +147,8 @@ describe('tolerant caller and callee questions (K16)', () => {
         ['caller of jsonbagg', ['incoming'], 'en', 'jsonbagg'],
         ['calers of jsonbagg', ['incoming'], 'en', 'jsonbagg'],
         ['what does jsonbagg cal', ['outgoing'], 'en', 'jsonbagg'],
+        ['wer rft jsonbagg auf', ['incoming'], 'de', 'jsonbagg'],
+        ['wer uft jsonbagg auf', ['incoming'], 'de', 'jsonbagg'],
     ] as const)('recognizes %s despite typos, conjugation or a missing question mark', (prompt, sides, language, subject) => {
         expect(relationshipQuestion(prompt)).toEqual({ sides, language, subject });
         const markdown = relationshipAnswer(prompt, [jsonbAggEvidence()])?.markdown ?? '';
@@ -174,6 +176,34 @@ describe('tolerant caller and callee questions (K16)', () => {
             ? `Meintest du: ${side === 'incoming' ? 'Aufrufer von' : 'von'} \`JSONBAgg\`` : `Did you mean: ${side === 'incoming' ? 'callers of' : 'what'} \`JSONBAgg\``);
         expect(relationshipAnswer(suggestion.question, [jsonbAggEvidence()])?.markdown)
             .toContain(side === 'incoming' ? (language === 'de' ? 'Aufrufer von `JSONBAgg`' : 'Callers of `JSONBAgg`') : (language === 'de' ? 'Von `JSONBAgg` aufgerufen' : 'Called by `JSONBAgg`'));
+    });
+
+    it.each([
+        ['Does this class call super?', 'en', 'outgoing'],
+        ['does it call anything', 'en', 'outgoing'],
+        ['list the calls in this class', 'en', 'outgoing'],
+        ['calls from this function', 'en', 'outgoing'],
+        ['calls to this class', 'en', 'incoming'],
+    ] as const)('reads the direction of %s from the words around the selection', (prompt, language, side) => {
+        const suggestion = relationshipSuggestion(prompt, [jsonbAggEvidence()]);
+        expect(suggestion?.language).toBe(language);
+        expect(suggestion?.markdown).toContain(side === 'incoming' ? 'Did you mean: callers of `JSONBAgg`?' : 'Did you mean: what `JSONBAgg` calls?');
+    });
+
+    it.each(['Hat diese Klasse Luft?', 'Riecht diese Klasse nach Duft?', 'summarize the calls in this class', 'Fasse die Aufrufe dieser Klasse zusammen',
+        'Is this class calm?'])('neither lists nor suggests for %s', prompt => {
+        expect(relationshipQuestion(prompt)).toBeUndefined();
+        expect(relationshipSuggestion(prompt, [jsonbAggEvidence()])).toBeUndefined();
+    });
+
+    it('keeps real words one edit away from a relation word', () => {
+        expect(correctRelationWords('Luft Duft ruht rust raft calm calf mall')).toBe('Luft Duft ruht rust raft calm calf mall');
+    });
+
+    it('says in which language a listed answer and a suggestion reply', () => {
+        expect(relationshipAnswer('wer ruft jsonbagg auf', [jsonbAggEvidence()])?.language).toBe('de');
+        expect(relationshipAnswer('Who calls JSONBAgg?', [jsonbAggEvidence()])?.language).toBe('en');
+        expect(relationshipSuggestion('jsonbagg aufrufe?', [jsonbAggEvidence()])?.language).toBe('de');
     });
 
     it('suggests nothing for a question about another symbol', () => {
