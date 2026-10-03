@@ -5,7 +5,7 @@
 .spatial-heading p { margin:8px 0 0; max-width:740px; font-size:13px; line-height:1.6; color:var(--spatial-muted); }
 .spatial-architecture button, .spatial-architecture select { color:inherit; border:1px solid var(--spatial-line); border-radius:5px; background:var(--arch-panel-raised); padding:7px 10px; font:inherit; font-size:12px; cursor:pointer; }
 .spatial-architecture button:hover, .spatial-architecture button[aria-pressed=true] { color:#85f0c3; background:#17332e; border-color:#449e7b; }
-.spatial-architecture button:focus-visible, .spatial-architecture select:focus-visible, .spatial-architecture summary:focus-visible { outline:2px solid #8ce9f7; outline-offset:3px; }
+.spatial-architecture button:focus-visible, .spatial-architecture select:focus-visible, .spatial-architecture summary:focus-visible { outline:2px solid var(--atlas-cyan); outline-offset:3px; }
 .spatial-architecture button:disabled { opacity:.5; cursor:default; }
 .spatial-camera-controls { display:flex; gap:4px; flex-shrink:0; }
 .spatial-controls { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; padding:12px 20px; border-block:1px solid var(--spatial-line); }
@@ -44,7 +44,7 @@
 .spatial-architecture summary { font-size:12px; color:var(--spatial-muted); cursor:pointer; padding:8px 0; }
 .spatial-evidence article { padding:12px 0; border-bottom:1px solid var(--spatial-line); font-size:11px; display:flex; flex-direction:column; gap:4px; }
 .spatial-evidence article button { text-align:left; overflow-wrap:anywhere; }
-.spatial-evidence code { color:#a7b6ff; overflow-wrap:anywhere; }
+.spatial-evidence code { color:var(--arch-accent-strong); overflow-wrap:anywhere; }
 .spatial-bottom { display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:12px 20px; border-top:1px solid var(--spatial-line); color:var(--spatial-muted); font-size:11px; }
 .spatial-notice { padding:0 20px; font-size:11px; line-height:1.6; color:#d7be8b; }
 .spatial-relationship-list, .spatial-coverage { padding:0 20px 12px; }

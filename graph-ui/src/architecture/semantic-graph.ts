@@ -47,6 +47,8 @@ export interface SemanticEdge {
     type: string;
     count: number;
     evidence: SemanticEvidence[];
+    /** The line colour a map chose for this relationship; the hue of its type otherwise. */
+    tint?: string;
 }
 /** Visual folder context only; these containers are never graph nodes. */
 export interface SemanticPlatform {

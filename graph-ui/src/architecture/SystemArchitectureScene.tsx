@@ -7,7 +7,7 @@ import { edgeColor, isDirectedEdge, normalizeEdgeType } from '../graph/edge-styl
 import { EdgePulseLayer } from '../graph/EdgePulseLayer';
 import { useGraphBackgroundReset } from '../graph/useGraphBackgroundReset';
 import { connectionLoad, type ConnectionLoad } from '../graph/connection-load';
-import { SCENE_MAX_TILT, SCENE_PALETTE } from './scene-palette';
+import { journeyEdgeColor, SCENE_MAX_TILT, SCENE_PALETTE } from './scene-palette';
 import { journeyChipForm, placeSecondaryLabels, type LabelRect, type SecondaryLabel } from './label-space';
 
 /** The model keeps its stable XY layout; rendering places that footprint on XZ. */
@@ -126,19 +126,20 @@ function connectionGeometry(source: SystemSceneNode, target: SystemSceneNode, of
 
 interface ConnectionStrand { type: string; geometry: ReturnType<typeof connectionGeometry> }
 
-function Connection({ edge, strands, selected, dimmed, emphasized, onSelect }: {
+function Connection({ edge, strands, selected, dimmed, emphasized, onSelect, colorOf }: {
     edge: SystemSceneEdge; strands: ConnectionStrand[]; selected: boolean;
     dimmed: boolean; emphasized: boolean; onSelect: () => void;
+    colorOf: (type: string, types?: readonly string[]) => string;
 }) {
     const internal = edge.source === edge.target;
     const opacity = selected ? 0.98 : dimmed ? 0.065 : emphasized ? 0.86 : internal ? 0.15 : 0.34;
     return <group onClick={event => { event.stopPropagation(); onSelect(); }}>
         {strands.map(({ type, geometry }) => <group key={type}>
-            <Line points={geometry.points} color={edgeColor(type)} lineWidth={selected ? 2 : emphasized ? 1.6 : 0.7}
+            <Line points={geometry.points} color={colorOf(type)} lineWidth={selected ? 2 : emphasized ? 1.6 : 0.7}
                 transparent opacity={opacity} depthWrite={false} />
         </group>)}
         {selected && <Html position={strands[0].geometry.curve.getPoint(0.5).lerp(strands.at(-1)!.geometry.curve.getPoint(0.5), 0.5)} center zIndexRange={[15, 10]} style={{ pointerEvents: 'none' }}>
-            <span className="system-scene-edge-label" style={{ borderColor: edgeColor(edge.type, edge.types) }}>{internal ? 'Within group · ' : ''}{edge.types?.length ? edge.types.join(' · ').replaceAll('_', ' ') : edge.type.replaceAll('_', ' ')} · {edge.count}</span>
+            <span className="system-scene-edge-label" style={{ borderColor: colorOf(edge.type, edge.types) }}>{internal ? 'Within group · ' : ''}{edge.types?.length ? edge.types.join(' · ').replaceAll('_', ' ') : edge.type.replaceAll('_', ' ')} · {edge.count}</span>
         </Html>}
     </group>;
 }
@@ -284,11 +285,13 @@ export default function SystemArchitectureScene({ model, selectedNode, selectedE
         }
         return result;
     }, [model.edges, nodes, offsets]);
+    // Behavior draws only invocations: its plain calls take the green of the scheme.
+    const colorOf = presentation === 'journey' ? journeyEdgeColor : edgeColor;
     const pulsePaths = useMemo(() => model.edges.flatMap(edge => {
         const dimmed = !activeEdge(model, edge, activePath) || !focusedEdge(edge), emphasized = (model.highlightActive || neighborhood.size > 0) && !dimmed;
-        return (edgeStrands.get(edge.id) ?? []).filter(strand => isDirectedEdge(strand.type)).map(({ type, geometry }) => ({ id: `${edge.id}:${type}`, type, points: geometry.points,
+        return (edgeStrands.get(edge.id) ?? []).filter(strand => isDirectedEdge(strand.type)).map(({ type, geometry }) => ({ id: `${edge.id}:${type}`, type, points: geometry.points, color: colorOf(type),
             opacity: edge.id === selectedEdge ? 0.95 : dimmed ? 0.04 : emphasized ? 0.8 : edge.source === edge.target ? 0.22 : 0.65 }));
-    }), [model, edgeStrands, activePath, selectedEdge, selectedNode, neighborhood]);
+    }), [model, edgeStrands, activePath, selectedEdge, selectedNode, neighborhood, colorOf]);
     const background = useGraphBackgroundReset(onClearSelection);
     const floorY = Math.min(0, ...model.nodes.map(node => center(node).y - dimensions(node)[1] / 2), ...(model.lanes ?? []).map(lane => lane.position[2] - lane.depth / 2)) - 0.2;
     const extent = Math.max(120, ...model.nodes.map(node => Math.max(Math.abs(node.position[0]) + dimensions(node)[0] / 2, Math.abs(node.position[1]) + dimensions(node)[2] / 2) * 2 + 40));
@@ -317,7 +320,7 @@ export default function SystemArchitectureScene({ model, selectedNode, selectedE
                 return strands ? <Connection key={edge.id} edge={edge} strands={strands}
                     selected={selectedEdge === edge.id} dimmed={!activeEdge(model, edge, activePath) || !focusedEdge(edge)}
                     emphasized={Boolean((model.highlightActive || neighborhood.size > 0) && activeEdge(model, edge, activePath) && focusedEdge(edge))}
-                    onSelect={() => onSelectEdge(edge.id)} /> : null;
+                    onSelect={() => onSelectEdge(edge.id)} colorOf={colorOf} /> : null;
             })}
             <EdgePulseLayer paths={pulsePaths} active={active} />
             {model.nodes.map(node => {

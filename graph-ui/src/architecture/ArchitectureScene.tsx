@@ -112,7 +112,7 @@ function Relationship({ edge, geometry, selected, emphasized, dimmed, showLabel,
     onSelect: () => void; onHover: (id?: string) => void;
 }) {
     const { curve, labelPosition } = geometry;
-    const color = edgeColor(edge.type);
+    const color = edge.tint ?? edgeColor(edge.type);
     const opacity = dimmed ? 0.06 : selected ? 1 : emphasized ? 0.95 : 0.55;
     return <group>
         <mesh onClick={event => { event.stopPropagation(); onSelect(); }}
@@ -374,7 +374,7 @@ export function ArchitectureScene({ model: graphModel, selectedId, selectedEdgeI
         const geometry = edgeGeometry.get(edge.id);
         if (!geometry || !isDirectedEdge(edge.type)) return [];
         const emphasized = edge.id === focusEdgeId || edge.source === focusId || edge.target === focusId;
-        return [{ id: edge.id, type: edge.type, points: geometry.points,
+        return [{ id: edge.id, type: edge.type, points: geometry.points, color: edge.tint,
             opacity: related.size > 0 && !emphasized ? 0.04 : edge.id === selectedEdgeId ? 0.95 : emphasized ? 0.8 : 0.65 }];
     }), [model.edges, edgeGeometry, focusEdgeId, focusId, related, selectedEdgeId]);
     const floorY = Math.min(0, ...model.nodes.map(node => node.position[1])) - 0.14;

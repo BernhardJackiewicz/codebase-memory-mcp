@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react';
+import { edgeColor, normalizeEdgeType } from '../graph/edge-style';
 
 /**
  * One colour scheme for every Architecture scene: Overview, Routes (Service
@@ -13,7 +14,10 @@ import type { CSSProperties } from 'react';
  * root), so there is a single table.
  *
  * Relationship hues (graph/edge-style.ts), language tints and the amber of
- * hotspots and routes are encodings, not scenery, and stay as they are.
+ * hotspots and routes are encodings, not scenery, and stay as they are. The
+ * one exception is the plain call where it is the only kind of line: in
+ * Behavior and in the Service map it takes `call` (journeyEdgeColor,
+ * container-layout.ts).
  */
 export const SCENE_PALETTE = {
     /** Canvas clear colour and the ground of every scene container. */
@@ -28,6 +32,11 @@ export const SCENE_PALETTE = {
     /** A box without its own tint: a group, component or operation. */
     node: '#8fc0aa',
     remainder: '#a6a68f',
+    /** The plain call where it is the only kind of line: Behavior, and the service links of the Service map. */
+    call: '#62d2a2',
+    /** Service map: a service built from source, and one that runs a published image. */
+    serviceSource: '#79c9b0',
+    serviceImage: '#b6a087',
     selected: '#effff8',
     keyLight: '#dcfff3',
     fillLight: '#a899ff',
@@ -54,6 +63,18 @@ export const SCENE_PALETTE = {
     code: '#08110e',
     codeLine: '#6be7ba1f',
 } as const;
+
+/**
+ * The line colour of a Behavior call. Behavior draws only invocations, so a
+ * plain call needs no hue to tell it from imports or usage and takes the
+ * green of the scheme; HTTP, async and the other invocation kinds keep their
+ * hues. Overview and System structure keep every hue: there calls run beside
+ * green usage lines.
+ */
+export function journeyEdgeColor(type: string, types?: readonly string[]): string {
+    const kinds = [...new Set((types?.length ? types : [type]).map(normalizeEdgeType))];
+    return kinds.length === 1 && kinds[0] === 'CALLS' ? SCENE_PALETTE.call : edgeColor(type, types);
+}
 
 /** The lowest the camera may tilt: a map turned edge-on reads as a flat line. */
 export const SCENE_MAX_TILT = Math.PI * 7 / 18;

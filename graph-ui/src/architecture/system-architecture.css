@@ -90,7 +90,7 @@
 .system-architecture .system-scene-node-label[data-kind=remainder] { color: #b6b3a6; border-style: dashed; }
 .system-scene-lane-label { color: #92a89c; font: 10px var(--atlas-ui-font, system-ui, sans-serif); white-space: nowrap; background: #0d1512bb; padding: 3px 7px; border-radius: 4px; }
 .system-scene-lane-label[data-component=true] { font-size: 11px; color: #a7b9af; display: inline-block; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
-.system-scene-edge-label { display: inline-block; max-width: 230px; color: #c2c6cf; font-size: 10px; background: #111716f2; border: 1px solid #91a59a38; padding: 5px 8px; border-radius: 6px; }
+.system-scene-edge-label { display: inline-block; max-width: 230px; color: var(--arch-label-text); font-size: 10px; background: #111716f2; border: 1px solid #91a59a38; padding: 5px 8px; border-radius: 6px; }
 .system-scope-actions, .system-selection-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 8px 0 12px; }
 .system-scope-actions button, .system-selection-actions button { border: 1px solid var(--atlas-line); border-radius: 5px; background: #82998f0c; color: var(--atlas-fg); font: inherit; font-size: 11px; padding: 5px 8px; }
 .system-selection-actions button:disabled, .system-scope-actions button:disabled { opacity: .4; }
