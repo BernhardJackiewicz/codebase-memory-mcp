@@ -165,9 +165,13 @@ async function main() {
      * einem Zitat. Das waere keine zweite Beobachtung, sondern dieselbe, und
      * eine Ausnahme fuer eine erzeugte Datei versteckt nichts: was in ihr steht,
      * steht auch in der Datei, aus der sie es abgeschrieben hat.
+     *
+     * Das gilt auch fuer den eingecheckten Bericht am Standardort, wenn --out
+     * woanders hin schreibt: er ist ein frueherer Lauf desselben Werkzeugs.
      */
     const selfReport = relative(ROOT, out);
-    const files = (await repositoryFiles()).filter((path) => path !== selfReport);
+    const ownReports = new Set([selfReport, relative(ROOT, DEFAULT_OUT)]);
+    const files = (await repositoryFiles()).filter((path) => !ownReports.has(path));
     const canonicalHook = await readFile(join(ROOT, 'agents/hooks/atlas-trace.py')).catch(() => undefined);
     const dashHits = [];
     const dashExceptions = [];
