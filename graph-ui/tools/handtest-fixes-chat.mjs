@@ -246,19 +246,39 @@ async function k16(page) {
     await galaxyWithJsonb(page);
     await explanationDone(page);
     const mark = await markWorker(page);
+    const last = () => page.locator('.cbm-chat-turn').last();
+    const buttons = async () => (await last().locator('button.cbm-chat-retry').allInnerTexts()).map((text) => text.trim());
     const typo = await ask(page, 'wer ruf jsonbagg auf');
     await shot(page, 'K16', 'typo-listed', '"wer ruf jsonbagg auf" is answered with the listed callers from the graph.');
+    const shortTypo = await ask(page, 'wer rft jsonbagg auf');
     const suggestion = await ask(page, 'jsonbagg aufrufe?');
-    await shot(page, 'K16', 'suggestion', '"jsonbagg aufrufe?" gets "Meintest du: Aufrufer von JSONBAgg?" with Show the list and Ask the model.');
-    await page.locator('.cbm-chat-turn').last().getByRole('button', { name: 'Show the list' }).click();
+    const germanButtons = await buttons();
+    await shot(page, 'K16', 'suggestion', '"jsonbagg aufrufe?" gets "Meintest du: Aufrufer von JSONBAgg?" with the German choices "Liste anzeigen" and "Modell fragen".');
+    const box = await last().boundingBox();
+    if (box) await shot(page, 'K16', 'suggestion-crop', 'Crop of the German suggestion and its German buttons.', { clip: { x: box.x - 8, y: Math.max(0, box.y - 8), width: box.width + 16, height: Math.min(box.height + 16, 500) } });
+    await last().getByRole('button', { name: 'Liste anzeigen' }).click();
     await wait(600);
-    const listed = await page.locator('.cbm-chat-turn').last().innerText();
-    await shot(page, 'K16', 'suggestion-listed', 'After Show the list the suggestion is replaced by the complete listed answer.');
+    const listed = await last().innerText();
+    const listedButtons = await buttons();
+    await shot(page, 'K16', 'suggestion-listed', 'After "Liste anzeigen" the suggestion is replaced by the complete listed answer; its button reads "Modell fragen".');
+    // The direction is read after the whole selection phrase: "this class call" asks what it calls.
+    const direction = await ask(page, 'Does this class call super?');
+    const englishButtons = await buttons();
+    await shot(page, 'K16', 'direction', '"Does this class call super?" is offered as "what JSONBAgg calls", with the English choices.');
     const modelCalls = await sentSince(page, mark);
+    // A real word one edit from "ruft" is not corrected: "Luft" goes to the model, not to a suggestion.
+    const luftMark = await markWorker(page);
+    const luft = await ask(page, 'Hat diese Klasse Luft?');
+    const luftCalls = await sentSince(page, luftMark);
+    await shot(page, 'K16', 'luft-to-model', '"Hat diese Klasse Luft?" is not read as a call question: the model answers it.');
     const callers = ['test_default_argument', 'test_empty_result_set', 'test_jsonb_agg', 'test_values_list'];
-    check('K16', 'Typo caller question is listed; an uncertain one is offered as a suggestion; no model call', /Aufrufer von JSONBAgg im geladenen Graphen/.test(typo)
-        && callers.every((name) => typo.includes(name)) && /Meintest du: Aufrufer von JSONBAgg\?/.test(suggestion) && /Aufrufer von JSONBAgg im geladenen Graphen/.test(listed) && modelCalls.length === 0,
-    { typoAnswerStart: typo.slice(0, 160), suggestion: suggestion.slice(0, 200), afterShowList: listed.slice(0, 120), modelCalls: modelCalls.length });
+    check('K16', 'Typo caller questions are listed; uncertain ones are suggested in the right direction and language; no model call', /Aufrufer von JSONBAgg im geladenen Graphen/.test(typo)
+        && callers.every((name) => typo.includes(name)) && /Aufrufer von JSONBAgg im geladenen Graphen/.test(shortTypo) && /Meintest du: Aufrufer von JSONBAgg\?/.test(suggestion)
+        && JSON.stringify(germanButtons) === JSON.stringify(['Liste anzeigen', 'Modell fragen']) && /Aufrufer von JSONBAgg im geladenen Graphen/.test(listed)
+        && JSON.stringify(listedButtons) === JSON.stringify(['Modell fragen']) && /Did you mean: what JSONBAgg calls\?/.test(direction)
+        && JSON.stringify(englishButtons) === JSON.stringify(['Show the list', 'Ask the model']) && modelCalls.length === 0 && luftCalls.length === 1 && !/Meintest du|Did you mean/.test(luft),
+    { typoAnswerStart: typo.slice(0, 120), shortTypo: shortTypo.slice(0, 120), suggestion: suggestion.slice(0, 200), germanButtons, afterShowList: listed.slice(0, 120), listedButtons,
+        direction: direction.slice(0, 200), englishButtons, modelCallsBeforeLuft: modelCalls.length, luftModelCalls: luftCalls.length, luft: luft.slice(0, 200) });
 }
 
 async function k11(page) {
@@ -303,20 +323,44 @@ async function k17(page) {
     await select(page, 'JSONBAgg');
     await scopeSettled(page);
     await explanationDone(page);
-    const mark = await markWorker(page);
+    let mark = await markWorker(page);
     const galaxyAnswer = await ask(page, 'What does JSONBAgg do?');
     const [request] = await sentSince(page, mark);
     const text = promptText(request);
     await shot(page, 'K17', 'galaxy-answer', 'In Galaxy a divider marks the new topic JSONBAgg; New conversation sits in the chat header.');
     const header = await page.locator('.cbm-chat-header').innerText();
-    const divider = await page.locator('.cbm-chat-topic-break').allInnerTexts();
     const header1 = await page.locator('.cbm-chat-header .cbm-chat-new').boundingBox();
     if (header1) await shot(page, 'K17', 'header-crop', 'Crop of the chat header with the New conversation button.', { clip: { x: header1.x - 260, y: header1.y - 14, width: header1.width + 320, height: header1.height + 28 } });
     const assistantTurns = (request?.messages ?? []).filter((message) => message.role === 'assistant').length;
-    check('K17', 'Earlier answers about another file are not resent; topic break and New conversation visible', Boolean(request) && !/was kannst du mir über dieses aktuelle File/.test(text)
-        && !text.includes(exploreAnswer.slice(-60).trim()) && assistantTurns === 0 && /New conversation/.test(header) && divider.some((item) => /New topic: JSONBAgg/.test(item)),
-    { assistantMessagesInPrompt: assistantTurns, flake8InPrompt: /flake8/i.test(text), exploreQuestionInPrompt: /aktuelle File/.test(text), header, divider, galaxyAnswer: galaxyAnswer.slice(0, 200) });
+    // Back to the same workflow file: its earlier answer is not sent again, as the divider says (review finding).
+    await tab(page, 'explore');
+    await page.waitForFunction(() => /New contributor message/.test(document.body.innerText), null, { timeout: 30000 }).catch(() => {});
+    await explanationDone(page);
+    mark = await markWorker(page);
+    const returnAnswer = await ask(page, 'Und was noch?');
+    const [back] = await sentSince(page, mark);
+    const backText = promptText(back);
+    const divider = await page.locator('.cbm-chat-topic-break').allInnerTexts();
+    await shot(page, 'K17', 'explore-return', 'Back in Explore on the same file: a divider "New topic: .github/workflows/new_contributor_pr.yml"; the earlier answer is not in the prompt.');
+    const dividerBox = await page.locator('.cbm-chat-topic-break').last().boundingBox();
+    if (dividerBox) await shot(page, 'K17', 'explore-return-crop', 'Crop of the divider above the returned question.', { clip: { x: dividerBox.x - 8, y: Math.max(0, dividerBox.y - 8), width: dividerBox.width + 16, height: 220 } });
+    const backAssistant = (back?.messages ?? []).filter((message) => message.role === 'assistant').length;
+    const backUsers = (back?.messages ?? []).filter((message) => message.role === 'user').map((message) => message.content.split('\n').at(-1));
+    check('K17', 'Earlier answers about another file are not resent, also not on the way back; topic breaks and New conversation visible', Boolean(request) && !/was kannst du mir über dieses aktuelle File/.test(text)
+        && !text.includes(exploreAnswer.slice(-60).trim()) && assistantTurns === 0 && /New conversation/.test(header) && divider.some((item) => /New topic: JSONBAgg/.test(item))
+        && Boolean(back) && backAssistant === 0 && !/was kannst du mir über dieses aktuelle File/.test(backText) && !backText.includes(exploreAnswer.slice(-60).trim())
+        && JSON.stringify(backUsers) === JSON.stringify(['Und was noch?']) && divider.some((item) => /New topic: \.github\/workflows\/new_contributor_pr\.yml\. Earlier messages are not sent/.test(item)),
+    { assistantMessagesInPrompt: assistantTurns, flake8InPrompt: /flake8/i.test(text), exploreQuestionInPrompt: /aktuelle File/.test(text), header, divider, galaxyAnswer: galaxyAnswer.slice(0, 200),
+        returnPrompt: { assistantMessages: backAssistant, userMessages: backUsers, earlierExploreAnswerInPrompt: backText.includes(exploreAnswer.slice(-60).trim()) }, returnAnswer: returnAnswer.slice(0, 200) });
     await save('K17', 'prompt-galaxy.txt', text);
+    await save('K17', 'prompt-explore-return.txt', backText);
+}
+
+async function setAutomatic(page, on) {
+    await openConfig(page);
+    const box = page.getByLabel('Explain selections automatically');
+    if (on) await box.check(); else await box.uncheck();
+    await closeConfig(page);
 }
 
 async function k14(page) {
@@ -329,10 +373,40 @@ async function k14(page) {
     const disclosure = await page.locator('.cbm-chat-explanation .cbm-chat-source-content').innerText().catch(() => '');
     await shot(page, 'K14', 'explanation-source', 'The JSONBAgg explanation with its Source disclosure open: the class source (lines 50-54) is there and "Source unavailable" is gone.');
     const card = await explanationText(page);
-    check('K14', 'Galaxy explanation carries the selected symbol source; no "Source unavailable"', /class JSONBAgg\(OrderableAggMixin, Aggregate\)/.test(text) && /function = "JSONB_AGG"/.test(text)
-        && !/Source unavailable/.test(text + disclosure) && /class JSONBAgg\(OrderableAggMixin, Aggregate\)/.test(disclosure),
-    { sourceInPrompt: /class JSONBAgg/.test(text), sourceUnavailable: /Source unavailable/.test(text + disclosure), card });
     await save('K14', 'prompt-jsonbagg.txt', text);
+    // Automatic explanations off: a listed answer reads the source itself, and "Ask the model" sends it (review finding).
+    await open(page, PROJECT, 'galaxy');
+    await galaxyReady(page);
+    await loadModel(page);
+    await setAutomatic(page, false);
+    await openChat(page);
+    await select(page, 'JSONBAgg');
+    await scopeSettled(page);
+    const offMark = await markWorker(page);
+    await ask(page, 'Who calls JSONBAgg?');
+    const automaticRuns = (await sentSince(page, offMark)).length;
+    const turn = page.locator('.cbm-chat-turn').last();
+    await turn.locator('.cbm-chat-response-source > summary').click();
+    await wait(500);
+    const listedSource = await turn.locator('.cbm-chat-source-content').innerText().catch(() => '');
+    await shot(page, 'K14', 'listed-source-automatic-off', 'Automatic explanations off: the listed answer "Who calls JSONBAgg?" shows the class source in its Source disclosure, no "Source unavailable".');
+    const askMark = await markWorker(page);
+    await turn.getByRole('button', { name: 'Ask the model' }).click();
+    await page.waitForFunction(() => !document.querySelector('.cbm-chat-send[aria-label="Stop"]') && !/Thinking…/.test(document.querySelector('.cbm-chat-turn:last-of-type')?.textContent ?? ''), null, { timeout: 240000 }).catch(() => {});
+    await wait(800);
+    const [asked] = await sentSince(page, askMark);
+    const askedText = promptText(asked);
+    const answer = await page.locator('.cbm-chat-turn').last().innerText().catch(() => '');
+    await shot(page, 'K14', 'ask-model-with-source', 'After "Ask the model" on the listed answer: the model answered from a prompt that carries the class source.');
+    await setAutomatic(page, true);
+    await save('K14', 'prompt-ask-model.txt', askedText);
+    check('K14', 'Galaxy explanation and a listed answer with automatic explanations off carry the selected symbol source; no "Source unavailable"', /class JSONBAgg\(OrderableAggMixin, Aggregate\)/.test(text) && /function = "JSONB_AGG"/.test(text)
+        && !/Source unavailable/.test(text + disclosure) && /class JSONBAgg\(OrderableAggMixin, Aggregate\)/.test(disclosure)
+        && automaticRuns === 0 && /class JSONBAgg\(OrderableAggMixin, Aggregate\)/.test(listedSource) && !/Source unavailable/.test(listedSource)
+        && /function = "JSONB_AGG"/.test(askedText) && !/Source unavailable/.test(askedText),
+    { sourceInPrompt: /class JSONBAgg/.test(text), sourceUnavailable: /Source unavailable/.test(text + disclosure), card,
+        automaticOff: { modelMessagesForListedAnswer: automaticRuns, listedSourceStart: listedSource.slice(0, 260), askPromptHasSource: /function = "JSONB_AGG"/.test(askedText),
+            askPromptSourceUnavailable: /Source unavailable/.test(askedText), answer: answer.replace(/\s+/g, ' ').slice(0, 260) } });
 }
 
 async function setTrace(page, direction, onlyType) {
@@ -389,8 +463,9 @@ async function k7(page) {
     [request] = (await sentSince(page, mark)).filter((entry) => entry.profile === 'automatic-explanation');
     card = await explanationText(page);
     outputs.push({ selection: 'Architecture behavior', card, model: (await answersSince(page, from))[0]?.output, prompt: promptText(request) });
-    await shot(page, 'K7', 'architecture-behavior', 'Architecture Behavior: the starting operation, its call sites and its source, no invented operations.');
-    const behaviorOk = /Starting operation: main/.test(card) && (!request || /def main\(\)/.test(promptText(request))) && !/Finding a|Visible operations/.test(card);
+    await shot(page, 'K7', 'architecture-behavior', 'Architecture Behavior: the starting operation, its call sites with the functions they reach (os.environ.setdefault, execute_from_command_line), no invented operations.');
+    const behaviorOk = /Starting operation: main/.test(card) && (!request || /def main\(\)/.test(promptText(request))) && !/Finding a|Visible operations/.test(card)
+        && /line 9 calls os\.environ\.setdefault/.test(card) && /line 18 calls execute_from_command_line/.test(card);
     await save('K7', 'outputs.json', outputs);
     check('K7', 'Automatic explanations rest on listed facts (Galaxy incoming CALLS, Architecture area, Behavior)', galaxyOk && areaOk && behaviorOk,
         { galaxyOk, areaOk, behaviorOk, cards: outputs.map((item) => `${item.selection}: ${item.card.replace(/\s+/g, ' ').slice(0, 400)}`) });
@@ -459,24 +534,35 @@ async function k12(page) {
     await explanationDone(page);
     const [automatic] = (await sentSince(page, mark)).filter((entry) => entry.profile === 'automatic-explanation');
     outputs.push({ kind: 'automatic', card: await explanationText(page), model: (await answersSince(page, from))[0]?.output, prompt: promptText(automatic) });
-    await shot(page, 'K12', 'automatic', 'Explore with the workflow open: the automatic explanation.');
-    const questions = ['was kannst du mir über dieses aktuelle File sagen', 'What does this file do?', 'Welche Jobs gibt es in dieser Datei?'];
-    for (let run = 0; run < RUNS; run++) {
+    await shot(page, 'K12', 'automatic', 'Explore with the workflow open: the automatic explanation lists name, trigger, the one job and the action, read from the file, above the model text.');
+    const questions = ['was kannst du mir über dieses aktuelle File sagen', 'Wie viele Jobs gibt es in dieser Datei?', 'Welche Jobs gibt es in dieser Datei?', 'What does this file do?', 'How many jobs does this workflow have?'];
+    const runs = Math.max(RUNS, questions.length);
+    for (let run = 0; run < runs; run++) {
         mark = await markWorker(page);
         const answer = await ask(page, questions[run % questions.length]);
         const [request] = await sentSince(page, mark);
         outputs.push({ kind: 'question', run: run + 1, question: questions[run % questions.length], answer, prompt: promptText(request) });
         if (run === 0) await shot(page, 'K12', 'question-answer', 'The answer to "was kannst du mir über dieses aktuelle File sagen" for the YAML workflow.');
+        if (run === 1) await shot(page, 'K12', 'jobs-count', 'The answer to "Wie viele Jobs gibt es in dieser Datei?": the prompt carries the counted facts (1 job: build).');
         await newConversation(page);
     }
     await save('K12', 'outputs.json', outputs);
     const asked = outputs.filter((item) => item.kind === 'question');
-    // The open file is in the system section of the request, named as a workflow, and its JSON record is gone.
+    // The open file is in the system section of the request, named as a workflow, with its counted facts, and its JSON record is gone.
     const fileInPrompt = asked.every((item) => /--- BEGIN EXACT SOURCE TEXT ---\nname: New contributor message/.test(item.prompt)
         && /The current file is a GitHub Actions workflow \(YAML configuration, not program code\)\./.test(item.prompt) && !/"status":"ready"/.test(item.prompt));
+    const factsInPrompt = asked.every((item) => /Facts read from the file \(counted, not guessed\):/.test(item.prompt) && /1 job: `build`/.test(item.prompt))
+        && /Facts read from the file \(counted, not guessed\):/.test(outputs[0].prompt);
+    const card = outputs[0].card;
+    const factsInCard = /1 job: build \("Hello new contributor", runs on ubuntu-latest, 1 step\)/.test(card) && /Trigger: pull_request_target \(types: opened\)/.test(card)
+        && /Facts read from the file/.test(card);
     const invented = asked.filter((item) => /flake8|python|\bpip\b|\.py\b/i.test(item.answer));
-    check('K12', 'The open YAML file is in the question prompt, named as a workflow, and answers invent no flake8/Python', fileInPrompt && invented.length === 0,
-        { fileInPrompt, invented: invented.length, automatic: outputs[0].card.replace(/\s+/g, ' ').slice(0, 300), answers: asked.map((item) => item.answer.replace(/\s+/g, ' ').slice(0, 300)) });
+    const counts = asked.filter((item) => /Wie viele|How many/.test(item.question)).map((item) => item.answer.replace(/^You\s+[^\n]*\n+Agent\s+(?:ⓘ Source\s+)?/, '').replace(/\s+/g, ' ').slice(0, 200));
+    const wrongCount = counts.filter((answer) => /\b(?:[2-9]|zwei|drei|vier|two|three|four)\s+(?:jobs?|Jobs?)\b/i.test(answer));
+    check('K12', 'The open YAML file and its counted facts are in the prompt and the card; answers invent no flake8/Python and no wrong job count', fileInPrompt && factsInPrompt && factsInCard
+        && invented.length === 0 && wrongCount.length === 0,
+    { fileInPrompt, factsInPrompt, factsInCard, invented: invented.length, wrongCount: wrongCount.length, counts, automatic: card.replace(/\s+/g, ' ').slice(0, 420),
+        answers: asked.map((item) => `${item.question} => ${item.answer.replace(/\s+/g, ' ').slice(0, 260)}`) });
 }
 
 async function k10(page) {
