@@ -2066,9 +2066,12 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                     : `${galaxyLayerText.counts(data?.nodes.length ?? 0, data?.edges.length ?? 0)}${scope.result?.exhausted ? galaxyLayerText.endOfTrace : ''}`
                     : galaxyLayerText.partialPreview;
     const estimate = scope.complete ? nextLayerEstimate(scope.result) : undefined;
-    const expandWarning = Boolean(estimate && props.workspaceExpanded && (data?.nodes.length ?? 0) + estimate.estimate > nodeBudget);
+    // Die gezaehlten Aufrufe am Rand sind eine Untergrenze; das Wachstum allein uebersah die Knoten mit tausend Aufrufern (Review zu K8).
+    const edgeCalls = estimate ? scope.edgeCalls : undefined;
+    const expandWarning = Boolean(estimate && props.workspaceExpanded && ((data?.nodes.length ?? 0) + Math.max(estimate.estimate, edgeCalls ?? 0) > nodeBudget
+        || (data?.edges.length ?? 0) + (edgeCalls ?? 0) > edgeBudget));
     const expandTitle = partial ? galaxyLayerText.expandPartial : scope.result?.exhausted ? galaxyLayerText.expandEnd
-        : estimate ? `${expandWarning ? `${galaxyLayerText.expandOverLimit} ` : ''}${galaxyLayerText.expandTitle(estimate.layer, estimate.frontier, estimate.estimate, nodeBudget)}`
+        : estimate ? `${expandWarning ? `${galaxyLayerText.expandOverLimit} ` : ''}${galaxyLayerText.expandTitle(estimate.layer, estimate.frontier, estimate.estimate, nodeBudget, edgeCalls)}`
             : undefined;
 
     /*
@@ -2596,7 +2599,8 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                     </>}
                     <span className="atlas-graph-scope-count" role="status" data-state={scopeState}
                         title={partial ? galaxyLayerText.partialTitle(partial.layer, partial.limit === 'nodes' ? nodeBudget : edgeBudget, partial.limit)
-                            : [scopeStatus, groupsText].filter(Boolean).join('. ')}>{scopeStatus}</span>
+                            : [scopeStatus, scope.loading && scope.progress ? galaxyLayerText.loadingRequest(scope.progress.requests) : groupsText]
+                                .filter(Boolean).join('. ')}>{scopeStatus}</span>
                     {scope.error && <span className="atlas-graph-scope-warning" title={scope.error}>Some relationships could not be loaded. <button type="button" onClick={scope.retry}>Retry</button></span>}
                     {!props.workspaceExpanded && scope.complete && <small>All indexed direct dependencies included.</small>}
                     {!props.workspaceExpanded && groupCount > 1 && <small className="atlas-graph-scope-groups" title={groupsText}>{galaxyToolbarText.groups(groupCount)}</small>}

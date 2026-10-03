@@ -39,9 +39,11 @@ const nodeColumns = (alias: string, prefix: string) => [`id(${alias}) AS ${prefi
 
 /** The cursor binds a complete query result to one graph generation. Every
  * continuation is consumed; a daemon cap or missing cursor is never silently
- * accepted as the selected file's complete neighborhood. */
+ * accepted as the selected file's complete neighborhood. The one exception is
+ * `onPage` answering 'stop' (a layer at its render limit, K8): the caller then
+ * holds a deliberately cut result and must mark it partial. */
 export async function readGraphPages(client: GraphQueryClient, project: string, query: string, key: string, signal?: AbortSignal,
-    onRequest?: () => void): Promise<Record<string, string>[]> {
+    onRequest?: () => void, onPage?: (rows: readonly Record<string, string>[]) => 'stop' | void): Promise<Record<string, string>[]> {
     signal?.throwIfAborted();
     onRequest?.();
     let page = await client.queryGraph(project, query, undefined, SCOPE_PAGE_BUDGET);
@@ -51,12 +53,14 @@ export async function readGraphPages(client: GraphQueryClient, project: string, 
         signal?.throwIfAborted();
         if (JSON.stringify(columns) !== JSON.stringify(page.columns) || page.total !== total
             || (page.offset !== undefined && page.offset !== records.length)) throw new Error('Graph pagination changed its result snapshot.');
+        const fresh: Record<string, string>[] = [];
         for (const row of page.rows) {
             const record = Object.fromEntries(columns.map((column, index) => [column, row[index] ?? '']));
             const identity = id(record[key]);
             if (identities.has(identity)) throw new Error('Graph pagination repeated a row.');
-            identities.add(identity); records.push(record);
+            identities.add(identity); records.push(record); fresh.push(record);
         }
+        if (onPage?.(fresh) === 'stop') return records;
         if (!page.nextCursor) {
             if (page.hasMore || page.truncated || page.totalRelation === 'gte' || (total !== undefined && records.length < total))
                 throw new Error(`Incomplete graph response (${records.length} relationships read); ${page.truncationReason ?? 'the server did not provide a continuation'}.`);
@@ -197,25 +201,35 @@ export async function loadGraphScope(project: string, scope: GraphScope, depth: 
                 // Keep each predicate on the left seed, so early WHERE prunes before
                 // adjacency expansion. An OR spanning a and b materializes the repo.
                 const pattern = leg === 'inbound' ? `(b)<-${relationship}-(a)` : `(a)-${relationship}->(b)`;
-                const rows = await readGraphPages(client, project, `MATCH ${pattern} WHERE ${relation} RETURN id(r) AS edge_id, type(r) AS edge_type, r.line AS edge_line, ${nodeColumns('a', 'a_')}, ${nodeColumns('b', 'b_')}`, 'edge_id', options.signal, counted);
                 const evidenceNodes = new Map(batch.map(identity => [identity, nodes.get(identity)!]));
                 const evidenceEdges: GraphEdge[] = [];
-                for (const row of rows) {
-                    // Filter before discovering a frontier, including on older servers
-                    // whose typed-pattern implementation may return extra rows.
-                    if (allowedTypes && !allowedTypes.has(row.edge_type ?? '')) continue;
-                    const source = readNode(row, 'a_', known), target = readNode(row, 'b_', known);
-                    const incident = leg === 'inbound' ? batchIds.has(target.id) : batchIds.has(source.id);
-                    if (!incident) continue; // Qualified names are not assumed unique.
-                    evidenceNodes.set(source.id, source); evidenceNodes.set(target.id, target);
-                    const identity = id(row.edge_id);
-                    evidenceEdges.push({ id: identity, source: source.id, target: target.id, type: row.edge_type ?? '', line: number(row.edge_line) });
-                }
-                const verifiedNodes = [...evidenceNodes.values()];
-                options.cache?.rememberNeighborhood(batch, leg, edgeTypes, verifiedNodes, evidenceEdges);
-                accept(verifiedNodes, evidenceEdges);
-                options.onProgress?.({ layer: hop + 1, nodes: nodes.size, edges: edges.size, requests });
-                partial = overLimit(hop + 1);
+                /*
+                 * Seite fuer Seite (Review zu K8): ein Stapel der dritten Ebene
+                 * um JSONBAgg las acht Fortsetzungsseiten, und die Leiste stand
+                 * dabei 8 s still. Jetzt zaehlt jede Seite sofort, und die Seite,
+                 * die ueber das Render-Limit fuehrt, ist die letzte: der Rest des
+                 * Stapels wird nicht mehr gelesen. Ein so abgeschnittener Stapel
+                 * kommt nicht in den Nachbarschafts-Cache.
+                 */
+                await readGraphPages(client, project, `MATCH ${pattern} WHERE ${relation} RETURN id(r) AS edge_id, type(r) AS edge_type, r.line AS edge_line, ${nodeColumns('a', 'a_')}, ${nodeColumns('b', 'b_')}`, 'edge_id', options.signal, counted, (rows) => {
+                    const pageNodes = new Map<number, GraphNode>(), pageEdges: GraphEdge[] = [];
+                    for (const row of rows) {
+                        // Filter before discovering a frontier, including on older servers
+                        // whose typed-pattern implementation may return extra rows.
+                        if (allowedTypes && !allowedTypes.has(row.edge_type ?? '')) continue;
+                        const source = readNode(row, 'a_', known), target = readNode(row, 'b_', known);
+                        const incident = leg === 'inbound' ? batchIds.has(target.id) : batchIds.has(source.id);
+                        if (!incident) continue; // Qualified names are not assumed unique.
+                        for (const end of [source, target]) { evidenceNodes.set(end.id, end); pageNodes.set(end.id, end); }
+                        const edge = { id: id(row.edge_id), source: source.id, target: target.id, type: row.edge_type ?? '', line: number(row.edge_line) };
+                        evidenceEdges.push(edge); pageEdges.push(edge);
+                    }
+                    accept([...pageNodes.values()], pageEdges);
+                    options.onProgress?.({ layer: hop + 1, nodes: nodes.size, edges: edges.size, requests });
+                    partial = overLimit(hop + 1);
+                    return partial ? 'stop' : undefined;
+                });
+                if (!partial) options.cache?.rememberNeighborhood(batch, leg, edgeTypes, [...evidenceNodes.values()], evidenceEdges);
             }
         }
         reachedDepth = hop + 1;
@@ -228,6 +242,38 @@ export async function loadGraphScope(project: string, scope: GraphScope, depth: 
     }
     return { data: arrangeScopedGraph([...nodes.values()], [...edges.values()], roots, levels), roots, depth: reachedDepth,
         exhausted: !partial && (edgeTypes?.length === 0 || (depth > 0 && frontier.length === 0)), frontier, levels, traversalKey, ...(partial ? { partial } : {}) };
+}
+
+/*
+ * Die Aufrufe am Rand eines Ausschnitts, bevor die naechste Ebene laedt
+ * (Review zu K8). Das Wachstum der letzten Ebene sagte fuer die dritte Ebene um
+ * JSONBAgg rund 400 Knoten voraus, und es kamen ueber 9.000: unter den 75
+ * Randknoten stehen len, create, str und list mit je ueber tausend Aufrufern.
+ * Der Index zaehlt die CALLS eines Knotens, ohne eine Beziehung abzulaufen
+ * (`n.in_degree`, `n.out_degree`, rund 0,2 s fuer 64 Knoten). Was davon schon
+ * geladen ist, faellt heraus; der Rest ist eine Untergrenze fuer die Zeilen der
+ * naechsten Ebene, und meist fuehrt jede zu einem neuen Knoten. Andere Arten
+ * zaehlt der Index so nicht; ohne CALLS gibt es keine Zahl.
+ */
+export async function frontierCallCount(client: GraphQueryClient, project: string, scoped: ScopedGraph, direction: TraceDirection,
+    edgeTypes: readonly string[] | undefined, signal?: AbortSignal): Promise<number | undefined> {
+    if (scoped.exhausted || scoped.partial || !scoped.frontier?.length || (edgeTypes && !edgeTypes.includes('CALLS'))) return undefined;
+    const frontier = new Set(scoped.frontier), byId = new Map(scoped.data.nodes.map(node => [node.id, node]));
+    const names = [...frontier].map(identity => byId.get(identity)?.qualified_name).filter((name): name is string => Boolean(name));
+    let calls = 0;
+    for (let at = 0; at < names.length; at += BATCH_SIZE) {
+        const rows = await readGraphPages(client, project, `MATCH (n) WHERE ${anyNames('n', names.slice(at, at + BATCH_SIZE))} RETURN id(n) AS id, n.in_degree AS calls_in, n.out_degree AS calls_out`, 'id', signal);
+        for (const row of rows) {
+            if (!frontier.has(id(row.id))) continue;
+            calls += (direction !== 'outbound' ? number(row.calls_in) ?? 0 : 0) + (direction !== 'inbound' ? number(row.calls_out) ?? 0 : 0);
+        }
+    }
+    for (const edge of scoped.data.edges) {
+        if (edge.type !== 'CALLS') continue;
+        if (direction !== 'outbound' && frontier.has(edge.target)) calls -= 1;
+        if (direction !== 'inbound' && frontier.has(edge.source)) calls -= 1;
+    }
+    return Math.max(0, calls);
 }
 
 /** Eine Schaetzung der naechsten Ebene, bevor sie geladen wird (K8): so viele

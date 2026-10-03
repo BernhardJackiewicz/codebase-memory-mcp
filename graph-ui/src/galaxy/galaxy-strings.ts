@@ -77,6 +77,8 @@ export const galaxyLayerText = {
     // A comma, not the dot of the finished counts: tools that wait for "N nodes · M edges" must not take this for done.
     loadingProgress: (layer: number, nodes: number, edges: number) =>
         `Loading layer ${layer}: ${count(nodes, 'node', 'nodes')}, ${count(edges, 'edge', 'edges')} so far`,
+    /** The tooltip of a running load: which request it is on, page by page (review of K8). */
+    loadingRequest: (request: number) => `Request ${request.toLocaleString()} to the index; "−" cancels.`,
     arranging: 'Arranging nodes…',
     counts: (nodes: number, edges: number) => `${count(nodes, 'node', 'nodes')} · ${count(edges, 'edge', 'edges')}`,
     endOfTrace: ' · end of trace',
@@ -89,9 +91,13 @@ export const galaxyLayerText = {
     removeLayer: 'Remove the outermost layer',
     cancelLoading: (layer: number) => `Cancel loading layer ${layer} and return to ${layer - 1 === 1 ? '1 layer' : `${layer - 1} layers`}`,
     /* Measured, not promised: a hub at the edge can bring far more than the last layer did (JSONBAgg layer 3: about 400 expected, over 9,000 loaded). */
-    expandTitle: (layer: number, frontier: number, estimate: number, limit: number) =>
-        `Load layer ${layer}: ${count(frontier, 'node', 'nodes')} to expand. Growing like the last layer it adds about ${estimate.toLocaleString()} nodes; `
-        + `a hub can add many more. Loading stops at the render limit of ${limit.toLocaleString()} nodes and marks the layer partial.`,
+    /* With `calls` the index has counted the calls at the edge nodes (review of K8): a floor, where the growth alone missed the hubs. */
+    expandTitle: (layer: number, frontier: number, estimate: number, limit: number, calls?: number) =>
+        `Load layer ${layer}: ${count(frontier, 'node', 'nodes')} to expand. `
+        + (calls === undefined
+            ? `Growing like the last layer it adds about ${estimate.toLocaleString()} nodes; a hub can add many more. `
+            : `The index lists ${count(calls, 'call', 'calls')} at them that ${calls === 1 ? 'is' : 'are'} not loaded yet; growing like the last layer it adds about ${estimate.toLocaleString()} nodes. `)
+        + `Loading stops at the render limit of ${limit.toLocaleString()} nodes and marks the layer partial.`,
     expandOverLimit: 'Likely past the render limit.',
     expandPartial: 'This layer stopped at the render limit, so there is no complete edge to grow from. Raise the limit under Limits first.',
     expandEnd: 'End of trace: no relationship leads further.',

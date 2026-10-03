@@ -14,6 +14,8 @@ export interface ScopeFetchOptions {
     edges: GraphEdge[];
     /** Jede Kantenabfrage wartet auf dieses Versprechen, wenn es gesetzt ist. */
     gate?: () => Promise<void>;
+    /** Die CALLS je Knoten, die der Index zaehlt (`n.in_degree`, `n.out_degree`); fehlt einer, sind es keine. */
+    degrees?: Record<number, { in: number; out: number }>;
 }
 
 export function scopeNode(id: number, extra: Partial<GraphNode> = {}): GraphNode {
@@ -21,7 +23,7 @@ export function scopeNode(id: number, extra: Partial<GraphNode> = {}): GraphNode
         start_line: 1, end_line: 5, x: id * 10, y: 0, z: 0, size: 2, color: '#999999', ...extra };
 }
 
-export function scopeFetch({ nodes, edges, gate }: ScopeFetchOptions) {
+export function scopeFetch({ nodes, edges, gate, degrees = {} }: ScopeFetchOptions) {
     const calls: { tool: string; args: Record<string, unknown> }[] = [];
     const fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
         if (String(url).includes('/api/layout')) return new Response(JSON.stringify({ nodes, edges, total_nodes: nodes.length }));
@@ -35,7 +37,11 @@ export function scopeFetch({ nodes, edges, gate }: ScopeFetchOptions) {
         const values = (entry: GraphNode) => [entry.id, entry.label, entry.name, entry.qualified_name ?? '', entry.file_path ?? '', entry.start_line ?? '', entry.end_line ?? ''].map(String);
         const names = [...query.matchAll(/qualified_name = "([^"]+)"/g)].map(match => match[1]);
         let cols: string[], rows: string[][];
-        if (query.startsWith('MATCH (n)')) {
+        if (query.includes('n.in_degree')) {
+            cols = ['id', 'calls_in', 'calls_out'];
+            rows = nodes.filter(entry => names.includes(entry.qualified_name ?? ''))
+                .map(entry => [String(entry.id), String(degrees[entry.id]?.in ?? 0), String(degrees[entry.id]?.out ?? 0)]);
+        } else if (query.startsWith('MATCH (n)')) {
             cols = columns(''); rows = nodes.filter(entry => names.includes(entry.qualified_name ?? '')).map(values);
         } else {
             if (gate) await gate();

@@ -63,6 +63,8 @@ it('K8: shows loaded nodes and edges while a layer loads, and "−" cancels back
     await act(async () => button('Expand +1').click());
     await settle(() => expect(status()?.textContent).toBe('Loading layer 2: 4 nodes, 3 edges so far'));
     expect(status()?.getAttribute('data-state')).toBe('loading');
+    // The tooltip counts the requests, so a long batch reads as work in progress (review of K8).
+    expect(status()?.getAttribute('title')).toMatch(/^Loading layer 2: 4 nodes, 3 edges so far\. Request \d+ to the index; "−" cancels\.$/);
     // While loading, "−" is the way out, and it says so.
     expect(minus().disabled).toBe(false);
     expect(minus().title).toBe('Cancel loading layer 2 and return to 1 layer');
@@ -114,4 +116,20 @@ it('K8: a large finished layer keeps its arranged cloud instead of being pushed 
     expect(scene.nodes).toBe(1601);
     // Screen separation pushed a dense cloud of thousands of nodes into a cross of long lines (layer 3 of JSONBAgg).
     expect(scene.separateNodes).toBe(false);
+});
+
+it('K8: Expand warns before loading when the nodes at the edge have more indexed calls than the render limit allows', async () => {
+    window.localStorage.setItem(viewPreferencesKey('sample'), JSON.stringify({ version: 1, preferences: { galaxyNodes: 500, galaxyEdges: 1000 } }));
+    const nodes = [1, 2, 3].map(id => scopeNode(id));
+    const edges: GraphEdge[] = [{ id: 1, source: 1, target: 2, type: 'CALLS' }, { id: 2, source: 3, target: 1, type: 'CALLS' }];
+    // n2 is called from all over the code, like len or str at the edge of JSONBAgg's second layer.
+    const { fetch, calls } = scopeFetch({ nodes, edges, degrees: { 2: { in: 1270, out: 3 }, 3: { in: 0, out: 2 } } });
+    await act(async () => root.render(<GalaxyPanel project="sample" visible workspaceExpanded onOpenNode={vi.fn()} fetch={fetch} />));
+    await settle(() => expect(seam().nodes).toBe(3));
+    await act(async () => { seam().clickNode('sample.n1'); });
+    await settle(() => expect(button('Expand +1').getAttribute('data-warning')).toBe('true'));
+    // 1,270 + 3 + 2 calls, less the two already loaded.
+    expect(button('Expand +1').title).toBe(`Likely past the render limit. Load layer 2: 2 nodes to expand. The index lists ${(1273).toLocaleString()} calls at them that are not loaded yet; `
+        + 'growing like the last layer it adds about 4 nodes. Loading stops at the render limit of 500 nodes and marks the layer partial.');
+    expect(calls.filter(call => String(call.args.query).includes('n.in_degree'))).toHaveLength(1);
 });

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { graphEdgeTypesKey, loadGraphScope, type GraphScope, type ScopedGraph, type ScopeProgress, type TraceDirection } from './graph-scope';
+import { frontierCallCount, graphEdgeTypesKey, loadGraphScope, type GraphScope, type ScopedGraph, type ScopeProgress, type TraceDirection } from './graph-scope';
 import { RpcIntelligenceClient } from '../provider/rpc-client';
 import { readerGraphFocus, type SourceFocusRange } from './reader-graph-focus';
 import type { GraphData } from './types';
@@ -104,6 +104,27 @@ export function useGraphScope({ project, layout, filePath, range, fetch: fetchIm
     }, [key, fetchImpl]);
     const complete = result?.key === key ? result.value : undefined;
     const error = failure?.key === key ? failure.message : undefined;
+    /*
+     * Die Aufrufe am Rand, sobald eine Ebene fertig ist (Review zu K8): eine
+     * kurze Zaehlabfrage, damit "Expand +1" vor einer Explosion warnt und nicht
+     * erst das Render-Limit sie anhaelt. Je Ausschnitt und Tiefe einmal.
+     */
+    const edgeCallsCache = useRef(new Map<string, number>());
+    const [edgeCalls, setEdgeCalls] = useState<{ key: string; calls: number }>();
+    useEffect(() => {
+        if (!complete || !project) return;
+        const known = edgeCallsCache.current.get(key);
+        if (known !== undefined) { setEdgeCalls({ key, calls: known }); return; }
+        const abort = new AbortController();
+        const client = new RpcIntelligenceClient({ fetch: fetchImpl, signal: abort.signal });
+        void frontierCallCount(client, project, complete, actualDirection, selectedTypes, abort.signal).then(calls => {
+            if (abort.signal.aborted || calls === undefined) return;
+            if (edgeCallsCache.current.size >= 16) edgeCallsCache.current.delete(edgeCallsCache.current.keys().next().value!);
+            edgeCallsCache.current.set(key, calls); setEdgeCalls({ key, calls });
+        }).catch(() => { /* Ohne Zahl bleibt es bei der Schaetzung aus dem Wachstum. */ });
+        return () => abort.abort();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [complete, key]);
     const fallback = useMemo<ScopedGraph | undefined>(() => {
         if (!scope || !layout) return undefined;
         const roots = scope.kind === 'file' ? readerGraphFocus(layout.nodes, scope.path, scope.range).ids
@@ -137,6 +158,8 @@ export function useGraphScope({ project, layout, filePath, range, fetch: fetchIm
     const minDepth = filePath ? 1 : minimumScopeDepth(scope);
     return { scope, depth: actualDepth, minDepth, direction, setDirection,
         progress: progress?.key === key && !complete ? progress.value : undefined,
+        /** The indexed calls at the edge of a complete layer that are not loaded yet, once counted. */
+        edgeCalls: edgeCalls?.key === key && complete ? edgeCalls.calls : undefined,
         result: complete ?? (cachedPreview?.key === key ? cachedPreview.value : undefined)
             ?? (result?.scopeKey === scopeKey && result.value.depth <= actualDepth ? result.value : fallback), loading: Boolean(scope && !complete && !error), error,
         validating: Boolean(scope && !complete && !error && pendingPhase?.key === key && pendingPhase.validating),
