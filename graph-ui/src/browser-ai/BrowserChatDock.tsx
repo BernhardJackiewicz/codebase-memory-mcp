@@ -532,7 +532,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const listed = !retry && !source ? relationshipAnswer(prompt, [...currentGraph, ...extra]) : undefined;
         if (listed) {
             const id = `local-turn-${crypto.randomUUID()}`;
-            setTurns(previous => [...previous, { id, prompt, context: extra, topic, listedFrom: listed.context,
+            setTurns(previous => [...previous, { id, prompt, context: extra, topic, listedFrom: listed.context, replyLanguage: listed.language,
                 evidence: prepareExplanationContext(undefined, listed.context, chatEvidence, knownSource(listed.context)), modelId: model.id, request: [],
                 answer: listed.markdown, status: 'complete', answeredFrom: 'graph' }]);
             consume(); listSource(id, listed.context);
@@ -542,7 +542,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const suggested = !retry && !source ? relationshipSuggestion(prompt, [...currentGraph, ...extra]) : undefined;
         if (suggested) {
             const id = `local-turn-${crypto.randomUUID()}`;
-            setTurns(previous => [...previous, { id, prompt, context: extra, topic,
+            setTurns(previous => [...previous, { id, prompt, context: extra, topic, replyLanguage: suggested.language,
                 evidence: prepareExplanationContext(undefined, suggested.context, chatEvidence, knownSource(suggested.context)), modelId: model.id, request: [],
                 answer: suggested.markdown, status: 'complete', answeredFrom: 'suggestion', suggestion: { question: suggested.question, context: suggested.context } }]);
             consume(); listSource(id, suggested.context);
@@ -631,7 +631,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     const showSuggestedList = (turn: ChatTurn): void => {
         const listed = turn.suggestion && relationshipAnswer(turn.suggestion.question, [turn.suggestion.context]);
         if (!listed) return;
-        setTurns(previous => previous.map(item => item.id === turn.id ? { ...item, answer: listed.markdown, answeredFrom: 'graph', suggestion: undefined, listedFrom: listed.context,
+        setTurns(previous => previous.map(item => item.id === turn.id ? { ...item, answer: listed.markdown, answeredFrom: 'graph', suggestion: undefined, listedFrom: listed.context, replyLanguage: listed.language,
             evidence: prepareExplanationContext(undefined, listed.context, chatEvidence, knownSource(listed.context)) } : item));
         listSource(turn.id, listed.context);
     };
@@ -728,7 +728,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                     : manualRequest.current ? 'This selection will be explained after your answer.' : 'Preparing explanation…'}</p>}
             </section>}
             {turns.length === 0 && !(proactive && automatic && selected) && <div className="cbm-chat-empty"><span aria-hidden="true">⌁</span><h3>Ask about the code.</h3><p>{readerContext ? 'The current file is included automatically. Mark code to focus your next message on that exact selection.' : 'Ask a question, or add source and graph context to your next message.'}</p></div>}
-            {turns.map((turn, index) => <article className="cbm-chat-turn" key={turn.id}>
+            {turns.map((turn, index) => { const replyWords = relationshipWords[turn.replyLanguage === 'de' ? 'de' : 'en']; return <article className="cbm-chat-turn" key={turn.id}>
                 {turn.topic && index > 0 && turn.topic.key !== turns.slice(0, index).reverse().find(item => item.topic)?.topic?.key
                     && <p className="cbm-chat-topic-break">{browserChatText.topicBreak(turn.topic.label)}</p>}
                 <div className="cbm-chat-question"><span className="cbm-chat-speaker">You</span><ChatMarkdown text={turn.prompt} /></div>
@@ -746,10 +746,10 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                         unsupported={turn.answer ? namesNotIn(turn.answer, turn.request.map(message => message.content).join('\n')) : []} model={BROWSER_MODELS.find(candidate => candidate.id === turn.modelId)?.displayName ?? turn.modelId} historyOmitted={turn.historyOmitted} />}
                     {turn.status === 'error' && <p className="cbm-chat-turn-error" role="alert">{turn.error}</p>}
                     {index === turns.length - 1 && turn.answeredFrom === 'suggestion' && turn.suggestion && <button type="button" className="cbm-chat-retry"
-                        onClick={() => showSuggestedList(turn)}>{relationshipWords.en.showList}</button>}
-                    {index === turns.length - 1 && turn.status !== 'generating' && turn.answeredFrom !== 'local' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { void send(turn); }}>{turn.answeredFrom ? browserChatText.askModel : 'Retry'}</button>}
+                        onClick={() => showSuggestedList(turn)}>{replyWords.showList}</button>}
+                    {index === turns.length - 1 && turn.status !== 'generating' && turn.answeredFrom !== 'local' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { void send(turn); }}>{turn.answeredFrom ? replyWords.askModel : 'Retry'}</button>}
                 </div>
-            </article>)}
+            </article>; })}
         </div>}
         {newOutput && <button type="button" className="cbm-chat-jump" onClick={() => { followOutput.current = true; setNewOutput(false); if (transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight; }}>Latest answer ↓</button>}
         {newExplanation && proactive && automatic && selected && <button type="button" className="cbm-chat-jump" onClick={() => { followExplanation.current = true; setNewExplanation(false); if (transcript.current) transcript.current.scrollTop = 0; }}>Current selection ↑</button>}

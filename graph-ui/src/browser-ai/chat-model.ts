@@ -51,6 +51,8 @@ export interface BrowserChatTurn {
     /** The graph evidence a listed answer was listed from: asking the model about it reads
      * the same selection's source (K14). */
     listedFrom?: BrowserChatContext;
+    /** The language of a listed answer or suggestion, which follows the question; its buttons follow it too. */
+    replyLanguage?: 'en' | 'de';
     /** Earlier turns left out of this request to fit the input limit. */
     historyOmitted?: number;
     /** What the question was about; undefined for a question without context. */

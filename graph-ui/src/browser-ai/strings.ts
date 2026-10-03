@@ -72,6 +72,8 @@ const englishRelationshipWords = {
     didYouMean: (side: 'incoming' | 'outgoing', name: string) => side === 'incoming' ? `Did you mean: callers of ${name}?` : `Did you mean: what ${name} calls?`,
     uncertain: 'The question was not recognized for certain. Show the list from the indexed graph, or ask the model instead.',
     showList: 'Show the list',
+    /** Offered under a listed answer or a suggestion, which the model did not write. */
+    askModel: 'Ask the model',
 };
 export type RelationshipWords = typeof englishRelationshipWords;
 
@@ -116,6 +118,7 @@ export const relationshipWords: { en: RelationshipWords; de: RelationshipWords }
         didYouMean: (side: 'incoming' | 'outgoing', name: string) => side === 'incoming' ? `Meintest du: Aufrufer von ${name}?` : `Meintest du: von ${name} aufgerufene Symbole?`,
         uncertain: 'Die Frage wurde nicht sicher erkannt. Zeige die Liste aus dem indizierten Graphen oder frage stattdessen das Modell.',
         showList: 'Liste anzeigen',
+        askModel: 'Modell fragen',
     },
 };
 
@@ -149,8 +152,6 @@ export const browserChatText = {
     readingFacts: 'Listing the facts…',
     /** Above the first question about another file or selection (K17). */
     topicBreak: (label: string) => `New topic: ${label}. Earlier messages are not sent with these questions.`,
-    /** Offered under a listed answer, which the model did not write. */
-    askModel: 'Ask the model',
     capacity: (nodes: number, edges: number, model: string, shown: number) =>
         `${nodes} nodes / ${edges} edges: too large for the local ${model} model; showing ${shown}`,
     historyTrimmed: (count: number) => `${count} earlier ${count === 1 ? 'message was' : 'messages were'} left out to fit the input limit.`,
