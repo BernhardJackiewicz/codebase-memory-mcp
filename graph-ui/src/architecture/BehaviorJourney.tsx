@@ -170,7 +170,8 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
                     <input type="range" aria-label="Call-chain position" min={0} max={path.nodes.length - 1} value={activeStep} onChange={event => selectStep(Number(event.target.value))} />
                     <span>{activeStep + 1} / {path.nodes.length}</span><button disabled={activeStep >= path.nodes.length - 1} onClick={() => selectStep(activeStep + 1)}>Next →</button></nav>}
                 {!path && journey.scene.nodes.length > 5 && <nav className="behavior-walk" aria-label="Direct call pages"><button disabled={branchPage === 0} onClick={() => { setBranchPage(page => page - 1); setSelection(undefined); }}>← Earlier calls</button>
-                    <span>Calls {branchPage * 4 + 1} to {Math.min(branchPage * 4 + 4, journey.scene.nodes.length - 1)} of {journey.scene.nodes.length - 1} shown</span>
+                    <span>{text.callPage(branchPage * 4 + 1, Math.min(branchPage * 4 + 4, journey.scene.nodes.length - 1), journey.scene.nodes.length - 1,
+                        journey.counts.omittedNodes, journey.scene.nodes.length - 1 + journey.counts.omittedNodes < journey.counts.directChoices)}</span>
                     <button disabled={(branchPage + 1) * 4 >= journey.scene.nodes.length - 1} onClick={() => { setBranchPage(page => page + 1); setSelection(undefined); }}>More calls →</button></nav>}
             </div><aside className="behavior-inspector" aria-label="Behavior evidence inspector">
                 {caller ? <><span className="system-eyebrow">{call ? call.type.replaceAll('_', ' ') : path ? `Operation ${activeStep + 1}` : 'Starting operation'}</span>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { labelEdges, labelInset, labelRect, labelsCollide, placeSecondaryLabels, spotRect, type LabelBox } from './label-space';
+import { journeyChipForm, labelEdges, labelInset, labelRect, labelsCollide, placeSecondaryLabels, spotRect, type LabelBox } from './label-space';
 
 // The compact Overview and Endpoints label: padding 5px 7px and a 1px border (spatial-architecture.css).
 const compact: LabelBox = { width: 100, height: 24, edgeX: 8, edgeY: 6 };
@@ -42,5 +42,11 @@ describe('label space', () => {
         // Covered everywhere or outside the canvas: hidden, never stacked.
         const covered = { id: 'c', width: 40, height: 14, spots: [{ x: 10, y: 10, align: 'start' as const }, { x: 390, y: 10, align: 'start' as const }] };
         expect(placeSecondaryLabels([covered], [labelRect(30, 17, 60, 20, [0, 0])], 400, 300).get('c')).toBe(-1);
+    });
+    it('keeps every Behavior call name and switches all chips to the compact form when the full ones would overlap', () => {
+        const full = { width: 116, height: 58 };
+        // handle · loaddata.py in the hand-test window: neighbouring call boxes 60 px apart.
+        expect(journeyChipForm([{ x: 500, y: 100 }, { x: 500, y: 160 }, { x: 500, y: 220 }], full)).toBe('compact');
+        expect(journeyChipForm([{ x: 500, y: 100 }, { x: 500, y: 180 }, { x: 200, y: 140 }], full)).toBe('full');
     });
 });

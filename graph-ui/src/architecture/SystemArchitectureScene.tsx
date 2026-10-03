@@ -8,7 +8,7 @@ import { EdgePulseLayer } from '../graph/EdgePulseLayer';
 import { useGraphBackgroundReset } from '../graph/useGraphBackgroundReset';
 import { connectionLoad, type ConnectionLoad } from '../graph/connection-load';
 import { SCENE_MAX_TILT, SCENE_PALETTE } from './scene-palette';
-import { placeSecondaryLabels, type LabelRect, type SecondaryLabel } from './label-space';
+import { journeyChipForm, placeSecondaryLabels, type LabelRect, type SecondaryLabel } from './label-space';
 
 /** The model keeps its stable XY layout; rendering places that footprint on XZ. */
 const groundPosition = ([x, y, z]: [number, number, number]): Vector3 => new Vector3(x, z, -y);
@@ -35,11 +35,13 @@ function ScopeCamera({ model, resetKey, planar, presentation }: { model: SystemS
         const orbit = controls as unknown as { target: Vector3; update: () => void } | undefined;
         if (!orbit || !(camera instanceof ThreeOrthographicCamera) || size.width < 1 || size.height < 1) return;
         const last = previous.current;
-        if (last && last.key !== key) {
+        // A Behavior page is always fitted afresh: a view kept from an earlier visit may frame none of its boxes.
+        const remember = presentation !== 'journey';
+        if (remember && last && last.key !== key) {
             cameraViews.set(last.key, { position: camera.position.toArray() as [number, number, number], target: orbit.target.toArray() as [number, number, number], zoom: camera.zoom, far: camera.far, width: last.width, height: last.height });
             if (cameraViews.size > 24) cameraViews.delete(cameraViews.keys().next().value!);
         }
-        const stored = last?.reset === resetKey ? cameraViews.get(key) : undefined;
+        const stored = remember && last?.reset === resetKey ? cameraViews.get(key) : undefined;
         previous.current = { key, reset: resetKey, width: size.width, height: size.height };
         camera.up.set(0, planar ? 0 : 1, planar ? -1 : 0);
         if (stored && last?.key !== key && stored.width === size.width && stored.height === size.height) {
@@ -97,6 +99,7 @@ function laneSpots(lane: SystemSceneLane): { point: [number, number, number]; al
     return ([[-x, far, 'start'], [-x, near, 'start'], [x, far, 'end'], [x, near, 'end']] as const)
         .map(([dx, dz, align]) => ({ point: base.clone().add(new Vector3(dx, top, dz)).toArray() as [number, number, number], align }));
 }
+const JOURNEY_CHIP = { width: 116, height: 58 }, JOURNEY_COMPACT = { width: 116, height: 26 };
 
 /** Source-to-target geometry is shared by the base edge and the GPU pulse batch. */
 function connectionGeometry(source: SystemSceneNode, target: SystemSceneNode, offset: number) {
@@ -147,8 +150,10 @@ const labelPosition = (node: SystemSceneNode): [number, number, number] => {
 
 /**
  * Corridor labels take priority; neither hovering nor ordinary selection changes membership.
- * Lane names come last and take a free corner of their lane, or wait hidden; a
- * lane that only repeats its one visible group name gives way to that chip.
+ * A Behavior call box always keeps its name: when the full chips would overlap,
+ * every chip shows the name alone (the tooltip keeps the rest). Lane names come
+ * last and take a free corner of their lane, or wait hidden; a lane that only
+ * repeats its one visible group name gives way to that chip.
  */
 function NodeLabels({ model, selectedNode, highlightedPathIndex, onSelect, onExpand, loads, presentation }: {
     model: SystemSceneModel; selectedNode?: string; highlightedPathIndex?: number;
@@ -159,6 +164,7 @@ function NodeLabels({ model, selectedNode, highlightedPathIndex, onSelect, onExp
     // Html labels mount where drei puts them: the event source, else the canvas parent.
     const labelHost = (events.connected as HTMLElement | undefined) ?? gl.domElement.parentElement;
     const [visible, setVisible] = useState<Set<string>>(new Set());
+    const [compactChips, setCompactChips] = useState(false);
     const [laneSpot, setLaneSpot] = useState<Map<string, number>>(new Map());
     const laneBoxes = useRef(new Map<string, { width: number; height: number }>());
     useEffect(() => { laneBoxes.current.clear(); }, [model.lanes]);
@@ -181,19 +187,22 @@ function NodeLabels({ model, selectedNode, highlightedPathIndex, onSelect, onExp
             const projected = new Vector3(...point).project(camera);
             return { x: (projected.x + 1) * size.width / 2, y: (1 - projected.y) * size.height / 2, z: projected.z };
         };
+        const journey = presentation === 'journey';
+        const chipForm = journey ? journeyChipForm(ordered.map(node => screen(labelPosition(node))), JOURNEY_CHIP) : 'full';
         for (const node of ordered) {
             if (node.parentId && zoom < 5) continue;
             const { x, y, z } = screen(labelPosition(node));
             if (z < -1 || z > 1) continue;
             const compact = node.kind === 'group' && !node.expanded;
-            const width = presentation === 'journey' ? 116 : compact ? 76 : node.parentId ? 110 : node.expanded ? 126 : 96, height = presentation === 'journey' ? 58 : compact ? 24 : 28;
+            const { width, height } = journey ? chipForm === 'compact' ? JOURNEY_COMPACT : JOURNEY_CHIP
+                : { width: compact ? 76 : node.parentId ? 110 : node.expanded ? 126 : 96, height: compact ? 24 : 28 };
             const box = { left: x - width / 2, right: x + width / 2, top: y - height / 2, bottom: y + height / 2 };
-            if (box.left < 2 || box.right > size.width - 2 || box.top < 2 || box.bottom > size.height - captionHeight) continue;
-            if (boxes.some(other => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top)) continue;
+            if (!journey && (box.left < 2 || box.right > size.width - 2 || box.top < 2 || box.bottom > size.height - captionHeight)) continue;
+            if (!journey && boxes.some(other => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top)) continue;
             boxes.push(box); ids.push(node.id);
         }
-        const key = ids.join('|');
-        if (key !== previous.current) { previous.current = key; setVisible(new Set(ids)); }
+        const key = `${chipForm}:${ids.join('|')}`;
+        if (key !== previous.current) { previous.current = key; setVisible(new Set(ids)); setCompactChips(chipForm === 'compact'); }
         const shown = new Set(ids);
         const names: SecondaryLabel[] = [], given: string[] = [];
         for (const lane of [...(model.lanes ?? [])].sort((a, b) => b.width * (b.height ?? 24) - a.width * (a.height ?? 24) || a.id.localeCompare(b.id))) {
@@ -219,7 +228,7 @@ function NodeLabels({ model, selectedNode, highlightedPathIndex, onSelect, onExp
         </Html>;
     })}{ordered.filter(node => visible.has(node.id)).map(node => <Html key={node.id}
         position={labelPosition(node)} center zIndexRange={[10, 6]}>
-        <button className="system-scene-node-label" data-presentation={presentation} data-kind={node.kind} data-expanded={node.expanded} data-child={Boolean(node.parentId)}
+        <button className="system-scene-node-label" data-presentation={presentation} data-compact={presentation === 'journey' && compactChips} data-kind={node.kind} data-expanded={node.expanded} data-child={Boolean(node.parentId)}
             data-selected={selectedNode === node.id} data-focus={model.focusId === node.id}
             data-node-id={node.id} data-position={center(node).toArray().join(',')} data-size={dimensions(node).join(',')}
             data-color={node.visual?.color} data-color-label={node.visual?.label}
@@ -228,9 +237,9 @@ function NodeLabels({ model, selectedNode, highlightedPathIndex, onSelect, onExp
             data-muted={!activeNode(model, node, highlightedPathIndex)} title={`${node.label} · ${node.detail}${loads ? ` · ${loads.get(node.id)?.links ?? 0} visible links · ${loads.get(node.id)?.neighbors ?? 0} connected items` : ''}${node.visual ? ` · ${node.visual.label}${node.visual.basis ? ` (${node.visual.basis})` : ''}` : ''}`}
             type="button" aria-label={`${node.label} · ${node.detail}`} aria-pressed={selectedNode === node.id}
             onClick={() => onSelect(node.id)} onDoubleClick={onExpand && (node.group || presentation === 'journey') ? () => onExpand(node.id) : undefined}>
-            {presentation === 'journey' && <small>{node.depth === 0 ? 'START' : node.pathIndices?.length ? `HOP ${node.depth}` : 'POSSIBLE CALL'}</small>}
+            {presentation === 'journey' && !compactChips && <small>{node.depth === 0 ? 'START' : node.pathIndices?.length ? `HOP ${node.depth}` : 'POSSIBLE CALL'}</small>}
             <strong>{node.label}</strong>
-            {presentation === 'journey' && <small>{node.symbol?.file_path?.split('/').at(-1) ?? 'Source unavailable'}</small>}
+            {presentation === 'journey' && !compactChips && <small>{node.symbol?.file_path?.split('/').at(-1) ?? 'Source unavailable'}</small>}
         </button>
     </Html>)}</>;
 }
@@ -283,7 +292,7 @@ export default function SystemArchitectureScene({ model, selectedNode, selectedE
     const background = useGraphBackgroundReset(onClearSelection);
     const floorY = Math.min(0, ...model.nodes.map(node => center(node).y - dimensions(node)[1] / 2), ...(model.lanes ?? []).map(lane => lane.position[2] - lane.depth / 2)) - 0.2;
     const extent = Math.max(120, ...model.nodes.map(node => Math.max(Math.abs(node.position[0]) + dimensions(node)[0] / 2, Math.abs(node.position[1]) + dimensions(node)[2] / 2) * 2 + 40));
-    return <SceneBoundary><div className="system-scene" data-testid="system-scene" data-projection={planar ? 'plan' : '3d'}>
+    return <SceneBoundary><div className="system-scene" data-testid="system-scene" data-projection={planar ? 'plan' : '3d'} data-node-count={model.nodes.length}>
         <Canvas {...background} frameloop={active ? 'demand' : 'never'} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false, powerPreference: 'low-power' }}
             role="img" aria-label={presentation === 'journey' ? 'Behavior call journey. Follow recorded invocations across component lanes. Double-click an operation to explore its calls.' : `System ${planar ? 'plan' : '3D map'}. Groups lie on a ground plane; expanded members sit above their group. Use the adjacent list to inspect source evidence.`}>
             <color attach="background" args={[SCENE_PALETTE.background]} />

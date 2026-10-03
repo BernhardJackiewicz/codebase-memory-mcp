@@ -60,3 +60,12 @@ export function placeSecondaryLabels(labels: readonly SecondaryLabel[], occupied
     return result;
 }
 
+/**
+ * Behavior call boxes never lose their name to a neighbour. When the full
+ * chips (kind, name, file) would overlap at this zoom, every chip switches to
+ * the compact form with the name alone; the tooltip keeps the rest.
+ */
+export function journeyChipForm(centres: readonly { x: number; y: number }[], full: { width: number; height: number }, gap = 4): 'full' | 'compact' {
+    const rects = centres.map(({ x, y }) => labelRect(x, y, full.width + gap, full.height + gap, [0, 0]));
+    return rects.some((rect, index) => rects.slice(index + 1).some(other => labelsCollide(rect, other))) ? 'compact' : 'full';
+}

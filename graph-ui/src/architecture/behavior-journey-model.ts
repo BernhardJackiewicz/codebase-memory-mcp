@@ -15,7 +15,12 @@ export interface BehaviorJourney {
     limits: { maxChoices: number; maxNodes: number; maxEdges: number; hit: string[]; sampled: boolean };
 }
 
-const MAX_CHOICES = 12, MAX_NODES = 60, MAX_EDGES = 120;
+/**
+ * Direct callees drawn and offered: twelve pages of four. The page counter and
+ * the "direct callees" count name the same calls up to this bound; beyond it
+ * the page counter says how many were left out.
+ */
+const MAX_CHOICES = 48, MAX_NODES = 60, MAX_EDGES = 120;
 const INVOCATIONS = new Set(['CALLS', 'HTTP_CALLS', 'ASYNC_CALLS', 'GRPC_CALLS', 'GRAPHQL_CALLS', 'TRPC_CALLS',
     'CROSS_HTTP_CALLS', 'CROSS_ASYNC_CALLS', 'CROSS_GRPC_CALLS', 'CROSS_GRAPHQL_CALLS', 'CROSS_TRPC_CALLS']);
 const invocation = (edge: { type: string }) => INVOCATIONS.has(edge.type.trim().replaceAll('-', '_').toUpperCase());
