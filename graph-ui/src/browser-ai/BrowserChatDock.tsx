@@ -15,7 +15,7 @@ import { isGpuRuntimeFailure, BrowserRuntimeFatalError } from './runtime-fault';
 import ChatMarkdown from './ChatMarkdown';
 import AgentSettingsDialog from './AgentSettingsDialog';
 import { useChatHistory } from './use-chat-history';
-import { chatTopic, followedTopic, missingContextAnswer } from './chat-context';
+import { chatTopic, followedTopic, missingContextAnswer, topicHistory } from './chat-context';
 import './browser-chat.css';
 
 export type { BrowserChatAttachment, BrowserChatContext, BrowserChatReaderContext, BrowserChatSource } from './chat-model';
@@ -530,9 +530,9 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             consume();
             return;
         }
-        // Answers about another file or selection stay out: an earlier wrong answer must not
-        // become evidence for this one (K17).
-        const earlier = (ask ? turns.filter(item => item.id !== retry.id) : turns).filter(item => item.topic?.key === topic?.key);
+        // Answers about another file or selection stay out, and so do those from before the
+        // last change of topic: an earlier wrong answer must not become evidence for this one (K17).
+        const earlier = topicHistory(ask ? turns.filter(item => item.id !== retry.id) : turns, topic);
         let history: ChatTurn[] = earlier;
         const makeRequest = () => buildChatMessages(history, prompt, source, extra, reader, currentGraph, packet ? formatExplanationEvidence(packet) : undefined);
         const queued = { cancelled: false }; manualRequest.current = queued;

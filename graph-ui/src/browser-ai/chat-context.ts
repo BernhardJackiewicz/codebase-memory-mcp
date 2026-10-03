@@ -21,6 +21,22 @@ export function chatTopic(scope: string, sources: { reader?: BrowserChatReaderCo
     return undefined;
 }
 
+/** The earlier turns a question about `topic` carries: those since the topic last changed.
+ * A file or selection the reader comes back to starts fresh, as the divider above it says,
+ * so an earlier wrong answer about it is not sent again (K17). Replies without a topic
+ * (no context) neither belong to nor end a topic. */
+export function topicHistory<T extends BrowserChatTurn>(turns: readonly T[], topic: ChatTopic | undefined): T[] {
+    if (!topic) return [];
+    const run: T[] = [];
+    for (let index = turns.length - 1; index >= 0; index--) {
+        const turn = turns[index];
+        if (!turn.topic) continue;
+        if (turn.topic.key !== topic.key) break;
+        run.unshift(turn);
+    }
+    return run;
+}
+
 /** A question without its own context follows up on explicitly attached code or context
  * in the same view. A selection or file that is gone leaves nothing to follow up on. */
 export function followedTopic(turns: readonly BrowserChatTurn[], scope: string): ChatTopic | undefined {

@@ -991,6 +991,28 @@ describe('graph answers and answer limits', () => {
         expect(runtime.chat.mock.calls[2][0].map(message => message.content).join('\n')).not.toContain('flake8');
     });
 
+    it('starts a file or selection fresh when the reader comes back to it, as the divider says (K17)', async () => {
+        const { props, runtime } = fixture();
+        runtime.chat.mockResolvedValueOnce('This runs the flake8 linter on Python files.');
+        const workflow = reader('name: New contributor message', 'file', '.github/workflows/new_contributor_pr.yml');
+        await render({ ...props, selectionScope: 'django-demo:explore', readerContext: workflow }); await click('Download & load');
+        await type('was kannst du mir über dieses File sagen'); await click('Send ↑');
+        await render({ ...props, selectionScope: 'django-demo:galaxy', proactiveSelection: jsonbAggEvidence() });
+        await type('What does JSONBAgg do?'); await click('Send ↑');
+        await render({ ...props, selectionScope: 'django-demo:explore', readerContext: workflow });
+        await type('Und was noch?'); await click('Send ↑');
+        const request = runtime.chat.mock.calls[2][0];
+        expect(request.filter(message => message.role === 'assistant')).toHaveLength(0);
+        expect(request.map(message => message.content).join('\n')).not.toContain('flake8');
+        expect(request.filter(message => message.role === 'user').map(message => message.content.split('\n').at(-1))).toEqual(['Und was noch?']);
+        expect([...container.querySelectorAll('.cbm-chat-topic-break')].map(item => item.textContent)).toEqual([
+            'New topic: JSONBAgg. Earlier messages are not sent with these questions.',
+            'New topic: .github/workflows/new_contributor_pr.yml. Earlier messages are not sent with these questions.']);
+        // Within the returned topic the conversation goes on.
+        await type('Welche Jobs?'); await click('Send ↑');
+        expect(runtime.chat.mock.calls[3][0].filter(message => message.role === 'user').map(message => message.content.split('\n').at(-1))).toEqual(['Und was noch?', 'Welche Jobs?']);
+    });
+
     it('marks names in an answer that are not in the file or the graph facts (K12)', async () => {
         const { props, runtime } = fixture();
         runtime.chat.mockResolvedValueOnce('Dieses Script ruft `flake8` mit `subprocess.run` auf und prüft `pull_request_target`.');

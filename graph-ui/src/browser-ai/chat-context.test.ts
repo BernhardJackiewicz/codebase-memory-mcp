@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chatTopic, followedTopic, missingContextAnswer, questionLanguage } from './chat-context';
+import { chatTopic, followedTopic, missingContextAnswer, questionLanguage, topicHistory } from './chat-context';
 import type { BrowserChatTurn } from './chat-model';
 import { jsonbAggEvidence } from './galaxy-evidence.fixture';
 
@@ -51,5 +51,24 @@ describe('what a question is about', () => {
         expect(followedTopic([turn(attached), turn(selected)], 'p:galaxy')).toBeUndefined();
         expect(followedTopic([], 'p:galaxy')).toBeUndefined();
         expect(followedTopic([turn({ key: '{damaged', label: 'x', kind: 'attachment' })], 'p:galaxy')).toBeUndefined();
+    });
+});
+
+describe('which earlier turns a question carries (K17)', () => {
+    const file = chatTopic('p:explore', { reader: { project: 'p', path: 'a.yml', status: 'ready', source: { ...attachment, path: 'a.yml', kind: 'file' } } })!;
+    const selected = chatTopic('p:galaxy', { graph: jsonbAggEvidence() })!;
+    it('carries only the turns since the topic last changed, as the divider says', () => {
+        const [first, second] = [turn(file), turn(file)];
+        expect(topicHistory([first, second], file)).toEqual([first, second]);
+        expect(topicHistory([first, turn(selected)], file)).toEqual([]);
+        // Coming back to a file after another topic starts it fresh: the old wrong answer stays out.
+        expect(topicHistory([first, turn(selected), second], file)).toEqual([second]);
+        expect(topicHistory([turn(selected), first, second], file)).toEqual([first, second]);
+    });
+
+    it('steps over replies without a topic, which never start one', () => {
+        const [first, second] = [turn(file), turn(file)];
+        expect(topicHistory([first, turn(undefined, { answeredFrom: 'local' }), second], file)).toEqual([first, second]);
+        expect(topicHistory([first], undefined)).toEqual([]);
     });
 });
