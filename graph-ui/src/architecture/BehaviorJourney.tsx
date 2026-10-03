@@ -2,6 +2,8 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { behaviorJourney } from './behavior-journey-model';
 import { projectionLimits, type SystemSceneModel } from './system-architecture-model';
 import { architectureText as text } from './strings';
+import type { JourneyPlace, PlaceChange } from './architecture-history';
+import { useLiftedPlace, useOnIdentityChange } from './lifted-place';
 import type { SystemProjection, SystemSymbol } from './system-architecture-source';
 import BehaviorSourceEvidence, { type BehaviorSourceSnapshot } from './BehaviorSourceEvidence';
 import { useSelectionEvidence, type SelectionEvidenceListener } from '../galaxy/selection-evidence';
@@ -12,12 +14,25 @@ export interface BehaviorJourneyProps {
     project: string; generation?: string; data?: SystemProjection; entries: SystemSymbol[];
     targets: (SystemSymbol & { distance: number })[]; entryId?: number; targetId?: number;
     active: boolean; pending: boolean; error?: string; filter: string;
-    onRequest: (entry: SystemSymbol | undefined, targetId?: number) => void;
+    onRequest: (entry: SystemSymbol | undefined, targetId?: number, detail?: BehaviorRequestDetail) => void;
+    /** The start the followed calls began from (K27); empty background returns there. */
+    from?: SystemSymbol;
+    /**
+     * Where the journey stands (path, operation, page of direct calls) and Plan or 3D, lifted to the workspace
+     * for Back and Forward (K27). Rendered on its own, the journey keeps them itself.
+     */
+    place?: JourneyPlace;
+    onPlace?: PlaceChange<JourneyPlace>;
+    /** Reports the start shown when none was requested, so a Back or Forward tooltip can name it (K27). */
+    onShownStart?: (name: string) => void;
     onClearSelection?: () => void;
     onSelectionEvidence?: SelectionEvidenceListener;
     onRefresh: () => void; onSelectSymbol: (symbol: SystemSymbol) => void;
     onNavigate: (path: string, line?: number, name?: string) => void;
 }
+
+/** What a request carries besides start and destination: where followed calls began, and the destination's name. */
+export interface BehaviorRequestDetail { from?: SystemSymbol; targetName?: string }
 
 /** Overlapping windows keep every operation legible and retain actual call adjacency. */
 export function journeyPage(scene: SystemSceneModel, step: number, choices = false, pathWindow = 5): SystemSceneModel {
@@ -38,18 +53,20 @@ export function journeyPage(scene: SystemSceneModel, step: number, choices = fal
 }
 
 export default function BehaviorJourney({ project, generation, data, entries, targets, entryId, targetId, active, pending, error, filter,
-    onRequest, onRefresh, onSelectSymbol, onNavigate, onClearSelection, onSelectionEvidence }: BehaviorJourneyProps) {
-    const [pathIndex, setPathIndex] = useState(0), [step, setStep] = useState(0);
-    const [branchPage, setBranchPage] = useState(0);
+    onRequest, onRefresh, onSelectSymbol, onNavigate, onClearSelection, onSelectionEvidence, from, place: liftedPlace, onPlace, onShownStart }: BehaviorJourneyProps) {
+    const [place, changePlace] = useLiftedPlace<JourneyPlace>(liftedPlace, onPlace, () => ({}));
+    const { path: pathIndex = 0, step = 0, page: branchPage = 0, planar = false } = place;
     const [overview, setOverview] = useState(false);
     const [selection, setSelection] = useState<{ node?: string; edge?: string }>();
-    const [planar, setPlanar] = useState(false), [resetKey, setResetKey] = useState(0);
-    const [history, setHistory] = useState<{ entry: SystemSymbol; targetId?: number }[]>([]);
+    const [resetKey, setResetKey] = useState(0);
     const visual = useRef<HTMLDivElement>(null);
     const [pathWindow, setPathWindow] = useState(5);
     const [sourceEvidence, setSourceEvidence] = useState<BehaviorSourceSnapshot>();
-    useEffect(() => { setSelection(undefined); setPathIndex(0); setStep(0); setBranchPage(0); }, [project, generation, entryId, targetId, filter]);
-    useEffect(() => { setHistory([]); }, [project, generation]);
+    const lifted = liftedPlace !== undefined;
+    const top = { path: 0, step: 0, page: 0 };
+    // A lifted journey is handed its position with every start, and Back hands the one it had; on its own it starts over.
+    useOnIdentityChange(JSON.stringify([project, generation, entryId, targetId]), () => { setSelection(undefined); if (!lifted) changePlace(top); });
+    useOnIdentityChange(filter, () => { setSelection(undefined); changePlace(top); });
     const journey = useMemo(() => data ? behaviorJourney(data, { entryId, targetId, pathIndex, filter }) : undefined,
         [data, entryId, targetId, pathIndex, filter]);
     const path = journey?.path;
@@ -78,6 +95,10 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
         .filter(item => item.id !== (entryId ?? journey?.entry?.id)).map(item => [item.id, item])).values()];
     const entry = journey?.entry ?? entries.find(item => item.id === entryId);
     const availableEntries = entry && !entries.some(item => item.id === entry.id) ? [entry, ...entries] : entries;
+    const reportShown = useRef(onShownStart);
+    reportShown.current = onShownStart;
+    const shownStart = entryId === undefined && !pending ? entry?.name : undefined;
+    useEffect(() => { if (shownStart !== undefined) reportShown.current?.(shownStart); }, [shownStart]);
     const selectedTarget = targetOptions.find(item => item.id === targetId) ?? path?.nodes.at(-1);
     const limits = data?.status === 'limited' ? projectionLimits(data) : [];
     const sourceKey = caller ? JSON.stringify([project, generation, caller.qualified_name, call?.callsite?.file_path ?? caller.file_path, call?.callsite?.line ?? caller.start_line]) : undefined;
@@ -92,41 +113,48 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
         limitations: { analysis: data?.limits, warnings: data?.warnings, journey: journey.limits, counts: journey.counts,
             interpretation: 'Static call evidence only. Call-chain depth is not execution order. Branch feasibility, parameter binding, runtime values and data transformation are not established.' },
     } : undefined, active);
+    /** Empty background leaves a destination and returns from followed calls to where they began. */
     function clearSelection() {
-        const origin = history[0]?.entry ?? entry;
-        setOverview(true); setSelection(undefined); setStep(0); setBranchPage(0); setPathIndex(0); setHistory([]);
+        const origin = from ?? entry;
+        setOverview(true); setSelection(undefined); changePlace(top);
         setResetKey(value => value + 1); onClearSelection?.();
-        if (history.length || targetId !== undefined) onRequest(origin);
+        if (from || targetId !== undefined) onRequest(origin, undefined, {});
     }
-    function request(next: SystemSymbol | undefined, destination?: number, remember = true) {
+    /**
+     * Every request is a step of the shared Architecture history (K27). `origin` is where followed calls began:
+     * kept for a destination and for further hops, dropped for a start picked in the field.
+     */
+    function request(next: SystemSymbol | undefined, destination?: number, origin?: SystemSymbol) {
         setOverview(false);
-        if (remember && entry) setHistory(items => [...items.slice(-19), { entry, targetId }]);
-        setSelection(undefined); setStep(0); setPathIndex(0); onRequest(next, destination);
+        // Lifted, the request itself is the new place and starts at the top.
+        setSelection(undefined); if (!lifted) changePlace({ path: 0, step: 0 });
+        const targetName = destination === undefined ? undefined : targetOptions.find(item => item.id === destination)?.name;
+        onRequest(next, destination, { ...(origin && origin.id !== next?.id ? { from: origin } : {}), ...(targetName ? { targetName } : {}) });
     }
     function selectNode(id: string) {
         setOverview(false);
         const node = allNodes.find(item => item.id === id);
         setSelection({ node: id });
-        if (path && node?.depth !== undefined) setStep(node.depth);
-        if (!path && node) setBranchPage(Math.max(0, Math.floor((allNodes.indexOf(node) - 1) / 4)));
+        if (path && node?.depth !== undefined) changePlace({ step: node.depth });
+        if (!path && node) changePlace({ page: Math.max(0, Math.floor((allNodes.indexOf(node) - 1) / 4)) });
         if (node?.symbol) onSelectSymbol(node.symbol);
     }
     function selectEdge(id: string) {
         setOverview(false);
         const edge = journey?.scene.edges.find(item => item.id === id);
         setSelection({ edge: id });
-        if (path && edge?.depth) setStep(edge.depth - 1);
-        if (!path && edge) setBranchPage(Math.max(0, Math.floor((allNodes.findIndex(node => node.id === edge.target) - 1) / 4)));
+        if (path && edge?.depth) changePlace({ step: edge.depth - 1 });
+        if (!path && edge) changePlace({ page: Math.max(0, Math.floor((allNodes.findIndex(node => node.id === edge.target) - 1) / 4)) });
     }
     function selectStep(index: number) {
         setOverview(false);
         const node = allNodes[index];
         if (!node || !path) return;
-        setStep(index); setSelection({ node: node.id }); if (node.symbol) onSelectSymbol(node.symbol);
+        changePlace({ step: index }); setSelection({ node: node.id }); if (node.symbol) onSelectSymbol(node.symbol);
     }
     function follow(id: string) {
         const operation = allNodes.find(node => node.id === id)?.symbol;
-        if (operation && operation.id !== entryId) request(operation);
+        if (operation && operation.id !== entryId) request(operation, undefined, from ?? entry);
     }
     return <section className="system-architecture behavior-journey" aria-label="Behavior" data-testid="behavior-journey" aria-busy={pending}>
         <header className="behavior-heading"><div><span className="system-eyebrow">Behavior · source-guided exploration</span>
@@ -138,23 +166,22 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
             <label>Start <select aria-label="Behavior entry point" value={entry?.id ?? ''} onChange={event => request(availableEntries.find(item => item.id === Number(event.target.value)))}>
                 <option value="">Choose an operation…</option>{availableEntries.map(item => <option key={item.id} value={item.id}>{item.name} · {item.file_path ?? item.qualified_name}</option>)}
             </select></label>
-            <label>Reach <select aria-label="Behavior destination" value={targetId ?? ''} disabled={!entry || pending} onChange={event => request(entry, event.target.value ? Number(event.target.value) : undefined)}>
+            <label>Reach <select aria-label="Behavior destination" value={targetId ?? ''} disabled={!entry || pending} onChange={event => request(entry, event.target.value ? Number(event.target.value) : undefined, from)}>
                 <option value="">Explore immediate calls</option>{targetOptions.map(item => <option key={item.id} value={item.id}>{item.name} · {item.file_path ?? ''}</option>)}
             </select></label>
         </div>
-        <div className="behavior-navigation"><button disabled={!history.length} onClick={() => { const previous = history.at(-1)!; setHistory(items => items.slice(0, -1)); request(previous.entry, previous.targetId, false); }}>← Back</button>
-            {targetId !== undefined && <button onClick={() => request(entry)}>Immediate calls</button>}
+        <div className="behavior-navigation">{targetId !== undefined && <button onClick={() => request(entry, undefined, from)}>Immediate calls</button>}
             <span>{pending ? 'Updating this journey…' : path ? `${path.edges.length} call-chain hops · ${new Set(path.nodes.map(item => item.component_id)).size} components`
                 : text.directCallees(journey?.counts.directChoices ?? 0, journey?.counts.selfCalls ?? false)}</span>
             <span className="behavior-static-badge" title="Graph relationships describe possible calls. They do not prove execution order, path feasibility or actual runtime values.">Static evidence</span>
         </div>
         {error && <p role="alert">{error} <button onClick={onRefresh}>Try again</button></p>}
         {pending ? <div className="behavior-loading" role="status">Preparing the selected operation…</div> : !scene || !journey ? <div className="behavior-loading">Choose an operation to explore.</div> : <>
-            {journey.paths.length > 1 && <div className="behavior-paths" role="group" aria-label="Indexed paths">{journey.paths.map((item, index) => <button key={index} aria-pressed={pathIndex === index} onClick={() => { setPathIndex(index); setStep(0); setSelection(undefined); }}>
+            {journey.paths.length > 1 && <div className="behavior-paths" role="group" aria-label="Indexed paths">{journey.paths.map((item, index) => <button key={index} aria-pressed={pathIndex === index} onClick={() => { changePlace({ path: index, step: 0 }); setSelection(undefined); }}>
                 Path {index + 1}<small>{item.edges.length} hops{new Set(item.nodes.map(node => node.id)).size < item.nodes.length ? ' · revisits a symbol' : ''}</small></button>)}</div>}
             <div className="behavior-stage"><div className="behavior-visual" ref={visual}>
                 <div className="behavior-visual-toolbar"><span>{path ? 'CALL CHAIN →' : 'DIRECT CALLS · UNORDERED'}</span>
-                    <div className="system-view-switch" role="group" aria-label="Behavior camera"><button aria-pressed={!planar} onClick={() => setPlanar(false)}>3D</button><button aria-pressed={planar} onClick={() => setPlanar(true)}>Plan</button></div>
+                    <div className="system-view-switch" role="group" aria-label="Behavior camera"><button aria-pressed={!planar} onClick={() => changePlace({ planar: false })}>3D</button><button aria-pressed={planar} onClick={() => changePlace({ planar: true })}>Plan</button></div>
                     <button onClick={() => setResetKey(value => value + 1)}>Fit</button></div>
                 <div className="system-map behavior-map">
                     {scene.nodes.length ? <Suspense fallback={<div className="behavior-loading">Preparing the journey…</div>}><Scene model={scene}
@@ -169,17 +196,17 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
                 {path && <nav className="behavior-walk" aria-label="Walk the call chain"><button disabled={activeStep === 0} onClick={() => selectStep(activeStep - 1)}>← Previous</button>
                     <input type="range" aria-label="Call-chain position" min={0} max={path.nodes.length - 1} value={activeStep} onChange={event => selectStep(Number(event.target.value))} />
                     <span>{activeStep + 1} / {path.nodes.length}</span><button disabled={activeStep >= path.nodes.length - 1} onClick={() => selectStep(activeStep + 1)}>Next →</button></nav>}
-                {!path && journey.scene.nodes.length > 5 && <nav className="behavior-walk" aria-label="Direct call pages"><button disabled={branchPage === 0} onClick={() => { setBranchPage(page => page - 1); setSelection(undefined); }}>← Earlier calls</button>
+                {!path && journey.scene.nodes.length > 5 && <nav className="behavior-walk" aria-label="Direct call pages"><button disabled={branchPage === 0} onClick={() => { changePlace({ page: branchPage - 1 }); setSelection(undefined); }}>← Earlier calls</button>
                     <span>{text.callPage(branchPage * 4 + 1, Math.min(branchPage * 4 + 4, journey.scene.nodes.length - 1), journey.scene.nodes.length - 1,
                         journey.counts.omittedNodes, Boolean(filter.trim()) && journey.scene.nodes.length - 1 + journey.counts.omittedNodes < journey.counts.directChoices)}</span>
-                    <button disabled={(branchPage + 1) * 4 >= journey.scene.nodes.length - 1} onClick={() => { setBranchPage(page => page + 1); setSelection(undefined); }}>More calls →</button></nav>}
+                    <button disabled={(branchPage + 1) * 4 >= journey.scene.nodes.length - 1} onClick={() => { changePlace({ page: branchPage + 1 }); setSelection(undefined); }}>More calls →</button></nav>}
             </div><aside className="behavior-inspector" aria-label="Behavior evidence inspector">
                 {caller ? <><span className="system-eyebrow">{call ? call.type.replaceAll('_', ' ') : path ? `Operation ${activeStep + 1}` : 'Starting operation'}</span>
                     <h3>{caller.name}{callee && <><span className="behavior-call-arrow">↓</span>{callee.name}</>}</h3>
                     <p>{call && callee ? caller.component_id === callee.component_id ? 'A call within the same component.' : `Crosses from ${components.get(caller.component_id)?.label ?? caller.component_id} into ${components.get(callee.component_id)?.label ?? callee.component_id}.`
                         : components.get(caller.component_id)?.label ?? caller.file_path}</p>
                     {call?.resolution && <p className="behavior-resolution">{call.resolution.strategy?.replaceAll('_', ' ') ?? 'Indexed resolution'}{call.resolution.candidates && call.resolution.candidates > 1 ? ` · ${call.resolution.candidates} candidate targets` : ''}</p>}
-                    <div className="behavior-inspector-actions">{symbol && symbol.id !== entryId && <button onClick={() => request(symbol)}>Follow calls from here</button>}
+                    <div className="behavior-inspector-actions">{symbol && symbol.id !== entryId && <button onClick={() => request(symbol, undefined, from ?? entry)}>Follow calls from here</button>}
                         {symbol?.file_path && <button onClick={() => onNavigate(symbol.file_path!, symbol.start_line, symbol.name)}>Open definition ↗</button>}</div>
                     <div className="behavior-contract" aria-label="Indexed call contract">
                         {call?.arguments && <section><h4>Passed expressions</h4>{call.arguments.length ? <ol>{call.arguments.map((argument, index) => <li key={`${argument.i}:${index}`}><code>{argument.e}</code>

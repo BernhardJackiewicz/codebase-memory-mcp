@@ -1,7 +1,7 @@
 /**
  * Ein begrenzter Verlauf mit Zurueck und Vor, wie beim Blaettern (K2).
  *
- * Rein und ohne React, damit Galaxy und spaeter Architecture (K27) dasselbe
+ * Rein und ohne React, damit Galaxy (K2) und Architecture (K27) dasselbe
  * Modell benutzen und nicht zwei. Das Konzept steht in
  * docs/development/pr-2068-galaxy-history.md; hier stehen nur die Regeln, die
  * der Code einhaelt:
@@ -59,6 +59,51 @@ export function pushNavigation<T>(history: NavigationHistory<T>, entry: T, optio
     const kept = [...history.entries.slice(0, history.index + 1), entry];
     const entries = kept.slice(Math.max(0, kept.length - limit));
     return { entries, index: entries.length - 1, recent: visit(history.recent, entry, options) };
+}
+
+/**
+ * Den aktuellen Eintrag ersetzen statt einen Schritt abzulegen (K27): fuer
+ * das, was die Seite von selbst einstellt, etwa den vorgeschlagenen
+ * Behavior-Start oder ein Zuruecksetzen nach dem Neuindizieren. Waere das ein
+ * eigener Schritt, fuehrte Zurueck auf den leeren Zustand, die Seite stellte
+ * ihn sofort wieder ein, und Zurueck kaeme nie darueber hinaus.
+ *
+ * Der Vorwaertszweig bleibt. Der ersetzte Ort verlaesst die Liste der letzten
+ * Orte, wenn er dort vorn steht. Gleicht der neue Eintrag dem davor oder dem
+ * danach, fallen sie zusammen, wie bei `pushNavigation`: sonst stuenden zwei
+ * gleiche Schritte nebeneinander, und Vor oder Zurueck fuehrte an denselben
+ * Ort. Ohne aktuellen Eintrag ist es ein gewoehnlicher erster Schritt.
+ */
+export function replaceNavigation<T>(history: NavigationHistory<T>, entry: T, options: NavigationHistoryOptions<T>): NavigationHistory<T> {
+    const current = history.entries[history.index];
+    if (current === undefined) return pushNavigation(history, entry, options);
+    const key = options.key(entry);
+    if (options.key(current) === key) return history;
+    const replaced = options.recentKey?.(current);
+    const front = history.recent[0];
+    const recent = replaced !== undefined && front !== undefined && options.recentKey?.(front) === replaced ? history.recent.slice(1) : history.recent;
+    const same = (other: T | undefined): other is T => other !== undefined && options.key(other) === key;
+    const before = history.entries.slice(0, history.index);
+    const after = history.entries.slice(history.index + (same(history.entries[history.index + 1]) ? 2 : 1));
+    const previous = history.entries[history.index - 1];
+    if (same(previous)) return { entries: [...before, ...after], index: history.index - 1, recent: visit(recent, previous, options) };
+    return { entries: [...before, entry, ...after], index: history.index, recent: visit(recent, entry, options) };
+}
+
+/**
+ * Den aktuellen Eintrag durch einen gleichen (gleicher Schluessel) mit neueren
+ * Angaben ersetzen (K27), etwa einem Namen, der erst nach dem Schritt bekannt
+ * wird. Kein neuer Schritt und kein Umsortieren der letzten Orte; dort steht
+ * der Ort danach mit seinem neuesten Stand. Ein anderer Schluessel ist ein
+ * Schritt und kein Auffrischen: dann bleibt alles, wie es ist.
+ */
+export function refreshNavigation<T>(history: NavigationHistory<T>, entry: T, options: NavigationHistoryOptions<T>): NavigationHistory<T> {
+    const current = history.entries[history.index];
+    if (current === undefined || current === entry || options.key(current) !== options.key(entry)) return history;
+    const entries = history.entries.map((item, at) => (at === history.index ? entry : item));
+    const place = options.recentKey?.(entry);
+    const recent = place === undefined ? history.recent : history.recent.map((item) => (options.recentKey?.(item) === place ? entry : item));
+    return { entries, index: history.index, recent };
 }
 
 /** Der Eintrag, zu dem Zurueck (-1) oder Vor (+1) fuehren wuerde. */

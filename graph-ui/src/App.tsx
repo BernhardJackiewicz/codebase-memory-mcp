@@ -4838,6 +4838,7 @@ export default function App(): JSX.Element {
             workspacePanel={<>
                 <div hidden={workspace !== 'architecture'}>
                 <ArchitecturePanel projectName={project} overview={overview} active={workspace === 'architecture'}
+                    escapeTaken={helpOpen || entryOpen || overlayOpen || settingsOpen || projectsOpen}
                     onClearSelection={clearGraphSelection}
                     onSelectionEvidence={onSelectionEvidence}
                     coverage={coverageAsked && coverageMeta.generation === repositoryReading.snapshot?.generation ? coverage : undefined}

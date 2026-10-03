@@ -5,6 +5,8 @@ import {
     moveNavigation,
     peekNavigation,
     pushNavigation,
+    refreshNavigation,
+    replaceNavigation,
     type NavigationHistory,
     type NavigationHistoryOptions,
 } from './navigation-history';
@@ -64,5 +66,54 @@ describe('bounded back and forward history', () => {
         const capped = push(emptyNavigationHistory<Entry>(), ...Array.from({ length: 12 }, (_, at) => ({ root: `R${at}`, depth: 1 })));
         expect(capped.recent).toHaveLength(8);
         expect(capped.recent[0]!.root).toBe('R11');
+    });
+
+    it('replaces the current step for a change the page makes on its own, keeping the forward branch (K27)', () => {
+        let history = push(emptyNavigationHistory<Entry>(), { root: 'A', depth: 1 }, { root: 'B', depth: 1 }, { root: 'C', depth: 1 });
+        history = moveNavigation(history, -1, options);
+        history = replaceNavigation(history, { root: 'B2', depth: 1 }, options);
+        expect(keys(history)).toEqual(['A@1', 'B2@1', 'C@1']);
+        expect(history.index).toBe(1);
+        expect(peekNavigation(history, 1)).toEqual({ root: 'C', depth: 1 });
+        // The replaced place leaves the recent list with it.
+        expect(history.recent.map((entry) => entry.root)).toEqual(['B2', 'C', 'A']);
+        // Equal to the current step: nothing changes. Equal to the step before: the two merge.
+        expect(replaceNavigation(history, { root: 'B2', depth: 1 }, options)).toBe(history);
+        expect(keys(replaceNavigation(history, { root: 'A', depth: 1 }, options))).toEqual(['A@1', 'C@1']);
+        expect(replaceNavigation(history, { root: 'A', depth: 1 }, options).index).toBe(0);
+        // Without a current step it is an ordinary first step.
+        expect(keys(replaceNavigation(emptyNavigationHistory<Entry>(), { root: 'A', depth: 1 }, options))).toEqual(['A@1']);
+    });
+
+    it('merges a replaced step with the step after it too, so Forward never leads to the same place (K27)', () => {
+        // After Back, the page resets the place it shows (a reindex), and the reset equals the step ahead.
+        let history = push(emptyNavigationHistory<Entry>(), { root: 'A', depth: 1 }, { root: 'B', depth: 2 }, { root: 'B', depth: 1 });
+        history = moveNavigation(history, -1, options);
+        history = replaceNavigation(history, { root: 'B', depth: 1 }, options);
+        expect(keys(history)).toEqual(['A@1', 'B@1']);
+        expect(history.index).toBe(1);
+        expect(peekNavigation(history, 1)).toBeUndefined();
+        // Equal to the steps on both sides: all three become one.
+        let between = push(emptyNavigationHistory<Entry>(), { root: 'A', depth: 1 }, { root: 'B', depth: 1 }, { root: 'A', depth: 1 }, { root: 'C', depth: 1 });
+        between = moveNavigation(moveNavigation(between, -1, options), -1, options);
+        between = replaceNavigation(between, { root: 'A', depth: 1 }, options);
+        expect(keys(between)).toEqual(['A@1', 'C@1']);
+        expect(between.index).toBe(0);
+        for (let at = 1; at < between.entries.length; at++) expect(options.key(between.entries[at]!)).not.toBe(options.key(between.entries[at - 1]!));
+    });
+
+    it('refreshes the current step with newer details of the same place, without a step or reordering (K27)', () => {
+        interface Named extends Entry { name?: string }
+        const named: NavigationHistoryOptions<Named> = options;
+        let history = [{ root: 'A', depth: 1 }, { root: 'B', depth: 1 }].reduce((next, entry) => pushNavigation(next, entry, named), emptyNavigationHistory<Named>());
+        const fresher = { root: 'B', depth: 1, name: 'Bee' };
+        history = refreshNavigation(history, fresher, named);
+        expect(history.entries).toEqual([{ root: 'A', depth: 1 }, fresher]);
+        expect(history.index).toBe(1);
+        expect(history.recent).toEqual([fresher, { root: 'A', depth: 1 }]);
+        // Another key is a step, not a refresh; the same object changes nothing.
+        expect(refreshNavigation(history, { root: 'C', depth: 1 }, named)).toBe(history);
+        expect(refreshNavigation(history, fresher, named)).toBe(history);
+        expect(refreshNavigation(emptyNavigationHistory<Named>(), fresher, named).entries).toEqual([]);
     });
 });

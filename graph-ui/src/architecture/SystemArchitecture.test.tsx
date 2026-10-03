@@ -248,7 +248,7 @@ describe('system architecture workspace', () => {
         expect(container.querySelector('[data-node="g:store"]')).toBeNull();
         expect(container.querySelector('[data-node="g:context"]')).toBeNull();
     });
-    it('returns to immediate calls and restores the selected destination with Back', async () => {
+    it('returns to immediate calls, and leaves Back to the Architecture workspace (K27)', async () => {
         const loader = vi.fn<SystemArchitectureLoader>().mockImplementation(request => Promise.resolve(response(request.targetNodeId === 3 ? corridorFixture() : overviewFixture())));
         await render(loader, { view: 'behavior' });
         await choose('Behavior entry point', '1'); await choose('Behavior destination', '3');
@@ -256,10 +256,11 @@ describe('system architecture workspace', () => {
         expect(container.querySelector<HTMLSelectElement>('[aria-label="Behavior destination"]')?.value).toBe('');
         expect(container.querySelectorAll('[data-node]')).toHaveLength(2);
         expect(container.textContent).toContain('DIRECT CALLS · UNORDERED');
-        await clickText('← Back');
-        expect(container.querySelector<HTMLSelectElement>('[aria-label="Behavior destination"]')?.value).toBe('3');
-        expect(container.querySelectorAll('[data-node]')).toHaveLength(3);
-        expect(container.querySelector('[data-testid="system-scene"]')?.getAttribute('data-focus')).toBe('');
+        // The old "← Back" buttons are absorbed into the one Back beside the Architecture subtabs.
+        expect([...container.querySelectorAll('button')].some(item => item.textContent === '← Back')).toBe(false);
+        await render(loader, { view: 'structure' });
+        expect([...container.querySelectorAll('button')].some(item => item.textContent === '← Back')).toBe(false);
+        expect([...container.querySelectorAll('.system-scope-actions button')].map(item => item.textContent)).toEqual(['Whole system']);
     });
     it('filters whole paths without drawing disconnected remnants and restores the path without refetching', async () => {
         const loader = vi.fn<SystemArchitectureLoader>().mockImplementation(request => Promise.resolve(response(request.targetNodeId === 3 ? corridorFixture() : overviewFixture())));

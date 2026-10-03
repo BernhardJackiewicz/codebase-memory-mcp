@@ -1,4 +1,6 @@
 import { Component, Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
+import type { PlaceChange, SpatialPlace } from './architecture-history';
+import { useLiftedPlace, useOnIdentityChange } from './lifted-place';
 import type { ArchitectureOverviewDto } from '../core/intelligence-provider';
 import type { GraphData, GraphNode } from '../galaxy/types';
 import { graphNodeEvidence, useSelectionEvidence, type SelectionEvidenceListener } from '../galaxy/selection-evidence';
@@ -25,6 +27,9 @@ interface Props {
     onFilter?: (filter: string) => void;
     onNavigate: (path: string, line?: number, name?: string) => void;
     coverage?: CoverageIndex;
+    /** The opened area or file, the hotspot area and Plan or 3D, lifted to the workspace for Back and Forward (K27). */
+    place?: SpatialPlace;
+    onPlace?: PlaceChange<SpatialPlace>;
 }
 
 class SceneBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -44,16 +49,21 @@ const viewNotes: Record<SemanticView, string> = {
 };
 const relationKinds = ['CALLS', 'IMPORTS', 'USAGE', 'INHERITS', 'IMPLEMENTS', 'DATA_FLOWS'];
 
-export default function SpatialArchitecture({ project, generation, graph, overview, view, filter, active, graphNote, onSelect, onClearSelection, onSelectionEvidence, selectionPanel, onNavigate, onView, onFilter, coverage }: Props) {
-    const [areaPath, setAreaPath] = useState<string>();
-    const [filePath, setFilePath] = useState<string>();
+export default function SpatialArchitecture({ project, generation, graph, overview, view, filter, active, graphNote, onSelect, onClearSelection, onSelectionEvidence, selectionPanel, onNavigate, onView, onFilter, coverage, place: liftedPlace, onPlace }: Props) {
+    const [place, changePlace] = useLiftedPlace<SpatialPlace>(liftedPlace, onPlace, () => ({ planar: false }));
+    const { planar } = place;
+    // The place keeps the opened area or file and the hotspot area for Back and Forward (K27), but only the view
+    // that opened them shows them: Entry points and Endpoints draw the same map without an area, and neither the
+    // scene nor the selection evidence for the chat may name one there.
+    const opensScope = view === 'overview' || view === 'dependencies';
+    const areaPath = opensScope ? place.areaPath : undefined;
+    const filePath = opensScope ? place.filePath : undefined;
+    const hotspotArea = view === 'hotspots' ? place.hotspotArea : undefined;
     const [entryChoice, setEntryChoice] = useState<{ node: GraphNode; generation?: string }>();
     const [depth, setDepth] = useState(2);
     const [relations, setRelations] = useState<string[]>([]);
-    const [planar, setPlanar] = useState(false);
     const { preferences, setPreferences } = useViewPreferences(project);
     const { brickHeight: heightMetric, brickColor: colorMetric, fileVisibility, hotspotGravity: showHotspots } = preferences;
-    const [hotspotArea, setHotspotArea] = useState<string>();
     const [inventoryLimit, setInventoryLimit] = useState(24);
     const [resetKey, setResetKey] = useState(0);
     const [selection, setSelection] = useState<{ scope: string; node?: string; edge?: string }>();
@@ -61,7 +71,8 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
     const [routeRevision, setRouteRevision] = useState(0);
     const [memberLimit, setMemberLimit] = useState(5);
     const [includeTestRoutes, setIncludeTestRoutes] = useState(false);
-    useEffect(() => { setHotspotArea(undefined); }, [project, generation]);
+    // A reindex clears the hotspot area; a view that mounts again keeps the place it is handed.
+    useOnIdentityChange(`${project}:${generation ?? ''}`, () => { if (place.hotspotArea) changePlace({ hotspotArea: undefined }, true); });
     const routeKey = `${project}:${generation ?? ''}:${routeRevision}`;
     useEffect(() => {
         if (view !== 'routes' || !active) return;
@@ -100,7 +111,7 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
     const selectedEdge = selection?.scope === scope ? model.edges.find(edge => edge.id === selection.edge) : undefined;
     const selectedMeasure = selectedNode ? measureSourceNode(selectedNode, catalog) : undefined;
     // Inside an opened area or file the inspector speaks about that scope, not the repository.
-    const openedScope = (view === 'overview' || view === 'dependencies') && (filePath || areaPath) ? filePath
+    const openedScope = filePath || areaPath ? filePath
         ? { eyebrow: text.openedFile, title: filePath.split('/').at(-1) ?? filePath, path: filePath, measure: measureSourceNode({ id: `file:${filePath}`, kind: 'file', label: filePath, detail: '', position: [0, 0, 0], count: 0, members: [], filePath }, catalog) }
         : { eyebrow: text.openedArea, title: areaPath!, path: areaPath!, measure: catalog.areas.get(areaPath!) } : undefined;
     const selectedHotspots = selectedNode ? hotspotsForNode(selectedNode, hotspotCatalog) : undefined;
@@ -128,12 +139,12 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
         if (node?.graphNode) onSelect?.(node.graphNode);
     };
     const openGroup = (node: SemanticNode) => {
-        if (node.kind === 'area') { setAreaPath(node.areaPath); setFilePath(undefined); }
-        else if (node.kind === 'file') setFilePath(node.filePath);
+        if (node.kind === 'area') changePlace({ areaPath: node.areaPath, filePath: undefined });
+        else if (node.kind === 'file') changePlace({ filePath: node.filePath });
         if (view === 'routes' || view === 'hotspots') onView('overview');
         setSelection(undefined);
     };
-    const clearScope = () => { setHotspotArea(undefined); setAreaPath(undefined); setFilePath(undefined); setSelection(undefined); setResetKey(value => value + 1); onClearSelection?.(); };
+    const clearScope = () => { changePlace({ hotspotArea: undefined, areaPath: undefined, filePath: undefined }); setSelection(undefined); setResetKey(value => value + 1); onClearSelection?.(); };
     const openSource = (node: GraphNode) => node.file_path && onNavigate(node.file_path, node.start_line, node.name);
     const inspectMember = (node: GraphNode) => {
         const current = graph.nodes.find(candidate => candidate.qualified_name && candidate.qualified_name === node.qualified_name && candidate.file_path === node.file_path);
@@ -143,14 +154,14 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
     return <section className="spatial-architecture" data-testid="spatial-architecture" aria-label="Spatial architecture explorer">
         <div className="spatial-heading"><div><span className="spatial-eyebrow">Repository atlas / {view === 'entryPoints' ? 'entry points' : view}</span><h2>{model.title}</h2><p>{viewNotes[view]}</p></div>
             <div className="spatial-camera-controls" role="group" aria-label="Map camera">
-                <button aria-pressed={!planar} onClick={() => setPlanar(false)}>3D</button><button aria-pressed={planar} onClick={() => setPlanar(true)}>Plan</button>
+                <button aria-pressed={!planar} onClick={() => changePlace({ planar: false })}>3D</button><button aria-pressed={planar} onClick={() => changePlace({ planar: true })}>Plan</button>
                 <button onClick={() => setResetKey(value => value + 1)}>Fit map</button>
             </div>
         </div>
         <div className="spatial-controls">
             {['overview', 'dependencies', 'entryPoints'].includes(view) && <div className="spatial-projection-modes" role="group" aria-label="Overview mode"><button aria-pressed={view !== 'entryPoints'} onClick={() => onView('overview')}>Structure</button><button aria-pressed={view === 'entryPoints'} onClick={() => onView('entryPoints')}>Entry points</button></div>}
             {(view === 'overview' || view === 'dependencies') && <nav aria-label="Architecture location"><button onClick={clearScope}>{project}</button>
-                {areaPath && areaLevels(areaPath).map((level, index, levels) => <Fragment key={level}><span>/</span><button onClick={() => { setAreaPath(level); setFilePath(undefined); setSelection(undefined); }}>{index ? level.slice(levels[index - 1].length + 1) : level}</button></Fragment>)}{filePath && <><span>/</span><span>{filePath.split('/').at(-1)}</span></>}
+                {areaPath && areaLevels(areaPath).map((level, index, levels) => <Fragment key={level}><span>/</span><button onClick={() => { changePlace({ areaPath: level, filePath: undefined }); setSelection(undefined); }}>{index ? level.slice(levels[index - 1].length + 1) : level}</button></Fragment>)}{filePath && <><span>/</span><span>{filePath.split('/').at(-1)}</span></>}
             </nav>}
             {view === 'entryPoints' && <><label>Start <select aria-label="Entry point" value={currentEntry?.id ?? ''} onChange={event => { const node = entries.find(node => node.id === Number(event.target.value)); setEntryChoice(node ? { node, generation } : undefined); setSelection(undefined); }}>
                 {!entries.length && <option value="">No indexed entry points</option>}{entries.map(node => <option key={node.id} value={node.id}>{node.name} · {node.file_path}</option>)}
@@ -199,7 +210,7 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
                     {openedScope.measure && <details className="spatial-selection-details"><summary>{text.scopeMeasure(openedScope.measure.files, openedScope.measure.lines)}</summary><SourceMetricsDetails measure={openedScope.measure} catalog={catalog} /></details>}
                     <p>{text.openedScopeHint}</p>
                 </> : <><span className="spatial-eyebrow">{view === 'hotspots' ? 'Review areas' : 'Repository'}</span><h3>{view === 'hotspots' ? `${hotspotCatalog.findings.length} hotspot findings` : `${catalog.files.size.toLocaleString()} files`}</h3>
-                    {view === 'hotspots' ? <><p>Grouped by source area. Outside dependents are distinct files with direct incoming relationships in the loaded graph.</p><div className="spatial-area-summary" aria-label="Hotspots by source area">{areas.slice(0, 5).map(area => <button key={area.path} aria-pressed={hotspotArea === area.path} onClick={() => { setHotspotArea(area.path); setSelection(undefined); setResetKey(value => value + 1); }}><strong>{area.path}</strong><small>{area.findings} findings · {area.files} files</small><small>{area.dependentFiles} outside dependent files</small></button>)}</div>{areas.length > 5 && <details className="spatial-selection-details"><summary>{areas.length - 5} more areas</summary><div className="spatial-area-summary">{areas.slice(5).map(area => <button key={area.path} onClick={() => { setHotspotArea(area.path); setSelection(undefined); setResetKey(value => value + 1); }}><strong>{area.path}</strong><small>{area.findings} findings · {area.dependentFiles} outside dependent files</small></button>)}</div></details>}</>
+                    {view === 'hotspots' ? <><p>Grouped by source area. Outside dependents are distinct files with direct incoming relationships in the loaded graph.</p><div className="spatial-area-summary" aria-label="Hotspots by source area">{areas.slice(0, 5).map(area => <button key={area.path} aria-pressed={hotspotArea === area.path} onClick={() => { changePlace({ hotspotArea: area.path }); setSelection(undefined); setResetKey(value => value + 1); }}><strong>{area.path}</strong><small>{area.findings} findings · {area.files} files</small><small>{area.dependentFiles} outside dependent files</small></button>)}</div>{areas.length > 5 && <details className="spatial-selection-details"><summary>{areas.length - 5} more areas</summary><div className="spatial-area-summary">{areas.slice(5).map(area => <button key={area.path} onClick={() => { changePlace({ hotspotArea: area.path }); setSelection(undefined); setResetKey(value => value + 1); }}><strong>{area.path}</strong><small>{area.findings} findings · {area.dependentFiles} outside dependent files</small></button>)}</div></details>}</>
                         : <p>Select a part or connection to inspect it. Open an area to explore its files.</p>}
                 </>}
                 <details className="spatial-node-list"><summary>Browse map · {model.nodes.length} parts</summary>{model.nodes.map(node => <button key={node.id} aria-pressed={selectedNode?.id === node.id} onClick={() => selectNode(node.id)}><span>{node.label}</span><small>{node.kind} · {node.count}</small></button>)}</details>
@@ -210,7 +221,7 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
         <details className="spatial-map-details"><summary>Browse files, connections and map details</summary>
         <details className="spatial-file-inventory"><summary>File inventory · {catalog.files.size.toLocaleString()} known files</summary>
             <p>Every returned file remains reachable here, even without connections or outside the 3D display limit. Unindexed folders may contain additional files that the index has not listed.</p>
-            <div className="spatial-inventory-list">{inventoryFiles.slice(0, inventoryLimit).map(file => <article key={file.path}><button onClick={() => { setAreaPath(undefined); setFilePath(file.path); setSelection(undefined); onView('overview'); }}>{file.path}</button><small>{file.language} · {file.lines === undefined ? 'size unknown' : `${file.lines.toLocaleString()} indexed lines`} · {file.connection === 'connected' ? 'connected' : file.connection === 'none' ? 'no indexed connections' : 'connections unknown'}{coverage?.records.get(file.path) ? ` · ${coverage.records.get(file.path)!.state}` : ''}</small><button aria-label={`Read ${file.path}`} onClick={() => onNavigate(file.path, 1)}>Read source</button></article>)}</div>
+            <div className="spatial-inventory-list">{inventoryFiles.slice(0, inventoryLimit).map(file => <article key={file.path}><button onClick={() => { changePlace({ areaPath: undefined, filePath: file.path }); setSelection(undefined); onView('overview'); }}>{file.path}</button><small>{file.language} · {file.lines === undefined ? 'size unknown' : `${file.lines.toLocaleString()} indexed lines`} · {file.connection === 'connected' ? 'connected' : file.connection === 'none' ? 'no indexed connections' : 'connections unknown'}{coverage?.records.get(file.path) ? ` · ${coverage.records.get(file.path)!.state}` : ''}</small><button aria-label={`Read ${file.path}`} onClick={() => onNavigate(file.path, 1)}>Read source</button></article>)}</div>
             <small>{Math.min(inventoryLimit, inventoryFiles.length)} / {inventoryFiles.length} files</small>{inventoryLimit < inventoryFiles.length && <button onClick={() => setInventoryLimit(value => value + 24)}>More files</button>}
             {(overview.symbolKinds.find(kind => kind.kind === 'File')?.count ?? 0) > overview.files.length && <p className="spatial-notice">The file inventory query is limited. Additional files are available through the explorer tree.</p>}
             {coverage?.truncations.map(note => <p key={note} className="spatial-notice">{note}</p>)}

@@ -70,26 +70,55 @@ describe('behavior journeys', () => {
         expect([...container.querySelectorAll('[data-edge]')].map(item => item.getAttribute('data-edge'))).toEqual(['14', '15', '16', '17']);
         expect(container.querySelector('[aria-label="Call-chain position"]')?.getAttribute('value')).toBe('5');
     });
-    it('double-clicking an operation requests its actual symbol and Back restores the previous scope', async () => {
+    it('double-clicking an operation requests its actual symbol as a hop from the start; Back is the workspace Back, not one of its own (K27)', async () => {
         const props = await render(fixture());
         const button = container.querySelector('[data-node="journey-choice:2"]')!;
         await act(async () => button.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
-        expect(props.onRequest).toHaveBeenLastCalledWith(expect.objectContaining({ id: 2 }), undefined);
-        await click('← Back');
-        expect(props.onRequest).toHaveBeenLastCalledWith(expect.objectContaining({ id: 1 }), undefined);
+        expect(props.onRequest).toHaveBeenLastCalledWith(expect.objectContaining({ id: 2 }), undefined, { from: expect.objectContaining({ id: 1 }) });
+        expect([...container.querySelectorAll('button')].some(item => item.textContent === '← Back')).toBe(false);
+        // A second hop still names the operation the hops started from.
+        const next = fixture(); next.entrypoints = [next.paths[0].nodes[1]];
+        next.paths = [{ ...next.paths[0], entrypoint_id: 2, nodes: next.paths[0].nodes.slice(1), edges: next.paths[0].edges.slice(1) }];
+        await render(next, { ...props, data: next, entryId: 2, from: fixture().entrypoints[0] });
+        await act(async () => container.querySelector('[data-node="journey-choice:3"]')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+        expect(props.onRequest).toHaveBeenLastCalledWith(expect.objectContaining({ id: 3 }), undefined, { from: expect.objectContaining({ id: 1 }) });
+        // A start picked in the field begins anew.
+        await act(async () => { const select = container.querySelector<HTMLSelectElement>('[aria-label="Behavior entry point"]')!; select.value = '1'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+        expect(props.onRequest).toHaveBeenLastCalledWith(expect.objectContaining({ id: 1 }), undefined, {});
     });
     it('clears inspection and returns from a followed operation to the original entry on empty background', async () => {
         const clear = vi.fn(); const props = await render(fixture(), { onClearSelection: clear });
-        await act(async () => container.querySelector('[data-node="journey-choice:2"]')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
         const next = fixture(); next.entrypoints = [next.paths[0].nodes[1]];
         next.paths = [{ ...next.paths[0], entrypoint_id: 2, nodes: next.paths[0].nodes.slice(1), edges: next.paths[0].edges.slice(1) }];
-        await render(next, { ...props, data: next, entryId: 2 });
+        await render(next, { ...props, data: next, entryId: 2, from: fixture().entrypoints[0] });
         await click('Empty background');
-        expect(props.onRequest).toHaveBeenLastCalledWith(expect.objectContaining({ id: 1 }));
+        expect(props.onRequest).toHaveBeenLastCalledWith(expect.objectContaining({ id: 1 }), undefined, {});
         expect(container.querySelector('[data-scene]')?.getAttribute('data-selected')).toBeNull();
         expect(container.querySelector('[aria-label="Behavior evidence inspector"]')?.textContent).toContain('Select an operation or a call');
         expect(clear).toHaveBeenCalledOnce();
-        expect([...container.querySelectorAll('button')].find(item => item.textContent === '← Back')?.disabled).toBe(true);
+    });
+    it('reads where it stands and its camera from a lifted place and reports changes there (K27)', async () => {
+        const onPlace = vi.fn();
+        const props = await render(fixture(), { targetId: 9, place: { step: 3, planar: true }, onPlace });
+        expect(container.querySelector('[aria-label="Walk the call chain"] span')?.textContent).toBe('4 / 9');
+        expect(container.querySelector('[aria-label="Behavior camera"] button[aria-pressed="true"]')?.textContent).toBe('Plan');
+        await click('Next →');
+        expect(onPlace).toHaveBeenLastCalledWith({ step: 4 }, undefined);
+        await click('3D');
+        expect(onPlace).toHaveBeenLastCalledWith({ planar: false }, undefined);
+        // The lifted place stays what it is handed: a new start brings its own, and Back brings the one it had.
+        onPlace.mockClear();
+        await render(fixture(), { ...props, targetId: undefined, place: { step: 3, planar: true }, onPlace });
+        expect(onPlace).not.toHaveBeenCalled();
+    });
+    it('keeps its own place when rendered on its own, and starts the chain over for another destination', async () => {
+        const props = await render(fixture(), { targetId: 9 });
+        await click('Next →'); await click('Next →'); await click('Plan');
+        expect(container.querySelector('[aria-label="Walk the call chain"] span')?.textContent).toBe('3 / 9');
+        await render(fixture(), { ...props, targetId: undefined });
+        await render(fixture(), { ...props, targetId: 9 });
+        expect(container.querySelector('[aria-label="Walk the call chain"] span')?.textContent).toBe('1 / 9');
+        expect(container.querySelector('[aria-label="Behavior camera"] button[aria-pressed="true"]')?.textContent).toBe('Plan');
     });
     it('shows exact argument expressions and declaration facts without inventing argument-to-parameter bindings', async () => {
         const data = fixture();

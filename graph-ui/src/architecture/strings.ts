@@ -90,6 +90,8 @@ export const architectureText = {
         compareFailed: 'Could not read that project. Its index may be unavailable.',
     },
     showEndpoints: 'Show endpoints →',
+    /** Routes: the two perspectives, also the names a Back or Forward tooltip gives them. */
+    routesPerspective: { label: 'Routes perspective', services: 'Service map', endpoints: 'Endpoints', preparing: 'Preparing service map…' },
     /** Behavior: the callees of the start operation; a call to itself is named, not counted. */
     directCallees: (count: number, selfCalls: boolean) => `${count.toLocaleString()} direct callees with returned evidence${selfCalls ? ' · also calls itself' : ''}`,
     /** Behavior: the page of direct calls, the same calls the "direct callees" count names. */
@@ -98,4 +100,33 @@ export const architectureText = {
     openedFile: 'Opened file',
     scopeMeasure: (files: number, lines?: number) => `${files.toLocaleString()} files · ${lines === undefined ? 'unknown' : lines.toLocaleString()} indexed lines`,
     openedScopeHint: 'Select a part or connection to inspect it. The location above leads back to the repository.',
+};
+
+/**
+ * Back and Forward for the whole Architecture workspace (hand test K27). The
+ * same rules and the same model as Galaxy (K2, src/graph/navigation-history.ts);
+ * a tooltip names the place a step leads to, for example "Back to Overview · django".
+ */
+export const architectureHistoryText = {
+    /** The accessible name of the Back, Forward and Recent group. */
+    group: 'Architecture history',
+    back: 'Back',
+    forward: 'Forward',
+    backGlyph: '←',
+    forwardGlyph: '→',
+    backTo: (label: string) => `Back to ${label} (Alt+Left)`,
+    forwardTo: (label: string) => `Forward to ${label} (Alt+Right)`,
+    noBack: 'Nothing to go back to yet',
+    noForward: 'Nothing to go forward to',
+    recent: 'Recent',
+    recentGlyph: '▾',
+    recentTitle: 'Jump straight to a recently visited place in Architecture, as it was last seen',
+    recentList: 'Recently visited places',
+    separator: ' · ',
+    plan: 'Plan',
+    groupsOpen: (count: number) => (count === 1 ? '1 group open' : `${count} groups open`),
+    reach: (start: string, target: string) => `${start} → ${target}`,
+    /** Another indexed path to a Behavior destination, named as its button: "Path 2". */
+    path: (number: number) => `Path ${number}`,
+    followedFrom: (name: string) => `followed from ${name}`,
 };
