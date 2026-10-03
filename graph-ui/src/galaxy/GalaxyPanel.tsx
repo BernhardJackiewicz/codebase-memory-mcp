@@ -2007,7 +2007,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [props.workspaceExpanded, scope.scope, trailView, escapeTaken, leaveScope]);
-    const historyControls = props.workspaceExpanded ? <span className="atlas-graph-history" role="group" aria-label={galaxyHistoryText.recentList}>
+    const historyControls = props.workspaceExpanded ? <span className="atlas-graph-history" role="group" aria-label={galaxyHistoryText.group}>
         <button type="button" aria-label={galaxyHistoryText.back} disabled={!historyBack} onClick={() => goHistory(-1)}
             title={historyBack ? galaxyHistoryText.backTo(historyEntryLabel(historyBack)) : galaxyHistoryText.noBack}>{galaxyHistoryText.backGlyph}</button>
         <button type="button" aria-label={galaxyHistoryText.forward} disabled={!historyForward} onClick={() => goHistory(1)}
@@ -2567,7 +2567,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                       * die Tastatur weiter im Menue "⋯".
                       */}
                     {props.workspaceExpanded && openRoot
-                        ? <button type="button" className="atlas-graph-scope-name" onClick={openRoot}
+                        ? <button type="button" className="atlas-graph-scope-name" onClick={openRoot} aria-label={galaxyToolbarText.openRootLabel(scope.scope.name)}
                             title={galaxyToolbarText.openRootTitle(scope.scope.name, scopedRoot?.file_path ?? '', scopedRoot?.start_line)}>{scope.scope.name}</button>
                         : <strong className="atlas-graph-scope-name" title={scope.scope.name}>{scope.scope.name}</strong>}
                     {props.workspaceExpanded && <select aria-label="Trace direction" title={galaxyToolbarText.traceTitle} value={scope.direction}

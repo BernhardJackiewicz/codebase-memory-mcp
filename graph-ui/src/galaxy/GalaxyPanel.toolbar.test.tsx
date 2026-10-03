@@ -58,3 +58,24 @@ it('K3: the scoped toolbar keeps one row: root name opens the source, limits and
     expect(bar.querySelector('select[aria-label="Trace direction"]')).not.toBeNull();
     expect(bar.textContent).not.toContain('Trace');
 });
+
+it('K2: the history group and the root button say what they are to assistive technology', async () => {
+    const nodes = [1, 2, 3].map(id => scopeNode(id));
+    const edges = [{ id: 1, source: 1, target: 2, type: 'CALLS' }, { id: 2, source: 3, target: 1, type: 'CALLS' }];
+    await act(async () => root.render(<GalaxyPanel project="sample" visible workspaceExpanded onOpenNode={vi.fn()} fetch={scopeFetch({ nodes, edges }).fetch} />));
+    await settle(() => expect(seam().nodes).toBe(3));
+    await act(async () => { seam().clickNode('sample.n1'); });
+    await settle(() => expect(host.querySelector('.atlas-graph-scope-count')?.textContent).toBe('3 nodes · 2 edges'));
+    await act(async () => { seam().clickNode('sample.n2'); });
+    await settle(() => expect(host.querySelector('.atlas-graph-scope-name')?.textContent).toBe('n2'));
+
+    // Back and Forward are the history, not the list of recent roots inside it.
+    const group = host.querySelector<HTMLElement>('.atlas-graph-history')!;
+    expect(group.getAttribute('role')).toBe('group');
+    expect(group.getAttribute('aria-label')).toBe('History');
+    expect(group.querySelector('ul')?.getAttribute('aria-label')).toBe('Recently visited roots');
+    // The root button names its action and keeps the visible name in it.
+    const name = host.querySelector<HTMLButtonElement>('button.atlas-graph-scope-name')!;
+    expect(name.getAttribute('aria-label')).toBe('Open the source of n2');
+    expect(name.textContent).toBe('n2');
+});

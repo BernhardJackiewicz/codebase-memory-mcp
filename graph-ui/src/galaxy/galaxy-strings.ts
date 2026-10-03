@@ -48,6 +48,8 @@ export const galaxyHistoryText = {
     recentGlyph: '▾',
     recentTitle: 'Jump straight to a recently visited root with its last depth, direction and edge types',
     recentList: 'Recently visited roots',
+    /** The accessible name of the Back, Forward and Recent group. */
+    group: 'History',
     allGraph: 'All graph',
     layers: (depth: number) => (depth === 1 ? '1 layer' : `${depth} layers`),
     direction: { inbound: 'incoming', outbound: 'outgoing' } as Record<'inbound' | 'outbound', string>,
@@ -106,6 +108,8 @@ export const galaxyToolbarText = {
     moreTitle: 'More: open the source, rendered node and edge limits, connection groups',
     openSource: 'Open source',
     openRootTitle: (name: string, path: string, line?: number) => `Open the source of ${name} in Explore: ${path}${line ? `:${line}` : ''}`,
+    /** The root button's accessible name: its action, with the visible name in it. */
+    openRootLabel: (name: string) => `Open the source of ${name}`,
     traceTitle: 'Trace direction: incoming, outgoing or both',
     outsideLimits: (nodes: number, edges: number) => `${nodes.toLocaleString()} nodes · ${edges.toLocaleString()} edges outside render limits`,
 };
