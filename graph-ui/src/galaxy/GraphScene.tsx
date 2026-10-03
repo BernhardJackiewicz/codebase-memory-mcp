@@ -99,6 +99,10 @@
  * 18. Neu (Review-Call 2026-10-02): die Prop `path`. Ein Pfad oder eine
  *     Aufrufreihe liegt mit beschrifteten Kanten ueber der Szene
  *     (src/galaxy/PathLayer.tsx). Ohne die Prop zeichnet die Szene wie vorher.
+ * 19. Neu (Handtest K6): ein neu gezeigter Pfad rahmt die Kamera auf seine
+ *     Knoten (`PathFrame`, Rechnung in src/galaxy/path-frame.ts), mit Rand und
+ *     neben der Schrittliste. Die Knoten des Pfades bekommen ihren Namen von der
+ *     Pfadebene; die Namensebene der Szene zeichnet fuer sie keinen zweiten.
  */
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -113,7 +117,8 @@ import { HaloLayer } from './HaloLayer';
 import { EdgeLines } from './EdgeLines';
 import { NodeLabels } from './NodeLabels';
 import { ScreenNodeSeparation } from './ScreenNodeSeparation';
-import { PathLayer, type ScenePath } from './PathLayer';
+import { PathLayer, pathNodeIds, type ScenePath } from './PathLayer';
+import { pathFrame } from './path-frame';
 import type { LabelBox } from './NodeLabels';
 import { FRAME_MIN_DISTANCE, containShift, fitCamera, flatBounds, frameDistance, orthographicZoom } from './camera-frame';
 import type { CameraFit, FrameBox } from './camera-frame';
@@ -435,6 +440,39 @@ function RootMarkers({ nodes }: { nodes: readonly GraphNode[] }): JSX.Element {
             ))}
         </>
     );
+}
+
+/*
+ * Aenderung 19: ein neuer Pfad bekommt eine Kamerafahrt auf seine Knoten.
+ *
+ * Nur wenn sich der Pfad selbst aendert (anderes Ziel, Aufrufreihe statt Pfad),
+ * nicht beim Durchschalten der Schritte: das ist ein Lesen im selben Bild. Die
+ * Blickrichtung bleibt, die Kamera tritt nur vor oder zurueck und rueckt den
+ * Pfad aus der Schrittliste links oben heraus.
+ */
+const PATH_PANEL_INSET = 440;
+
+function PathFrame({ nodes, path, onTarget }: { nodes: readonly GraphNode[]; path: ScenePath; onTarget: (target: CameraTarget) => void }): null {
+    const camera = useThree((state) => state.camera);
+    const size = useThree((state) => state.size);
+    const key = `${path.labels}:${path.steps.map((step) => `${step.from}>${step.to}`).join(',')}`;
+    const latest = useRef({ nodes, size, onTarget });
+    latest.current = { nodes, size, onTarget };
+    useEffect(() => {
+        const { nodes: drawn, size: viewport, onTarget: report } = latest.current;
+        if (!(camera instanceof THREE.PerspectiveCamera) || viewport.height <= 0) return;
+        const ids = new Set(pathNodeIds(path));
+        const points = drawn.filter((node) => ids.has(node.id)).map((node) => ({ x: node.x, y: node.y, z: node.z }));
+        if (points.length === 0) return;
+        const direction = camera.getWorldDirection(new THREE.Vector3());
+        const frame = pathFrame(points, { direction, up: camera.up }, viewport, camera.fov,
+            { left: Math.min(PATH_PANEL_INSET, viewport.width * 0.4), top: 0 });
+        report({ position: new THREE.Vector3(frame.position.x, frame.position.y, frame.position.z),
+            lookAt: new THREE.Vector3(frame.lookAt.x, frame.lookAt.y, frame.lookAt.z) });
+        // Nur ein neuer Pfad rahmt neu, siehe oben.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [key, camera]);
+    return null;
 }
 
 /* Bildratenmesser und Bildratendeckel (W10) */
@@ -881,9 +919,14 @@ export function GraphScene({
     const markedRoots = rootIds !== undefined && rootIds.size > 0 && rootIds.size <= ROOT_MARKER_LIMIT ? rootIds : undefined;
     const rootNodes = useMemo(() => markedRoots ? renderedCode.filter((node) => markedRoots.has(node.id)) : [],
         [markedRoots, renderedCode]);
-    // Der Ring traegt den Namen der Wurzel; ein zweiter Name darunter waere doppelt.
-    const labelNodes = useMemo(() => markedRoots ? renderedCode.filter((node) => !markedRoots.has(node.id)) : renderedCode,
-        [markedRoots, renderedCode]);
+    // Der Ring traegt den Namen der Wurzel, die Pfadebene die Namen ihrer Knoten (K6); ein zweiter Name waere doppelt.
+    const pathIds = useMemo(() => (path ? new Set(pathNodeIds(path)) : undefined), [path]);
+    const labelNodes = useMemo(() => markedRoots || pathIds
+        ? renderedCode.filter((node) => !markedRoots?.has(node.id) && !pathIds?.has(node.id)) : renderedCode,
+    [markedRoots, pathIds, renderedCode]);
+    /* Das Kameraziel: das des Panels, oder die Fahrt auf einen neuen Pfad, je nachdem, was zuletzt kam. */
+    const [sceneTarget, setSceneTarget] = useState<CameraTarget | null>(cameraTarget);
+    useEffect(() => { setSceneTarget(cameraTarget); }, [cameraTarget]);
     const onCodeHover = useCallback((node: GraphNode | null) => {
         setHovered(node);
         if (node) setHoveredShadow(null);
@@ -1023,7 +1066,8 @@ export function GraphScene({
             )}
             {landmarks && <HaloLayer nodes={renderedCode} />}
             {rootNodes.length > 0 && <RootMarkers nodes={rootNodes} />}
-            {path !== undefined && <PathLayer nodes={renderedCode} path={path} />}
+            {path !== undefined && <PathLayer nodes={renderedCode} path={path} namedRoots={markedRoots} />}
+            {path !== undefined && !flat && <PathFrame nodes={renderedCode} path={path} onTarget={setSceneTarget} />}
 
             {renderedShadow && renderedShadow.nodes.length > 0 && <group>
                 {drawEdges && <CoverageShadowEdges shadow={renderedShadow} brightness={display.edgeBrightness} />}
@@ -1035,8 +1079,8 @@ export function GraphScene({
             {hovered && renderTooltip !== undefined && renderTooltip(hovered)}
             {resolveCoverageShadowNode(renderedShadow, hoveredShadow) && hoveredShadow && renderShadowTooltip?.(hoveredShadow)}
 
-            <CameraAnimator target={cameraTarget} controlsRef={controlsRef} flat={flat} />
-            <FitContainment nodes={renderedNodes} target={cameraTarget} controlsRef={controlsRef} moved={moved}
+            <CameraAnimator target={sceneTarget} controlsRef={controlsRef} flat={flat} />
+            <FitContainment nodes={renderedNodes} target={sceneTarget} controlsRef={controlsRef} moved={moved}
                 enabled={separateNodes && !flat} />
             {separateNodes && <ScreenNodeSeparation nodes={sceneNodes} active={active} onChange={receiveSeparation} onBusyChange={onRenderBusyChange}
                 pinned={markedRoots} />}

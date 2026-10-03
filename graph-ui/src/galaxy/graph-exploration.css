@@ -95,9 +95,12 @@
 .atlas-galaxy-path-panel footer button:disabled { opacity:.4; cursor:not-allowed; }
 .atlas-galaxy-path-label { display:block; padding:0 4px; border-radius:3px; background:rgba(13, 15, 18, .78); color:#cfe0d6; font:600 10px/1.4 var(--atlas-mono, ui-monospace, monospace); white-space:nowrap; }
 .atlas-galaxy-path-label[data-active=true] { color:#ffffff; outline:1px solid #80ac96; }
-.atlas-galaxy-path-step { position:relative; display:block; width:0; height:0; pointer-events:none; }
-.atlas-galaxy-path-step > i { position:absolute; left:-12px; top:-12px; width:24px; height:24px; box-sizing:border-box; border:2px solid #9fe0bd; border-radius:50%; box-shadow:0 0 12px rgba(159, 224, 189, .55); }
-.atlas-galaxy-path-step > b { position:absolute; bottom:15px; left:0; transform:translateX(-50%); padding:1px 6px; border-radius:4px; background:rgba(13, 15, 18, .84); color:#cfeedd; font:600 12px/1.4 var(--atlas-ui-font, system-ui, sans-serif); white-space:nowrap; }
+/* Jeder Knoten des Pfades traegt seinen Namen (K6); der aktuelle Schritt dazu den hellen Ring. */
+.atlas-galaxy-path-node { position:relative; display:block; width:0; height:0; pointer-events:none; }
+.atlas-galaxy-path-node > i { position:absolute; left:-8px; top:-8px; width:16px; height:16px; box-sizing:border-box; border:1px solid rgba(159, 224, 189, .55); border-radius:50%; }
+.atlas-galaxy-path-node[data-active=true] > i { left:-12px; top:-12px; width:24px; height:24px; border:2px solid #9fe0bd; box-shadow:0 0 12px rgba(159, 224, 189, .55); }
+.atlas-galaxy-path-node > b { position:absolute; bottom:15px; left:0; transform:translateX(-50%); padding:1px 6px; border-radius:4px; background:rgba(13, 15, 18, .84); color:#cfeedd; font:600 12px/1.4 var(--atlas-ui-font, system-ui, sans-serif); white-space:nowrap; }
+.atlas-galaxy-path-node:not([data-active=true]) > b { color:#b4cbbf; font-weight:500; }
 
 /* Die Wurzel eines Scopes: ein Ring auf dem Punkt und ihr Name darunter, immer sichtbar. */
 .atlas-galaxy-root-marker { position:relative; display:block; width:0; height:0; pointer-events:none; }

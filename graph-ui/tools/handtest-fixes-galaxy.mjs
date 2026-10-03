@@ -481,8 +481,84 @@ async function checkK13(page) {
 }
 
 /* ------------------------------------------------------------------ */
+/* K6: Kamera auf den Pfad, Kantenlabels frei von Namen                 */
 
-const CHECKS = { K9: checkK9, K2: checkK2, K8: checkK8, K3: checkK3, K13: checkK13 };
+async function pickPath(page, name) {
+    const picker = page.locator('details.atlas-graph-path-picker').first();
+    await picker.locator('summary').click();
+    const search = page.getByRole('searchbox', { name: 'Find a path target' });
+    await search.fill('');
+    await search.type(name, { delay: 15 });
+    await page.locator('.atlas-graph-path-menu button', { has: page.locator('strong', { hasText: new RegExp(`^${name}$`) }) }).first().click();
+}
+
+async function pathLayout(page) {
+    return page.evaluate(() => {
+        const rect = (el) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, text: el.textContent?.trim() ?? '' }; };
+        const labels = [...document.querySelectorAll('.atlas-galaxy-path-label')].map(rect).filter((r) => r.right > r.left);
+        const names = [...document.querySelectorAll('.atlas-galaxy-path-node b, .atlas-galaxy-root-marker b')].map(rect).filter((r) => r.right > r.left);
+        const rings = [...document.querySelectorAll('.atlas-galaxy-path-node > i, .atlas-galaxy-root-marker > i')].map(rect);
+        const hit = (a, b) => !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top);
+        const overlaps = [];
+        for (const label of labels) for (const name of names) if (hit(label, name)) overlaps.push(`${label.text} x ${name.text}`);
+        for (let i = 0; i < labels.length; i += 1) for (let j = i + 1; j < labels.length; j += 1) if (hit(labels[i], labels[j])) overlaps.push(`${labels[i].text} x ${labels[j].text}`);
+        const canvas = document.querySelector('.atlas-galaxy canvas')?.getBoundingClientRect();
+        const panel = document.querySelector('[data-testid="atlas-galaxy-path-panel"]')?.getBoundingClientRect();
+        const centres = rings.map((r) => ({ x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 }));
+        let spread = 0;
+        for (let i = 0; i < centres.length; i += 1) for (let j = i + 1; j < centres.length; j += 1) spread = Math.max(spread, Math.hypot(centres[i].x - centres[j].x, centres[i].y - centres[j].y));
+        const inside = canvas ? centres.every((c) => c.x > canvas.left && c.x < canvas.right && c.y > canvas.top && c.y < canvas.bottom) : false;
+        const underPanel = panel ? centres.filter((c) => c.x > panel.left && c.x < panel.right && c.y > panel.top && c.y < panel.bottom).length : 0;
+        const box = (r) => `${r.text}@${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.right)},${Math.round(r.bottom)}`;
+        return { labels: labels.length, names: names.map((n) => n.text), overlaps, spreadPx: Math.round(spread), inside, underPanel,
+            boxes: overlaps.length ? [...labels, ...names].map(box) : undefined,
+            camera: globalThis.__atlasGalaxyFit?.measure?.().camera.position.map((v) => Math.round(v)) ?? null };
+    });
+}
+
+async function checkK6(page) {
+    await section(page, 'K6', 'Showing a path flies the camera onto its nodes, and no edge label lies under a node name');
+    await open(page);
+    await select(page, ROOT);
+    await settled(page);
+    const target = 'test_jsonb_agg_charfield_order_by';
+    const before = await pathLayout(page);
+    await shot(page, 'K6', 'before-path', `${ROOT} at 1 layer before Path to (camera ${JSON.stringify(before.camera)})`);
+    await pickPath(page, target);
+    const frames = [];
+    for (const [label, ms] of [['0ms', 0], ['250ms', 250], ['1s', 750], ['3s', 2000]]) {
+        await wait(ms);
+        frames.push({ at: label, ...await pathLayout(page) });
+        await shot(page, 'K6', `path-1hop-${label}`, `${label} after Path to ${target}: spread ${frames.at(-1).spreadPx} px, ${frames.at(-1).overlaps.length} label overlaps`);
+    }
+    const oneHop = frames.at(-1);
+    await check('K6', `Path to ${target} (1 hop): camera moved, path nodes far apart and in view, no edge label under a name`,
+        JSON.stringify(oneHop.camera) !== JSON.stringify(before.camera) && oneHop.spreadPx >= 200 && oneHop.inside && oneHop.underPanel === 0
+        && oneHop.overlaps.length === 0 && oneHop.labels > 0, { before: before.camera, frames });
+
+    // Ein laengerer Pfad bei zwei Ebenen.
+    await page.keyboard.press('Escape');
+    await wait(400);
+    await expand(page);
+    await pickPath(page, 'Func');
+    await wait(3000);
+    const twoHops = await pathLayout(page);
+    const heading = await page.locator('[data-testid="atlas-galaxy-path-panel"] strong').first().innerText().catch(() => '');
+    await shot(page, 'K6', 'path-func', `${heading}: spread ${twoHops.spreadPx} px, ${twoHops.overlaps.length} overlaps`);
+    for (let step = 0; step < 2; step += 1) {
+        await page.locator('[data-testid="atlas-galaxy-path-panel"]').getByRole('button', { name: 'Next' }).click().catch(() => {});
+        await wait(700);
+    }
+    const stepped = await pathLayout(page);
+    await shot(page, 'K6', 'path-func-stepped', `After stepping: ${stepped.overlaps.length} overlaps, camera ${JSON.stringify(stepped.camera)}`);
+    await check('K6', 'A two-hop path is framed too, and stepping keeps labels clear of names', twoHops.overlaps.length === 0 && stepped.overlaps.length === 0
+        && twoHops.inside && twoHops.underPanel === 0 && /Path to Func/.test(heading), { heading, twoHops, stepped });
+    await page.keyboard.press('Escape');
+}
+
+/* ------------------------------------------------------------------ */
+
+const CHECKS = { K9: checkK9, K2: checkK2, K8: checkK8, K3: checkK3, K13: checkK13, K6: checkK6 };
 
 await mkdir(OUT, { recursive: true });
 const context = await chromium.launchPersistentContext(PROFILE, {
