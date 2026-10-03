@@ -849,6 +849,8 @@ interface GraphSceneProps {
     /* Label geometry, passed straight through to NodeLabels (Aenderung 9). */
     labelWorldFontSize?: number | undefined;
     labelMaxTextWidth?: number | undefined;
+    /* Wie viele Namen hoechstens; ohne Angabe die achtzig von NodeLabels (Review zu K5: die Hierarchie eines Ausschnitts traegt mehr). */
+    labelBudget?: number | undefined;
     onLabelLayout?: ((boxes: LabelBox[]) => void) | undefined;
     /* Aenderung 10 (W10): was Rechenzeit kostet. Ohne diese vier zeichnet die
      * Szene wie vorher. */
@@ -902,6 +904,7 @@ export function GraphScene({
     overlay,
     labelWorldFontSize,
     labelMaxTextWidth,
+    labelBudget,
     onLabelLayout,
     projection = 'spatial',
     drawEdges = true,
@@ -1070,6 +1073,7 @@ export function GraphScene({
                 <NodeLabels
                     nodes={labelNodes}
                     highlightedIds={highlightedIds}
+                    {...(labelBudget !== undefined ? { maxLabels: labelBudget } : {})}
                     worldFontSize={labelWorldFontSize}
                     maxTextWidth={labelMaxTextWidth}
                     maxDistance={labelMaxDistance}

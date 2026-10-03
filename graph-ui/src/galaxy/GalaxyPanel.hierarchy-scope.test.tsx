@@ -4,7 +4,7 @@
  * der Mitte, Ausgehendes rechts, ein ehrlicher Hinweis, und Pfad und
  * Aufrufreihe gibt es auch hier, mit Hervorhebung im Bild der Hierarchie.
  */
-import { act } from 'react';
+import { act, isValidElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import GalaxyPanel from './GalaxyPanel';
@@ -12,17 +12,25 @@ import type { GraphData } from './types';
 import type { ScenePath } from './PathLayer';
 import { scopeFetch, scopeNode } from './test-scope-fetch';
 import { GALAXY_LEGEND_KEY } from './galaxy-legend';
+import { HierarchyEdgeLabels } from './HierarchyEdgeLabels';
 
 const scene = vi.hoisted(() => ({ data: undefined as GraphData | undefined, path: undefined as ScenePath | undefined, highlighted: null as Set<number> | null,
-    labelMaxTextWidth: undefined as number | undefined, overlay: false }));
+    labelMaxTextWidth: undefined as number | undefined, overlay: false, overlayNode: undefined as unknown, showLabels: false, labelBudget: undefined as number | undefined }));
 vi.mock('./GraphScene', async importOriginal => ({
     ...await importOriginal<typeof import('./GraphScene')>(),
-    GraphScene: ({ data, path, highlightedIds, labelMaxTextWidth, overlay }: { data: GraphData; path?: ScenePath; highlightedIds: Set<number> | null;
-        labelMaxTextWidth?: number; overlay?: unknown }) => {
+    GraphScene: ({ data, path, highlightedIds, labelMaxTextWidth, overlay, showLabels, labelBudget }: { data: GraphData; path?: ScenePath; highlightedIds: Set<number> | null;
+        labelMaxTextWidth?: number; overlay?: unknown; showLabels: boolean; labelBudget?: number }) => {
         scene.data = data; scene.path = path; scene.highlighted = highlightedIds; scene.labelMaxTextWidth = labelMaxTextWidth; scene.overlay = Boolean(overlay);
+        scene.overlayNode = overlay; scene.showLabels = showLabels; scene.labelBudget = labelBudget;
         return <output data-testid="scene" />;
     },
 }));
+/** Die Kantenschilder der Hierarchie im Baum der Ueberlagerung, ohne sie zu zeichnen. */
+function edgeLabelProps(node: unknown): { edges: unknown[] } | undefined {
+    if (!isValidElement(node)) return Array.isArray(node) ? node.map(edgeLabelProps).find(Boolean) : undefined;
+    if (node.type === HierarchyEdgeLabels) return node.props as { edges: unknown[] };
+    return edgeLabelProps((node.props as { children?: unknown }).children);
+}
 
 let host: HTMLDivElement, root: Root;
 beforeEach(() => {
@@ -88,4 +96,33 @@ it('K5: the hint follows the trace direction', async () => {
         select.value = 'outbound'; select.dispatchEvent(new Event('change', { bubbles: true }));
     });
     expect(host.innerHTML).toContain('what the root reaches, one column per layer to the right');
+});
+
+/*
+ * Review of K5: above sixty nodes the hierarchy of a scope drew no name at all
+ * (JSONBAgg at two layers, 90 nodes) but eighty edge-type labels. Names now
+ * stand up to 150 nodes, and above that neither names nor edge labels, and the
+ * hint says why and how to get them back.
+ */
+it('K5: a two-layer scope of 90 nodes keeps its names in the hierarchy; above 150 names and edge labels go together, and the hint says so', async () => {
+    const fan = (count: number) => Array.from({ length: count }, (_, at) => scopeNode(100 + at));
+    const render = async (count: number) => {
+        const nodes = [scopeNode(1), ...fan(count)];
+        const edges = fan(count).map((node, at) => ({ id: 10 + at, source: node.id, target: 1, type: 'CALLS' }));
+        await act(async () => root.render(<GalaxyPanel key={count} project="sample" visible workspaceExpanded onOpenNode={vi.fn()} fetch={scopeFetch({ nodes, edges }).fetch} />));
+        await settle(() => expect(seam().nodes).toBe(count + 1));
+        await act(async () => { seam().clickNode('sample.n1'); });
+        await settle(() => expect(host.querySelector('.atlas-graph-scope-count')?.textContent).toBe(`${count + 1} nodes · ${count} edges`));
+        await act(async () => host.querySelector<HTMLButtonElement>('[data-testid="atlas-graph-mode-chip"][data-mode="hierarchy"]')!.click());
+    };
+    await render(89);
+    expect(scene.showLabels).toBe(true);
+    expect(scene.labelBudget).toBeGreaterThanOrEqual(90);
+    expect(edgeLabelProps(scene.overlayNode)?.edges).toHaveLength(89);
+    expect(host.innerHTML).not.toContain('names and edge types show');
+
+    await render(200);
+    expect(scene.showLabels).toBe(false);
+    expect(edgeLabelProps(scene.overlayNode)).toBeUndefined();
+    expect(host.innerHTML).toContain('names and edge types show for up to 150 nodes');
 });

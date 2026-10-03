@@ -147,7 +147,7 @@ import { galaxyHistoryOptions, historyEntryDetail, historyEntryLabel, scopeIdent
 import { useOrganicLayout } from './use-organic-layout';
 import RenderProgress from './RenderProgress';
 import { useGraphScope } from './use-graph-scope';
-import { SCOPED_HIERARCHY_LABEL_MAX_TEXT_WIDTH, limitGraphRender, nextLayerEstimate, scenePictureFor, scopedHierarchy } from './graph-scope';
+import { SCOPED_HIERARCHY_LABEL_BUDGET, SCOPED_HIERARCHY_LABEL_MAX_TEXT_WIDTH, limitGraphRender, nextLayerEstimate, scenePictureFor, scopedHierarchy } from './graph-scope';
 import './graph-exploration.css';
 import { layoutNodeForSelection } from './selected-node';
 import { galaxyScopeEvidence, useSelectionEvidence, type SelectionEvidenceListener } from './selection-evidence';
@@ -1109,6 +1109,11 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
 
     const scopedProjection = useMemo(() => props.workspaceExpanded && scope.scope && scope.result
         ? scopedHierarchy(scope.result, scope.scope.name) : undefined, [props.workspaceExpanded, scope.scope, scope.result]);
+    /* Review zu K5: bis 150 Knoten stehen in der Hierarchie eines Ausschnitts alle Namen, darueber weder Namen noch Kantenschilder. */
+    const scopedNamesHidden = Boolean(scopedProjection && scopedProjection.data.nodes.length > SCOPED_HIERARCHY_LABEL_BUDGET);
+    const scopedSpots = useMemo(() => scopedProjection
+        ? new Map(scopedProjection.placements.map(placement => [placement.id, { hop: placement.hop, x: placement.x, y: placement.y }])) : undefined,
+    [scopedProjection]);
     const projection = useMemo(
         () => scopedProjection ?? (readerHierarchyActive ? readerProjection
             : activeWalk === undefined ? undefined : projectHierarchy(activeWalk, { layout: data })),
@@ -2368,8 +2373,9 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
      * Koerpern nicht unterscheiden: was hier steht, ist ein Kind ihres Baums.
      */
     /* K5: die Kantenarten an den Linien der Hierarchie eines Ausschnitts, solange kein Pfad seine eigenen zeigt. */
-    const hierarchyEdgeLabels = mode === 'hierarchy' && scopedProjection && !sceneTrailIds && sceneShown
-        ? <HierarchyEdgeLabels nodes={sceneShown.nodes} edges={sceneShown.edges} nameBoxes={labelBoxes} /> : undefined;
+    // Review zu K5: Kantenschilder nur neben Namen; ohne Namen waeren sie Schilder an Punkten, die niemand zuordnen kann.
+    const hierarchyEdgeLabels = mode === 'hierarchy' && scopedProjection && !scopedNamesHidden && !sceneTrailIds && sceneShown
+        ? <HierarchyEdgeLabels nodes={sceneShown.nodes} edges={sceneShown.edges} layout={scopedSpots} nameBoxes={labelBoxes} /> : undefined;
     const overlay: ReactNode = (pulseRing === undefined && !liveOn && hierarchyEdgeLabels === undefined) ? undefined : (
         <>
             {pulseRing}
@@ -2452,7 +2458,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                                                     : candidate === 'galaxy'
                                                         ? 'galaxy: the whole project, laid out by the server'
                                                         : readerHierarchyActive ? 'hierarchy: incoming relationships, file definitions, and outgoing relationships'
-                                                        : scopedProjection ? galaxyHierarchyText.hint(scope.direction)
+                                                        : scopedProjection ? galaxyHierarchyText.hint(scope.direction, scopedNamesHidden ? SCOPED_HIERARCHY_LABEL_BUDGET : undefined)
                                                         : 'hierarchy: what the chosen symbol reaches, one column per call depth'
                                     }
                                 >
@@ -2823,14 +2829,16 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                          * gestellt wurde.
                          *
                          * In der Hierarchie sind die Namen immer an: dort
-                         * stehen hoechstens sechzig Punkte, und eine
-                         * Aufrufkette ohne Namen waere eine Reihe Punkte.
+                         * stehen hoechstens sechzig Punkte (im Ausschnitt
+                         * 150, Review zu K5), und eine Aufrufkette ohne
+                         * Namen waere eine Reihe Punkte.
                          */
                         showLabels={
                             mode === 'hierarchy'
-                                ? sceneShown.nodes.length <= HIERARCHY_LABEL_BUDGET
+                                ? scopedProjection ? !scopedNamesHidden : sceneShown.nodes.length <= HIERARCHY_LABEL_BUDGET
                                 : trailIds !== undefined || (highlighted !== null && highlighted.size > 0)
                         }
+                        labelBudget={mode === 'hierarchy' && scopedProjection ? SCOPED_HIERARCHY_LABEL_BUDGET : undefined}
                         /*
                          * Landmarken nur in der Galaxie: der Halo sitzt auf den
                          * groessten Knoten, und "gross" heisst in der Projektion

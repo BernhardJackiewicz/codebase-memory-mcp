@@ -15,6 +15,13 @@
  *
  * Es startet keinen Server. Gebraucht wird ein Ursprung mit UI und /rpc, etwa
  * tools/lib/static-proxy.mjs vor einem laufenden Server.
+ *
+ * Nach dem Review der Korrekturen kamen dazu: die Auswahl bleibt bei Zurueck
+ * auf dieselbe Wurzel und beim Abbruch (K2/K8), die Leiste passt auch bei
+ * 1.494, 1.440, 1.366 und 1.280 px mit offenem Chat, ohne etwas abzuschneiden
+ * (K3), die Hierarchie bei zwei Ebenen traegt Namen (K5), das Laden zaehlt
+ * Seite fuer Seite und warnt vorher (K8), und der Quelltext nennt die echte
+ * letzte Zeile (K13).
  */
 
 import { chromium } from 'playwright';
@@ -238,6 +245,8 @@ async function checkK2(page) {
         await check('K2', 'Back and Forward buttons exist in the scoped toolbar', false, { steps });
         return;
     }
+    const a11y = await page.evaluate(() => ({ group: document.querySelector('.atlas-graph-history')?.getAttribute('aria-label') ?? null,
+        rootButton: document.querySelector('button.atlas-graph-scope-name')?.getAttribute('aria-label') ?? null }));
     const t0 = Date.now();
     await backButton.click();
     await shot(page, 'K2', 'back-0ms', '0 ms after Back');
@@ -248,7 +257,10 @@ async function checkK2(page) {
     await shot(page, 'K2', 'back-1', `After Back: ${ROOT} at 2 layers again, Forward names the test`);
     await backButton.click();
     await settled(page);
-    steps.push({ step: 'Back', ...await state() });
+    // Review: Back to the same root at another depth keeps the selection and its details.
+    const sameRoot = { ...await state(), details: await page.locator('.atlas-galaxy-selection-details').count() };
+    steps.push({ step: 'Back (same root, 1 layer)', ...sameRoot });
+    await shot(page, 'K2', 'back-same-root', `Back to ${ROOT} at 1 layer: Selection details still there (${sameRoot.details})`);
     await backButton.click();
     await wait(1500);
     steps.push({ step: 'Back', ...await state() });
@@ -287,6 +299,9 @@ async function checkK2(page) {
     await settled(page);
     steps.push({ step: `Back until disabled (${backs} steps)`, ...await state() });
     const at = (index) => steps[index] ?? {};
+    await check('K2', 'Back to the same root at another depth keeps the selection; the history group and the root button are named for assistive technology',
+        sameRoot.scope === ROOT && sameRoot.layers === '1 layer' && sameRoot.details === 1 && a11y.group === 'History'
+        && a11y.rootButton === 'Open the source of test_jsonb_agg_jsonfield_order_by', { sameRoot, a11y });
     const pass = at(0).back?.startsWith('Back to All graph') && at(2).back?.startsWith(`Back to ${ROOT} · 2 layers`)
         && at(3).scope === ROOT && at(3).layers === '2 layers' && at(3).forward?.startsWith('Forward to test_jsonb_agg_jsonfield_order_by')
         && at(4).layers === '1 layer' && at(5).scope === '' && at(5).backDisabled === true && at(6).scope === ROOT
@@ -313,7 +328,14 @@ async function checkK8(page) {
     await shot(page, 'K8', 'two-layers', `${ROOT} at 2 layers: ${await countText(page)}`);
     const minus = page.getByRole('button', { name: 'Remove graph layer' });
     const expandButton = page.getByRole('button', { name: 'Expand +1' });
+    // Review: the counted calls at the edge reach the toolbar a moment after the layer is complete.
+    await page.waitForFunction(() => /The index lists/.test([...document.querySelectorAll('.atlas-graph-exploration button')]
+        .find((el) => el.getAttribute('aria-label') === 'Expand +1')?.title ?? ''), null, { timeout: 10000 }).catch(() => {});
     const expandTitle = await expandButton.getAttribute('title');
+    const expandWarning = await expandButton.getAttribute('data-warning');
+    await check('K8', 'Before layer 3 loads, Expand warns: the index counts the calls waiting at the edge nodes',
+        expandWarning === 'true' && /^Likely past the render limit\. Load layer 3: \d+ nodes to expand\. The index lists [\d.,]+ calls at them/.test(expandTitle ?? ''),
+        { expandTitle, expandWarning });
 
     // 1. Abbrechen waehrend die dritte Ebene laedt.
     await expandButton.click();
@@ -332,8 +354,9 @@ async function checkK8(page) {
     await wait(750);
     const cancelled = { layers: await layerText(page), status: await countText(page), state: await scopeState(page), ms: cancelMs };
     await shot(page, 'K8', 'cancel-1s', `1 s after "−": ${cancelled.layers}, ${cancelled.status}`);
-    await check('K8', '"−" cancels a running layer and returns to the previous one within 1 s', during.state === 'loading' && during.minusDisabled === false
-        && cancelMs <= 1000 && cancelled.layers === '2 layers' && /^90 nodes · 201 edges/.test(cancelled.status), { expandTitle, during, cancelled });
+    cancelled.details = await page.locator('.atlas-galaxy-selection-details').count();
+    await check('K8', '"−" cancels a running layer and returns to the previous one within 1 s, and the selection stays', during.state === 'loading' && during.minusDisabled === false
+        && cancelMs <= 1000 && cancelled.layers === '2 layers' && /^90 nodes · 201 edges/.test(cancelled.status) && cancelled.details === 1, { expandTitle, during, cancelled });
 
     // 2. Die dritte Ebene ganz laden.
     await wait(1500);
@@ -341,12 +364,15 @@ async function checkK8(page) {
     const w0 = Date.now();
     await expandButton.click();
     const frames = [];
-    for (const [label, at] of [['0ms', 0], ['250ms', 250], ['1s', 1000], ['3s', 3000]]) {
+    for (const [label, at] of [['0ms', 0], ['250ms', 250], ['1s', 1000], ['2s', 2000], ['3s', 3000]]) {
         const elapsed = Date.now() - w0;
         if (at > elapsed) await wait(at - elapsed);
-        frames.push({ at: label, status: await countText(page), state: await scopeState(page), progress: await progressShown(page) });
+        frames.push({ at: label, status: await countText(page), state: await scopeState(page), progress: await progressShown(page),
+            title: await page.locator('.atlas-graph-scope-count').first().getAttribute('title').catch(() => null) });
         await shot(page, 'K8', `layer3-${label}`, `${label} after Expand: "${frames.at(-1).status}"${frames.at(-1).progress ? `, overlay "${frames.at(-1).progress}"` : ''}`);
     }
+    // Review: the counts move page by page instead of standing still for a whole batch.
+    const loadingStatuses = [...new Set(frames.filter((frame) => frame.state === 'loading').map((frame) => frame.status))];
     await page.waitForFunction(() => ['complete', 'partial'].includes(document.querySelector('.atlas-graph-scope-count')?.getAttribute('data-state') ?? ''), null, { timeout: 180000 }).catch(() => {});
     const doneMs = Date.now() - w0;
     const calls = await rpcSince(page, t0);
@@ -362,6 +388,9 @@ async function checkK8(page) {
     await check('K8', 'Layer 3 completes (or stops at the render limit with a partial note) within 30 s in few large requests, and the overlay goes away',
         ['complete', 'partial'].includes(done.state ?? '') && doneMs <= 30000 && done.queryGraph <= 40 && done.overlayAfter2s === '' && done.layers === '3 layers',
         { frames, done });
+    const doneRequests = frames.filter((frame) => /Request \d+ to the index/.test(frame.title ?? '')).length;
+    await check('K8', 'While layer 3 loads, the counts move page by page and the tooltip names the running request',
+        doneMs <= 3000 || (loadingStatuses.length >= 2 && doneRequests >= 1), { loadingStatuses, doneMs, titles: frames.map((frame) => frame.title) });
 }
 
 /* ------------------------------------------------------------------ */
@@ -377,7 +406,12 @@ async function toolbarRows(page) {
         const rows = [...new Set(centres.map((centre) => Math.round(centre / 16)))].length;
         const clipped = items.filter((el) => el.scrollWidth > el.clientWidth + 1 && getComputedStyle(el).textOverflow === 'ellipsis')
             .map((el) => el.textContent?.trim().slice(0, 40));
-        return { width: Math.round(box.width), height: Math.round(box.height), rows, overflow: bar.scrollWidth > bar.clientWidth + 1, clipped,
+        const style = getComputedStyle(bar);
+        const edge = box.right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth);
+        const outside = items.filter((el) => el.getBoundingClientRect().right > edge + 0.5).map((el) => (el.getAttribute('aria-label') || el.textContent || el.tagName).trim().slice(0, 24));
+        const more = bar.querySelector('details.atlas-graph-more > summary')?.getBoundingClientRect();
+        return { width: Math.round(box.width), height: Math.round(box.height), rows, overflow: bar.scrollWidth > bar.clientWidth + 1, clipped, fit: bar.dataset.fit ?? null,
+            outside, moreInside: Boolean(more && more.width > 0 && more.right <= edge + 0.5 && more.left >= box.left),
             items: items.map((el) => `${(el.getAttribute('aria-label') || el.textContent || el.tagName).trim().slice(0, 18)}:${Math.round(el.getBoundingClientRect().width)}`) };
     });
 }
@@ -419,8 +453,43 @@ async function checkK3(page) {
     await measure('open-partial', 'Chat open, layer 3 stopped at the render limit');
     await chatToggle(false);
     await measure('closed-partial', 'Chat closed again, layer 3 partial');
-    const pass = rows.length === 7 && rows.every((row) => row.rows === 1 && row.height < 60 && !row.overflow);
+    const pass = rows.length === 7 && rows.every((row) => row.rows === 1 && row.height < 60 && !row.overflow && row.outside.length === 0);
     await check('K3', 'One toolbar row in every state, chat open (bar about 1170 px) and closed (1600 px)', pass, { rows });
+
+    /*
+     * Review: bei 1.494 px (das Fenster des Handtests) und darunter schnitt die
+     * Leiste Zaehler und Menue "⋯" ab. Jetzt passt sie ohne Abschneiden: eine
+     * Zeile bis 1.440 px, darunter zwei, und das Menue mit den Limits oeffnet.
+     */
+    await chatToggle(true);
+    const narrow = [];
+    const atWidth = async (width, state) => {
+        await page.setViewportSize({ width, height: VIEWPORT.height });
+        await wait(900);
+        const value = await toolbarRows(page);
+        const more = page.locator('details.atlas-graph-more').first();
+        await more.locator('> summary').click({ timeout: 3000 }).catch(() => {});
+        await wait(300);
+        const limitsVisible = await page.getByRole('combobox', { name: 'Rendered node limit' }).first().isVisible().catch(() => false);
+        const label = `${state}-${width}`;
+        await shot(page, 'K3', label, `Chat open at ${width} px, ${state}: fit "${value?.fit}", ${value?.rows} row(s), ${value?.outside.length} item(s) past the edge, ⋯ menu open with Limits ${limitsVisible ? 'visible' : 'missing'}`);
+        await page.keyboard.press('Escape');
+        await more.evaluate((el) => { el.open = false; }).catch(() => {});
+        await page.locator('.atlas-graph-exploration').first().screenshot({ path: join(OUT, 'K3', `${label}-toolbar.png`) }).catch(() => {});
+        narrow.push({ label, width, ...value, limitsVisible });
+    };
+    for (const width of [1494, 1440, 1366, 1280]) await atWidth(width, 'partial');
+    await page.setViewportSize(VIEWPORT);
+    await wait(600);
+    if (await back.count()) await back.click();
+    await settled(page);
+    for (const width of [1494, 1440, 1366, 1280]) await atWidth(width, 'two-layers');
+    await page.setViewportSize(VIEWPORT);
+    await wait(600);
+    const narrowPass = narrow.length === 8 && narrow.every((row) => row.outside.length === 0 && !row.overflow && row.moreInside && row.limitsVisible
+        && (row.width >= 1440 ? row.rows === 1 && row.height < 60 : row.rows <= 2));
+    await check('K3', 'With the chat open at 1494, 1440, 1366 and 1280 px nothing is cut off: one row down to 1440 px, two below, the ⋯ menu with Limits opens',
+        narrowPass, { narrow });
 }
 
 /* ------------------------------------------------------------------ */
@@ -475,8 +544,8 @@ async function checkK13(page) {
     await page.locator('.source-evidence-lines').evaluate((el) => { el.scrollTop = el.scrollHeight; }).catch(() => {});
     await wait(300);
     await shot(page, 'K13', 'source-evidence-end', `Source evidence for general.py scrolled to the end: "${pagerText.replace(/\s+/g, ' ')}"`);
-    await check('K13', '"Next lines" is disabled at the real end of general.py and says so', /end of file/.test(pagerText) && nextState.disabled === true
-        && /end of this file/.test(nextState.title ?? ''), { pagerText, nextState, renderedLines: lines });
+    await check('K13', '"Next lines" is disabled at the real end of general.py and names its last line, 65', /end of file/.test(pagerText) && nextState.disabled === true
+        && nextState.title === 'Line 65 is the last line of this file.', { pagerText, nextState, renderedLines: lines });
     await page.keyboard.press('Escape');
 }
 
@@ -637,6 +706,35 @@ async function checkK5(page) {
         && JSON.stringify(columnOrder) === JSON.stringify(firstSeen) && callView.overlaps.length === 0,
     { callees, columnOrder, firstSeen, overlaps: callView.overlaps, truncated: callView.truncated });
     await page.keyboard.press('Escape');
+    await wait(500);
+
+    /*
+     * Review: bei zwei Ebenen (90 Knoten) stand kein einziger Name, aber achtzig
+     * Kantenschilder auf beliebigen Paaren. Jetzt tragen bis 150 Knoten alle
+     * ihren Namen, und draussen hat ein Faecher ein Schild mit seiner Zahl.
+     */
+    await select(page, ROOT);
+    await settled(page);
+    if (await page.locator('[data-testid="atlas-graph-mode-chip"][data-mode="hierarchy"][data-active="true"]').count() === 0) {
+        await page.locator('[data-testid="atlas-graph-mode-chip"][data-mode="hierarchy"]').click();
+    }
+    await expand(page);
+    await wait(3000);
+    const twoLayers = await hierarchyLayout(page);
+    const count = await countText(page);
+    await shot(page, 'K5', 'hierarchy-two-layers', `${ROOT} at 2 layers in hierarchy, fitted (${count}): ${twoLayers.names} names, ${twoLayers.edgeLabels.length} edge labels shown, ${twoLayers.overlaps.length} overlaps`);
+    // Hineinzoomen auf die linken Spalten: dort werden die Namen lesbar, und erst dann stehen die Kantenschilder.
+    const box = await canvasBox(page);
+    await page.mouse.move(box.x + box.width * 0.42, box.y + box.height * 0.55);
+    for (let step = 0; step < 6; step += 1) { await page.mouse.wheel(0, -300); await wait(200); }
+    await wait(2000);
+    const zoomed = await hierarchyLayout(page);
+    await shot(page, 'K5', 'hierarchy-two-layers-zoomed', `Zoomed in at 2 layers: names read in full, ${zoomed.edgeLabels.length} edge labels on the lines in view, ${zoomed.overlaps.length} overlaps`);
+    await check('K5', 'At 2 layers (90 nodes) the hierarchy draws every name; edge labels wait until the names read and then sit clear of them',
+        /^90 nodes/.test(count) && twoLayers.names >= 85 && twoLayers.overlaps.length === 0 && twoLayers.truncated.length === 0
+        && zoomed.edgeLabels.length > 0 && zoomed.overlaps.length === 0 && /edge types at the lines/.test(twoLayers.hint),
+    { count, fitted: { names: twoLayers.names, edgeLabels: twoLayers.edgeLabels, overlaps: twoLayers.overlaps },
+        zoomed: { names: zoomed.names, edgeLabels: zoomed.edgeLabels, overlaps: zoomed.overlaps }, truncated: twoLayers.truncated, hint: twoLayers.hint });
 }
 
 /* ------------------------------------------------------------------ */

@@ -313,8 +313,11 @@ export const SCOPED_HIERARCHY_LEVEL_GAP = 160;
 export const SCOPED_HIERARCHY_ROW_GAP = 32;
 /** Texture width of a hierarchy name in a scope: about forty characters before an ellipsis. */
 export const SCOPED_HIERARCHY_LABEL_MAX_TEXT_WIDTH = 1600;
-/** Up to this many nodes every name is drawn, and columns stay single columns; above it they wrap into grids. */
-export const SCOPED_HIERARCHY_LABEL_BUDGET = 60;
+/**
+ * Up to this many nodes every name is drawn, and columns stay single columns; above it they wrap into grids,
+ * without names or edge labels. Sixty left JSONBAgg at two layers (90 nodes) without a single name (review of K5).
+ */
+export const SCOPED_HIERARCHY_LABEL_BUDGET = 150;
 const SCOPED_HIERARCHY_WRAP_AT = 12;
 const LABEL_UNITS_PER_CHAR = 7.1, LABEL_UNITS_PADDING = 12, LABEL_GUTTER = 40;
 const LABEL_MAX_CHARS = Math.floor((SCOPED_HIERARCHY_LABEL_MAX_TEXT_WIDTH - 64) / 38);

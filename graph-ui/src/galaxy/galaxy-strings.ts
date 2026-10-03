@@ -64,11 +64,14 @@ export const galaxyHistoryText = {
 
 /** The hierarchy of a Galaxy scope (hand test K5): what the columns mean, per trace direction. */
 export const galaxyHierarchyText = {
-    hint: (direction: 'both' | 'inbound' | 'outbound') => direction === 'inbound'
-        ? 'hierarchy: what reaches the root, one column per layer to the left; edge types at the lines'
+    /** With `namesUpTo` the scope is past the name budget: no names and no edge labels, and the hint says how to get them back. */
+    hint: (direction: 'both' | 'inbound' | 'outbound', namesUpTo?: number) => (direction === 'inbound'
+        ? 'hierarchy: what reaches the root, one column per layer to the left'
         : direction === 'outbound'
-            ? 'hierarchy: what the root reaches, one column per layer to the right; edge types at the lines'
-            : 'hierarchy: incoming relationships on the left, the root in the middle, outgoing on the right; one column per layer, edge types at the lines',
+            ? 'hierarchy: what the root reaches, one column per layer to the right'
+            : 'hierarchy: incoming relationships on the left, the root in the middle, outgoing on the right; one column per layer')
+        + (namesUpTo === undefined ? ', edge types at the lines'
+            : `; names and edge types show for up to ${namesUpTo.toLocaleString()} nodes, so remove a layer or trace fewer edge types to see them`),
 };
 
 const count = (value: number, one: string, many: string) => `${value.toLocaleString()} ${value === 1 ? one : many}`;
