@@ -13,6 +13,8 @@ export interface BrowserWorkerRequest {
     messages?: readonly BrowserChatMessage[];
     maxOutputTokens?: number;
     generationProfile?: BrowserChatOptions['generationProfile'];
+    /** Prepare from the browser cache only: no model download is allowed. */
+    cacheOnly?: boolean;
 }
 export interface BrowserWorkerResponse {
     id: number;
@@ -83,7 +85,7 @@ export function createBrowserChatRuntime(modelId: string = BROWSER_MODEL.id): Br
         }
     });
     return {
-        prepare: async progress => { await request({ kind: 'prepare' }, { progress }); },
+        prepare: async (progress, options) => { await request({ kind: 'prepare', ...options?.cacheOnly ? { cacheOnly: true } : {} }, { progress }); },
         countTokens: async messages => {
             const response = await request({ kind: 'count', messages });
             if (!Number.isSafeInteger(response.count) || response.count! < 0) throw new Error('The model returned an invalid token count.');

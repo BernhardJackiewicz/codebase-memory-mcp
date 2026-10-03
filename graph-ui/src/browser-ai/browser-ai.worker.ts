@@ -62,7 +62,7 @@ globalThis.fetch = async (input: RequestInfo | URL, options?: RequestInit): Prom
     return response;
 };
 
-async function prepare(id: number, modelId: string): Promise<void> {
+async function prepare(id: number, modelId: string, cacheOnly = false): Promise<void> {
     const next = getBrowserModel(modelId);
     if (next.availability !== 'available') throw new Error(next.compatibilityNote);
     if (model && tokenizer) {
@@ -99,7 +99,8 @@ async function prepare(id: number, modelId: string): Promise<void> {
             post({ id, kind: 'progress', progress: { file: update.file, loaded: update.loaded, total: update.total, progress: update.progress } });
         },
     };
-    downloadsAllowed = true;
+    // A resumed model loads from Cache Storage; a missing file fails instead of downloading.
+    downloadsAllowed = !cacheOnly;
     try {
         tokenizer = await AutoTokenizer.from_pretrained(selected.id, options);
         // CausalLM loads only decoder + embeddings for Qwen3.5; the policy excludes all vision files.
@@ -199,7 +200,7 @@ self.onmessage = async (event: MessageEvent<BrowserWorkerRequest>) => {
     activeId = id;
     try {
         if (kind === 'prepare') {
-            await prepare(id, event.data.modelId ?? BROWSER_MODEL.id);
+            await prepare(id, event.data.modelId ?? BROWSER_MODEL.id, event.data.cacheOnly === true);
             post({ id, kind: 'ready' });
         } else if (kind === 'count') {
             post({ id, kind: 'count', count: tokenize(messages ?? []).input_ids.dims.at(-1) });

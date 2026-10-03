@@ -21,7 +21,7 @@ describe('browser-local agent preferences', () => {
     it('restores a saved model, automatic flag and limits per model', () => {
         store({ modelId: second.id, automatic: false, limits: { [second.id]: { inputTokens: 4096, outputTokens: 256 } } });
         const restored = readAgentPreferences();
-        expect(restored).toEqual({ modelId: second.id, automatic: false, limits: { [second.id]: { inputTokens: 4096, outputTokens: 256 } } });
+        expect(restored).toEqual({ modelId: second.id, automatic: false, autoLoad: false, limits: { [second.id]: { inputTokens: 4096, outputTokens: 256 } } });
         expect(readAgentPreferences()).toBe(restored);
         expect(tokenLimitsFor(restored, second)).toEqual({ inputTokens: 4096, outputTokens: 256 });
         expect(tokenLimitsFor(restored, first)).toEqual(defaultTokenLimits(first));
@@ -42,13 +42,22 @@ describe('browser-local agent preferences', () => {
         expect(readAgentPreferences().limits).toEqual({ [second.id]: { inputTokens: 1024, outputTokens: 64 } });
     });
 
+    it('loads the chosen model on start only when asked to, off by default (K10)', () => {
+        expect(DEFAULT_AGENT_PREFERENCES.autoLoad).toBe(false);
+        store({ modelId: second.id, autoLoad: 'yes' });
+        expect(readAgentPreferences().autoLoad).toBe(false);
+        setAgentPreferences({ autoLoad: true });
+        expect(JSON.parse(window.localStorage.getItem(AGENT_PREFERENCES_KEY)!).preferences.autoLoad).toBe(true);
+        expect(readAgentPreferences()).toMatchObject({ modelId: second.id, autoLoad: true });
+    });
+
     it('saves a versioned record and clamps requested limits into the model policy', () => {
         const limits = clampTokenLimits(first, defaultTokenLimits(first), { inputTokens: 99_999, outputTokens: 1 });
         expect(limits).toEqual({ inputTokens: first.contextTokens - MIN_OUTPUT_TOKENS, outputTokens: MIN_OUTPUT_TOKENS });
         expect(clampTokenLimits(first, limits, { outputTokens: 512 })).toEqual({ inputTokens: first.contextTokens - 512, outputTokens: 512 });
         setAgentPreferences({ automatic: false, limits: { [first.id]: limits } });
         expect(JSON.parse(window.localStorage.getItem(AGENT_PREFERENCES_KEY)!)).toEqual({ version: 1,
-            preferences: { modelId: first.id, automatic: false, limits: { [first.id]: limits } } });
+            preferences: { modelId: first.id, automatic: false, autoLoad: false, limits: { [first.id]: limits } } });
         expect(readAgentPreferences()).toMatchObject({ automatic: false, limits: { [first.id]: limits } });
     });
 });

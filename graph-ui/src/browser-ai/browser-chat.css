@@ -43,7 +43,9 @@
 .cbm-chat-source-toggle { color: var(--chat-muted); font-size: 10px; font-weight: 400; }
 .cbm-chat-response-source > summary:hover .cbm-chat-source-toggle { color: #d0e8d8; }
 .cbm-chat-source-content { margin: 7px 0 10px; padding: 8px; max-height: 260px; overflow: auto; background: #0b1510; border: 1px solid var(--chat-border); border-radius: 6px; }
-.cbm-chat-source-content pre { margin: 4px 0 8px; max-height: 200px; overflow: auto; white-space: pre; font: 11px/1.6 ui-monospace, SFMono-Regular, monospace; tab-size: 4; }
+/* The panel is narrow and macOS hides scrollbars: long facts and paths wrap instead of ending at the edge. */
+.cbm-chat-source-content pre { margin: 4px 0 8px; max-height: 200px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.6 ui-monospace, SFMono-Regular, monospace; tab-size: 4; }
+.cbm-chat-source-content .cbm-chat-attachment pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .cbm-chat-source-content small { display: block; color: var(--chat-muted); font: 10px/1.5 ui-monospace, SFMono-Regular, monospace; overflow-wrap: anywhere; }
 .cbm-chat-source-content .cbm-chat-attachment:first-child { margin-top: 0; }
 .cbm-chat-answer { padding: 15px 0 0; }
@@ -52,6 +54,7 @@
 .cbm-chat-answer .cbm-chat-source-content small { color: var(--chat-muted); margin-top: 0; }
 .cbm-chat-turn-error { color: #ffb6bd; padding: 7px 0; }
 .cbm-chat-dock .cbm-chat-retry { margin-top: 10px; padding: 3px 8px; font-size: 11px; color: var(--chat-muted); background: transparent; }
+.cbm-chat-dock .cbm-chat-retry + .cbm-chat-retry { margin-left: 6px; }
 .cbm-chat-attachment { min-width: 0; border: 1px solid #36564b; border-radius: 6px; margin-top: 8px; background: #0c1a15; }
 .cbm-chat-attachment summary { cursor: pointer; color: #98d4d2; padding: 7px 9px; font: 11px/1.5 ui-monospace, SFMono-Regular, monospace; overflow-wrap: anywhere; }
 .cbm-chat-attachment pre { margin: 0; padding: 9px; border-top: 1px solid #284338; white-space: pre; max-height: 200px; overflow: auto; font: 11px/1.65 ui-monospace, SFMono-Regular, monospace; color: #d0e8d8; tab-size: 4; }
@@ -68,8 +71,6 @@
 .cbm-chat-composer textarea { display: block; flex: 1 1 auto; width: 100%; min-width: 0; resize: none; min-height: 32px; max-height: 104px; overflow-y: auto; border: 0; border-radius: 5px; color: #e8f2ed; background: transparent; padding: 6px 8px; line-height: 1.5; }
 .cbm-chat-composer textarea::placeholder { color: #789587; }
 .cbm-chat-dock .cbm-chat-send { flex: 0 0 32px; width: 32px; height: 32px; padding: 0; border-radius: 6px; font-size: 18px; line-height: 1; }
-.cbm-chat-compose-actions { display: flex; justify-content: flex-end; align-items: center; margin-top: 2px; }
-.cbm-chat-dock .cbm-chat-clear { border-color: transparent; background: transparent; color: var(--chat-muted); padding: 2px 0; font-size: 10px; }
 .cbm-chat-context { color: #789587; font-size: 10px; margin-top: 10px !important; }
 .cbm-chat-context-options { margin-bottom: 9px; color: var(--chat-muted); font-size: 11px; }
 .cbm-chat-context-options summary { cursor: pointer; }
@@ -118,3 +119,12 @@
 .cbm-chat-evidence-note { font-size: 11px; color: var(--chat-muted); margin: 8px 0 !important; }
 .cbm-chat-evidence-excerpt { max-height: 150px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px; border: 1px solid var(--chat-border); border-radius: 6px; font-size: 11px; }
 .cbm-chat-dock .cbm-chat-answer-note { display: block; margin-top: 7px; color: #d6bf81; font-size: 11px; overflow-wrap: anywhere; }
+.cbm-chat-limit-note { margin-top: 7px; font-size: 11px; color: var(--chat-muted); overflow-wrap: anywhere; }
+.cbm-chat-limit-note > summary { width: fit-content; color: #d6bf81; cursor: pointer; }
+.cbm-chat-limit-note > p { margin: 6px 0 !important; }
+.cbm-chat-limit-note > ul { margin: 4px 0 0; padding-left: 18px; }
+.cbm-chat-dock .cbm-chat-limit-note > button { margin: 2px 0 4px; padding: 3px 8px; font-size: 11px; }
+.cbm-chat-header h2 { margin-right: auto !important; }
+.cbm-chat-dock .cbm-chat-new { padding: 4px 9px; font-size: 11px; color: #d0e8d8; }
+.cbm-chat-topic-break { display: flex; align-items: center; gap: 8px; margin: 0 0 10px !important; color: var(--chat-muted); font-size: 10px; }
+.cbm-chat-topic-break::before, .cbm-chat-topic-break::after { content: ""; flex: 1 1 16px; border-top: 1px solid var(--chat-border); }

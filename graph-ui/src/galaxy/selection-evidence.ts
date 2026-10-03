@@ -133,9 +133,44 @@ export function galaxyScopeEvidence(scope: GalaxyScope): SelectionEvidence {
             interpretation: 'Static indexed relationships, not runtime activity. Scope completeness is relative to the indexed graph and selected depth/types.' } };
 }
 
+type Row = Record<string, unknown>;
+const row = (value: unknown): Row | undefined => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Row : undefined;
+/** Identity and location of a symbol; documentation, status and counts stay with the view. */
+function symbolIdentity(value: unknown, located = true): unknown {
+    const node = row(value);
+    if (!node) return value;
+    const { name, kind, label, qualifiedName, qualified_name, filePath, file_path, startLine, start_line, endLine, end_line } = node;
+    return located ? { name, kind: kind ?? label, qualifiedName: qualifiedName ?? qualified_name, filePath: filePath ?? file_path, startLine: startLine ?? start_line, endLine: endLine ?? end_line }
+        : { name, kind: kind ?? label };
+}
+const ARCHITECTURE_CONNECTIONS = 12;
+/** An Architecture area carries 24 documented members and 24 connections with 24 examples
+ * each. Bounded as they come, the members' documentation used the whole snapshot and the
+ * connections were cut. The strongest connections stay, each with one example; members
+ * keep their names (a single member, a symbol, also its location). */
+function compactArchitecture(evidence: SelectionEvidence): SelectionEvidence {
+    const selected = row(evidence.selected), relationships = row(evidence.relationships);
+    const list = Array.isArray(selected?.members) ? selected.members : undefined;
+    const members = list ? { members: list.map(member => symbolIdentity(member, list.length === 1)) } : {};
+    const all = Array.isArray(relationships?.items) ? relationships.items : undefined;
+    const strength = (item: unknown) => { const total = row(item)?.count; return typeof total === 'number' ? total : 0; };
+    const items = all ? { items: [...all].sort((left, right) => strength(right) - strength(left)).slice(0, ARCHITECTURE_CONNECTIONS).map(item => {
+        const edge = row(item);
+        if (!edge || !Array.isArray(edge.evidence)) return item;
+        const examples = edge.evidence.slice(0, 1).map(example => {
+            const pair = row(example), source = row(pair?.source), target = row(pair?.target);
+            return pair ? { line: pair.line, source: { name: source?.name, filePath: source?.filePath ?? source?.file_path }, target: { name: target?.name } } : example;
+        });
+        return { ...edge, evidence: examples, omittedEvidence: (typeof edge.omittedEvidence === 'number' ? edge.omittedEvidence : 0) + edge.evidence.length - examples.length };
+    }), omitted: (typeof relationships?.omitted === 'number' ? relationships.omitted : 0) + Math.max(0, all.length - ARCHITECTURE_CONNECTIONS) } : {};
+    return { ...evidence, selected: selected ? { ...selected, ...members } : evidence.selected, relationships: relationships ? { ...relationships, ...items } : evidence.relationships };
+}
+
 /** Bound every collection/string and the total snapshot; report each omission.
  * Stable content identity prevents camera changes from triggering explanations. */
-export function selectionEvidenceContext(evidence: SelectionEvidence): BrowserChatContext {
+export function selectionEvidenceContext(original: SelectionEvidence): BrowserChatContext {
+    const architecture = original.view.startsWith('architecture-');
+    const evidence = architecture ? compactArchitecture(original) : original;
     const omissions: { path: string; kind: string; count: number }[] = [];
     let budget = 16_000;
     const copy = (value: unknown, path: string, depth: number): unknown => {
@@ -166,11 +201,12 @@ export function selectionEvidenceContext(evidence: SelectionEvidence): BrowserCh
         if (processed < entries.length) omissions.push({ path, kind: 'fields', count: entries.length - processed });
         return result;
     };
-    // Keep provenance and limits ahead of potentially large member collections.
-    const snapshot = copy({ kind: 'current-selection-evidence', project: evidence.project, view: evidence.view,
-        source: evidence.source, generation: evidence.generation ?? 'unavailable',
-        limitations: evidence.limitations, scope: evidence.scope, selected: evidence.selected,
-        relationships: evidence.relationships }, '$', 0);
+    // Keep provenance and limits ahead of potentially large member collections. In
+    // Architecture the connections of a part say more than the members listed with it.
+    const head = { kind: 'current-selection-evidence', project: evidence.project, view: evidence.view,
+        source: evidence.source, generation: evidence.generation ?? 'unavailable', limitations: evidence.limitations, scope: evidence.scope };
+    const snapshot = copy(architecture ? { ...head, relationships: evidence.relationships, selected: evidence.selected }
+        : { ...head, selected: evidence.selected, relationships: evidence.relationships }, '$', 0);
     const text = JSON.stringify({ evidence: snapshot, omissions });
     let hash = 2166136261;
     for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);

@@ -106,7 +106,8 @@ describe('bounded explanation evidence', () => {
     ])('retains factual selected fields for %s without view-specific purpose claims', (view, selected, identity) => {
         const prepared = prepareExplanationContext(undefined, graph(selected, undefined, { view }));
         expect(outputText(prepared)).toContain(identity);
-        expect(outputText(prepared)).toContain(view);
+        // Readable sentences, not field paths such as "Snapshot.view" (K7).
+        expect(outputText(prepared)).not.toMatch(/Snapshot\.|Selected\./);
         expect(prepared.fallback).not.toMatch(/responsible for|runs|executes/);
     });
 

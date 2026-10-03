@@ -10,12 +10,14 @@ export interface TokenLimits { inputTokens: number; outputTokens: number }
 export interface AgentPreferences {
     modelId: string;
     automatic: boolean;
+    /** Load the chosen model on start when its files are cached; off unless chosen (K10). */
+    autoLoad: boolean;
     /** Only models whose limits were changed; every other model uses its defaults. */
     limits: Readonly<Record<string, TokenLimits>>;
 }
 
 const AVAILABLE = BROWSER_MODELS.filter(model => model.availability === 'available');
-export const DEFAULT_AGENT_PREFERENCES: Readonly<AgentPreferences> = Object.freeze({ modelId: AVAILABLE[0].id, automatic: true, limits: Object.freeze({}) });
+export const DEFAULT_AGENT_PREFERENCES: Readonly<AgentPreferences> = Object.freeze({ modelId: AVAILABLE[0].id, automatic: true, autoLoad: false, limits: Object.freeze({}) });
 export const AGENT_PREFERENCES_KEY = 'cbm-agent-preferences-v1';
 const CHANGE = 'cbm-agent-preferences-change';
 
@@ -57,6 +59,7 @@ function validated(value: unknown): Readonly<AgentPreferences> {
     return Object.freeze({
         modelId: BROWSER_MODELS.some(model => model.id === row.modelId) ? row.modelId as string : DEFAULT_AGENT_PREFERENCES.modelId,
         automatic: typeof row.automatic === 'boolean' ? row.automatic : DEFAULT_AGENT_PREFERENCES.automatic,
+        autoLoad: typeof row.autoLoad === 'boolean' ? row.autoLoad : DEFAULT_AGENT_PREFERENCES.autoLoad,
         limits: Object.freeze(limits),
     });
 }
@@ -94,7 +97,7 @@ export function setAgentPreferences(update: Partial<AgentPreferences> | ((curren
     window.dispatchEvent(new CustomEvent(CHANGE));
 }
 
-/** Browser-local: the chosen model, automatic explanations and token limits per model. */
+/** Browser-local: the chosen model, automatic explanations, loading on start and token limits per model. */
 export function useAgentPreferences(): { preferences: Readonly<AgentPreferences>; setPreferences: typeof setAgentPreferences } {
     const subscribe = useCallback((listener: () => void) => {
         const stored = (event: StorageEvent) => { if (event.key === null || event.key === AGENT_PREFERENCES_KEY) listener(); };

@@ -137,6 +137,15 @@ describe('browser-local chat history', () => {
         expect((await cache.load(key))?.turns).toEqual(turns);
     });
 
+    it('keeps the graph evidence a listed answer was listed from, and rejects a damaged one (K14)', async () => {
+        const { cache } = setup();
+        const listedFrom = { id: 'galaxy', label: 'JSONBAgg', text: '{"kind":"galaxy-scope-evidence"}' };
+        const turns = [{ ...turn(), answeredFrom: 'graph' as const, listedFrom }];
+        await cache.save(key, { turns });
+        expect((await cache.load(key))?.turns).toEqual(turns);
+        await expect(cache.save(key, { turns: [{ ...turn(), listedFrom: { id: 'galaxy', label: 'JSONBAgg', text: 42 } } as unknown as BrowserChatTurn] })).rejects.toThrow('invalid snapshot');
+    });
+
     it('rejects failed reads, saves and deletes so callers can retain in-memory state', async () => {
         const { cache, storage } = setup();
         await cache.save(key, { turns: [turn()] });

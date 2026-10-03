@@ -135,6 +135,16 @@ describe('browser chat worker boundary', () => {
         runtime.dispose();
     });
 
+    it('asks the worker for a cache-only load when told to (K10, K24)', async () => {
+        const runtime = createBrowserChatRuntime();
+        const worker = WorkerStub.instances[0];
+        const preparing = runtime.prepare(vi.fn(), { cacheOnly: true });
+        expect(worker.last()).toEqual({ id: 1, kind: 'prepare', modelId: BROWSER_MODELS[0].id, cacheOnly: true });
+        worker.send({ id: 1, kind: 'ready' });
+        await preparing;
+        runtime.dispose();
+    });
+
     it('streams only the active request, preserves exact content, and counts via the worker', async () => {
         const runtime = createBrowserChatRuntime(); const worker = WorkerStub.instances[0];
         const messages = [{ role: 'user' as const, content: '\t' + 'x'.repeat(7000) + '\r\n  ' }];

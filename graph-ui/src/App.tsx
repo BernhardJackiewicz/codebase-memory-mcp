@@ -130,6 +130,7 @@ import { resolveRepositorySelection, useRepositorySnapshot } from './architectur
 import ActivityPanel from './agents/ActivityPanel';
 import WelcomePanel from './app/WelcomePanel';
 import BrowserChatDock from './browser-ai/BrowserChatDock';
+import { requestAgentResume } from './browser-ai/agent-resume';
 import { browserChatHistoryProjectKey } from './browser-ai/chat-history-cache';
 import type { BrowserChatAttachment } from './browser-ai/BrowserChatDock';
 import { browserGraphContext } from './browser-ai/graph-context';
@@ -822,7 +823,10 @@ export default function App(): JSX.Element {
         }),
         [client, api],
     );
+    // Opening a project reloads the page; a loaded agent comes back from the cache (K24).
+    const agentStateRef = useRef(localAgentState); agentStateRef.current = localAgentState;
     const openProject = useCallback((name: string) => {
+        if (agentStateRef.current === 'active' || agentStateRef.current === 'busy' || agentStateRef.current === 'loading') requestAgentResume();
         window.location.assign(projectHref(name));
     }, []);
 
@@ -4771,6 +4775,9 @@ export default function App(): JSX.Element {
             ir: matchingInspectorIr(liveCode.ir, symbol, project, activePath), selection }, crypto.randomUUID()));
         setBrowserAiOpen(true);
     };
+    // The chat grounds explanations in the selected symbol's source, read like "Read source evidence" (K14).
+    const readSymbolSource = useCallback((qualifiedName: string, window: { maxLines: number }) =>
+        client.getCodeSnippet(project, qualifiedName, window), [client, project]);
     const clearAttachment = (id: string): void => {
         setChatAttachment(current => current?.id === id ? undefined : current);
     };
@@ -4797,7 +4804,7 @@ export default function App(): JSX.Element {
                 readerContext={workspace === 'explore' ? currentReaderContext : undefined}
                 pendingContext={chatGraphSelection} onContextConsumed={clearChatGraphSelection} onContextRemoved={clearChatGraphSelection}
                 context={browserGraphContext(inspector.ir, project, inspector.filePath, inspector.symbol ? workspacePathOf(inspector.symbol.uri) : '')}
-                attachment={chatAttachment} onAttachmentConsumed={clearAttachment} onAttachmentRemoved={clearAttachment} />}
+                attachment={chatAttachment} onAttachmentConsumed={clearAttachment} onAttachmentRemoved={clearAttachment} readSource={readSymbolSource} />}
             readerActions={<>
                 <button type="button" disabled={!liveSelection} aria-keyshortcuts="Control+Shift+L Meta+Shift+L"
                     onClick={() => { if (liveSelection) attachSelection(liveSelection); }}>{workspaceText.askSelection}</button>
