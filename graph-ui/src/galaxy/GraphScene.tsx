@@ -103,6 +103,10 @@
  *     Knoten (`PathFrame`, Rechnung in src/galaxy/path-frame.ts), mit Rand und
  *     neben der Schrittliste. Die Knoten des Pfades bekommen ihren Namen von der
  *     Pfadebene; die Namensebene der Szene zeichnet fuer sie keinen zweiten.
+ * 20. Neu (Handtest K12): die Namen der Wurzelmarken suchen sich freie Plaetze
+ *     um ihre Ringe (src/galaxy/marker-names.ts), statt bei mehreren Wurzeln
+ *     aufeinander zu liegen; ein Name ohne freien Platz wird ausgeblendet. Eine
+ *     einzelne Wurzel behaelt ihren Namen unter dem Ring.
  */
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -119,6 +123,7 @@ import { NodeLabels } from './NodeLabels';
 import { ScreenNodeSeparation } from './ScreenNodeSeparation';
 import { PathLayer, pathNodeIds, type ScenePath } from './PathLayer';
 import { pathFrame } from './path-frame';
+import { markerNameRect, placeMarkerNames, type MarkerName } from './marker-names';
 import type { LabelBox } from './NodeLabels';
 import { FRAME_MIN_DISTANCE, containShift, fitCamera, flatBounds, frameDistance, orthographicZoom } from './camera-frame';
 import type { CameraFit, FrameBox } from './camera-frame';
@@ -427,12 +432,61 @@ export function FitContainment({
  */
 export const ROOT_MARKER_LIMIT = 12;
 
-function RootMarkers({ nodes }: { nodes: readonly GraphNode[] }): JSX.Element {
+const PLACE_NAMES_EVERY_FRAMES = 3;
+
+/*
+ * Handtest K12: mehrere Wurzeln nah beieinander (die Definitionen einer Datei
+ * im Mini-Galaxy von Explore) legten ihre Namen aufeinander. Alle paar Bilder
+ * bekommt jeder Name einen freien Platz um seinen Ring (marker-names.ts); der
+ * Platz steht als `data-name-slot` an der Marke, ein Name ohne Platz ist
+ * `hidden`. Gemessen wird jeder Name einmal, wie die Schilder der Hierarchie.
+ */
+export function RootMarkers({ nodes }: { nodes: readonly GraphNode[] }): JSX.Element {
+    const markers = useRef(new Map<number, HTMLSpanElement>());
+    const sizes = useRef(new Map<string, { width: number; height: number }>());
+    const placedNames = useRef(new Map<number, string>());
+    const camera = useThree((state) => state.camera);
+    const gl = useThree((state) => state.gl);
+    const tick = useRef(0);
+    const point = useMemo(() => new THREE.Vector3(), []);
+    useFrame(() => {
+        tick.current = (tick.current + 1) % PLACE_NAMES_EVERY_FRAMES;
+        if (tick.current !== 0) return;
+        const box = gl.domElement.getBoundingClientRect();
+        const wanted: MarkerName[] = [];
+        for (const node of nodes) {
+            const name = markers.current.get(node.id)?.querySelector('b');
+            if (!name) continue;
+            let size = sizes.current.get(node.name);
+            if (!size && name.offsetWidth > 0) { size = { width: name.offsetWidth, height: name.offsetHeight }; sizes.current.set(node.name, size); }
+            if (!size) continue;
+            point.set(node.x, node.y, node.z).project(camera);
+            if (!(point.z >= -1 && point.z <= 1)) continue;
+            wanted.push({ id: node.id, x: box.left + ((point.x + 1) / 2) * box.width, y: box.top + ((1 - point.y) / 2) * box.height, ...size });
+        }
+        for (const { id, slot, rect } of placeMarkerNames(wanted, { left: box.left, top: box.top, right: box.right, bottom: box.bottom })) {
+            const marker = markers.current.get(id), name = marker?.querySelector('b');
+            if (!marker || !name) continue;
+            const anchor = wanted.find((entry) => entry.id === id)!;
+            // The name sits at its place relative to the ring centre, which is where drei puts the marker.
+            const offset = rect ? { left: Math.round(rect.left - anchor.x), top: Math.round(rect.top - anchor.y) } : undefined;
+            const standard = rect ? markerNameRect(anchor, 'below') : undefined;
+            const plain = slot === 'below' && rect && standard && Math.abs(rect.left - standard.left) < 0.5;
+            const place = `${slot}:${offset?.left ?? ''}:${offset?.top ?? ''}`;
+            if (placedNames.current.get(id) === place) continue;
+            placedNames.current.set(id, place);
+            marker.dataset.nameSlot = slot;
+            name.style.visibility = slot === 'hidden' ? 'hidden' : '';
+            if (!offset || plain) { name.style.left = ''; name.style.top = ''; name.style.transform = ''; continue; }
+            name.style.left = `${offset.left}px`; name.style.top = `${offset.top}px`; name.style.transform = 'none';
+        }
+    });
     return (
         <>
             {nodes.map((node) => (
                 <Html key={node.id} position={[node.x, node.y, node.z]} zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
-                    <span className="atlas-galaxy-root-marker" data-testid="atlas-galaxy-root-marker" data-qn={node.qualified_name ?? node.name}>
+                    <span className="atlas-galaxy-root-marker" data-testid="atlas-galaxy-root-marker" data-qn={node.qualified_name ?? node.name}
+                        ref={(element) => { if (element) markers.current.set(node.id, element); else markers.current.delete(node.id); }}>
                         <i aria-hidden="true" />
                         <b>{node.name}</b>
                     </span>
