@@ -122,6 +122,17 @@ describe('behavior journeys', () => {
         // Every page draws its calls and the start beside them.
         expect(container.querySelectorAll('[data-node]')).toHaveLength(3);
     });
+    it('names a start operation that calls itself instead of counting it as a callee or claiming a filter', async () => {
+        const data = fixture();
+        const callees = Array.from({ length: 6 }, (_, index) => symbol(index + 20));
+        data.paths = [...callees.map((target, index) => ({ entrypoint_id: 1, nodes: [data.entrypoints[0], target], edges: [{ id: 500 + index, source_id: 1, target_id: target.id, type: 'CALLS' }] })),
+            { entrypoint_id: 1, nodes: [data.entrypoints[0], data.entrypoints[0]], edges: [{ id: 599, source_id: 1, target_id: 1, type: 'CALLS' }] }];
+        await render(data);
+        expect(container.querySelector('.behavior-navigation span')?.textContent).toBe('6 direct callees with returned evidence · also calls itself');
+        const pages = container.querySelector('[aria-label="Direct call pages"]')?.textContent ?? '';
+        expect(pages).toContain('Calls 1 to 4 of 6');
+        expect(pages).not.toContain('matching the filter');
+    });
     it('shows the operation the journey opened with in the Start field, not "Choose an operation"', async () => {
         // Without a requested entry the journey falls back to the first entry point (Django: main in manage.py-tpl).
         await render(fixture(), { entryId: undefined });

@@ -152,6 +152,18 @@ describe('focused Behavior journeys', () => {
         expect(result.choices.filter(choice => choice.direct)).toHaveLength(14);
     });
 
+    it('counts a start operation that calls itself apart from its callees, so the heading and the pages agree', () => {
+        const callees = Array.from({ length: 6 }, (_, index) => symbol(index + 2));
+        const data = projection({ behavior: behavior([symbol(1), ...callees], [...callees.map((target, index) => edge(300 + index, 1, target.id)), edge(399, 1, 1)]) });
+        const result = behaviorJourney(data);
+        // Six callees drawn beside the start, which is drawn once; the recursion is named, not counted as a seventh callee.
+        expect(result.counts.directChoices).toBe(6);
+        expect(result.counts.selfCalls).toBe(true);
+        expect(result.scene.nodes).toHaveLength(7);
+        expect(result.counts.omittedNodes).toBe(0);
+        expect(behaviorJourney(projection({ behavior: behavior([symbol(1), ...callees], callees.map((target, index) => edge(300 + index, 1, target.id))) })).counts.selfCalls).toBe(false);
+    });
+
     it('bounds a direct fan while reserving a real edge for every displayed callee', () => {
         const targets = Array.from({ length: 60 }, (_, index) => ({ ...symbol(index + 2), name: `target${String(index).padStart(2, '0')}` }));
         const edges = [...Array.from({ length: 130 }, (_, index) => edge(index, 1, 2)),

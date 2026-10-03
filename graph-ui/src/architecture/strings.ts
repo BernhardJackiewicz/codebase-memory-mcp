@@ -88,6 +88,8 @@ export const architectureText = {
         compareFailed: 'Could not read that project. Its index may be unavailable.',
     },
     showEndpoints: 'Show endpoints →',
+    /** Behavior: the callees of the start operation; a call to itself is named, not counted. */
+    directCallees: (count: number, selfCalls: boolean) => `${count.toLocaleString()} direct callees with returned evidence${selfCalls ? ' · also calls itself' : ''}`,
     /** Behavior: the page of direct calls, the same calls the "direct callees" count names. */
     callPage: (from: number, to: number, drawn: number, beyond: number, filtered: boolean) => `Calls ${from} to ${to} of ${drawn.toLocaleString()}${filtered ? ' matching the filter' : ''}${beyond ? ` · ${beyond.toLocaleString()} more beyond the display limit` : ''}`,
     openedArea: 'Opened area',
