@@ -425,7 +425,9 @@ async function chatChecks(page) {
         { composer, details, topAtSend, sendClickable }, [await shot(page, 'chat-offen')]);
     if (!modelReady) { check('C-Modell', 'Lokales Modell geladen', false, 'Modell nicht innerhalb von 15 min aktiv'); return; }
 
-    // C1: der Prompt der automatischen Erklaerung enthaelt Fakten, keine internen Schluessel.
+    // C1 (seit K7/K14): Die Fakten stehen fest gelistet in der Karte, das Modell bekommt nur den
+    // Quelltext und schreibt einen Satz. Geprueft: keine internen Schluessel im Prompt, Quelltext im
+    // Prompt, Fakten aus dem Index in der Karte.
     await page.waitForFunction(() => {
         const section = document.querySelector('.cbm-chat-explanation');
         return section && section.querySelector('.cbm-chat-retry') && !/Explaining selection|Preparing|Waiting for the complete scope/.test(section.textContent ?? '');
@@ -433,12 +435,15 @@ async function chatChecks(page) {
     const explanationImage = await shot(page, 'erklaerung');
     const sent = await page.evaluate(() => window.__probeWorker.slice());
     const autoPrompt = sent.filter((entry) => entry.kind === 'chat').map((entry) => entry.messages.map((m) => m.content).join('\n')).pop() ?? '';
-    const forbidden = ['Snapshot.', 'renderedNodes', 'renderedEdges', 'Snapshot.generation', '$.relationships', 'Upstream omissions', 'Selected.roots'].filter((key) => autoPrompt.includes(key));
+    const forbidden = ['Snapshot.', 'renderedNodes', 'renderedEdges', 'Snapshot.generation', '$.relationships', 'Upstream omissions', 'Selected.roots', '[graph-'].filter((key) => autoPrompt.includes(key));
     const truth = await incoming('JSONBAgg');
     const callers = [...new Set(truth.filter((row) => row.type === 'CALLS').map((row) => row.source))];
-    const namedInPrompt = callers.filter((name) => autoPrompt.includes(name));
-    check('C1', 'Prompt nennt Beziehungen als lesbare Fakten, ohne interne Feldnamen', autoPrompt.length > 0 && forbidden.length === 0 && namedInPrompt.length === callers.length,
-        { forbiddenFound: forbidden, callers: callers.length, callersInPrompt: namedInPrompt.length, workerMessages: sent.length, promptStart: autoPrompt.slice(0, 700) }, [explanationImage]);
+    const byType = truth.reduce((acc, row) => { acc[row.type] = (acc[row.type] ?? 0) + 1; return acc; }, {});
+    const card = await page.locator('.cbm-chat-explanation').innerText().catch(() => '');
+    const factsInCard = Object.entries(byType).every(([type, count]) => card.includes(`${type} ${count}`)) && card.includes(`Incoming relationships: ${truth.length}`);
+    const sourceInPrompt = autoPrompt.includes('class JSONBAgg(');
+    check('C1', 'Erklaerung: Fakten aus dem Index fest in der Karte, Prompt mit Quelltext und ohne interne Feldnamen', autoPrompt.length > 0 && forbidden.length === 0 && sourceInPrompt && factsInCard,
+        { forbiddenFound: forbidden, sourceInPrompt, factsInCard, truthByType: byType, callers: callers.length, cardStart: card.slice(0, 400), promptStart: autoPrompt.slice(0, 300) }, [explanationImage]);
     await writeFile(join(OUT, 'prompt-erklaerung.txt'), autoPrompt);
 
     // C2: "Who calls JSONBAgg?" nennt alle Aufrufer, ohne Wiederholung.
@@ -554,12 +559,16 @@ async function architectureChecks(page) {
     await view('routes').click();
     await wait(2500);
     const endpoints = page.getByRole('button', { name: 'Endpoints', exact: true });
-    if (await endpoints.count()) { await endpoints.click(); await wait(3000); }
+    if (await endpoints.count()) { await endpoints.click(); await wait(1000); }
+    const checkingText = await page.locator('label.spatial-gravity-toggle', { hasText: /Include test routes/ }).innerText().catch(() => '');
+    await page.waitForFunction(() => !/Reading indexed endpoint connections/.test(document.querySelector('.spatial-architecture')?.textContent ?? ''), null, { timeout: 60000 }).catch(() => {});
+    await wait(1500);
     const routesImage = await shot(page, 'routes-endpoints');
     const toggleText = await page.locator('label.spatial-gravity-toggle', { hasText: /Include test routes/ }).innerText().catch(() => '');
     const routeLabels = await labelOverlaps(page);
     check('A4', 'Endpoints gruppiert, Test-Routen standardmaessig ausgeblendet, Beschriftungen ohne Stapel',
-        /Include test routes/.test(toggleText) && routeLabels.overlaps <= 3, { toggle: toggleText, labels: routeLabels.labels, overlaps: routeLabels.overlaps, sample: routeLabels.sample }, [routesImage]);
+        /Include test routes \(\d[\d.,]* hidden\)/.test(toggleText) && !/\(1 hidden\)/.test(toggleText) && /checking|hidden/.test(checkingText) && routeLabels.overlaps <= 3,
+        { whileLoading: checkingText, toggle: toggleText, labels: routeLabels.labels, overlaps: routeLabels.overlaps, sample: routeLabels.sample }, [routesImage]);
 
     // Gegenprobe: dieses Repository behaelt seine Ansichten.
     await open(page, CONTROL, 'architecture');
