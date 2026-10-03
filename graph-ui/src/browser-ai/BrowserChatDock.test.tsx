@@ -912,6 +912,29 @@ describe('graph answers and answer limits', () => {
         expect(request[2].content).toContain('test_values_list');
     });
 
+    it('lists callers for a typo question and offers an uncertain one as a suggestion, without the model (K16)', async () => {
+        const { props, runtime } = fixture();
+        await render({ ...props, proactiveSelection: jsonbAggEvidence() }); await click('Download & load');
+        const last = () => [...container.querySelectorAll('.cbm-chat-turn')].at(-1)!;
+        await type('wer ruf jsonbagg auf'); await click('Send ↑');
+        expect(runtime.chat).not.toHaveBeenCalled();
+        expect(last().querySelector('.cbm-chat-answer-text')?.textContent).toContain('Aufrufer von JSONBAgg im geladenen Graphen');
+        await type('jsonbagg aufrufe?'); await click('Send ↑');
+        expect(runtime.chat).not.toHaveBeenCalled();
+        expect(last().querySelector('.cbm-chat-answer-text')?.textContent).toContain('Meintest du: Aufrufer von JSONBAgg?');
+        await click('Show the list');
+        expect(runtime.chat).not.toHaveBeenCalled();
+        expect(last().querySelector('.cbm-chat-answer-text')?.textContent).toContain('Aufrufer von JSONBAgg im geladenen Graphen');
+        for (const name of JSONB_AGG_CALLERS) expect(last().textContent).toContain(name);
+        await type('jsonbagg calls'); await click('Send ↑');
+        expect(last().querySelector('.cbm-chat-answer-text')?.textContent).toContain('Did you mean: what JSONBAgg calls?');
+        await click('Ask the model');
+        expect(runtime.chat).toHaveBeenCalledOnce();
+        const request = runtime.chat.mock.calls[0][0];
+        expect(request.at(-1)!.content).toContain('jsonbagg calls');
+        expect(request.some(message => message.content.includes('Meintest du'))).toBe(false);
+    });
+
     it('hands a listed answer to the model on request, with its evidence and without the list as history', async () => {
         const { props, runtime } = fixture();
         await render({ ...props, proactiveSelection: jsonbAggEvidence() }); await click('Download & load');

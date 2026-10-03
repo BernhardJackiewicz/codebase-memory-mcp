@@ -6,9 +6,9 @@ import { buildChatMessages, selectionLocation, snapshotAttachment, snapshotReade
 import { explanationInput, EXPLANATION_DELAY_MS, type ExplanationInput } from './proactive-selection';
 import { prepareExplanationContext, type PreparedExplanationContext } from './explanation-context';
 import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, citedInterpretation, parseExplanationResponse, explanationMessages, formatExplanationEvidence } from './explanation-response';
-import { relationshipAnswer } from './relationship-answer';
+import { relationshipAnswer, relationshipSuggestion } from './relationship-answer';
 import { clampTokenLimits, tokenLimitBounds, tokenLimitsFor, useAgentPreferences, type TokenLimits } from './agent-preferences';
-import { browserChatText } from './strings';
+import { browserChatText, relationshipWords } from './strings';
 import { isGpuRuntimeFailure, BrowserRuntimeFatalError } from './runtime-fault';
 import ChatMarkdown from './ChatMarkdown';
 import AgentSettingsDialog from './AgentSettingsDialog';
@@ -406,8 +406,8 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const nextContext = selectedGraph ? [...selectedContext.filter(item => item.id !== selectedGraph.id), selectedGraph] : selectedContext;
         const extra = (retry ? retry.context ?? [] : nextContext).map(item => ({ ...item }));
         let packet = retry?.evidence;
-        // A listed answer asked again goes to the model: the same question and evidence in a fresh request.
-        const ask = retry?.answeredFrom === 'graph';
+        // A listed answer or a suggestion asked again goes to the model: the same question and evidence in a fresh request.
+        const ask = retry?.answeredFrom === 'graph' || retry?.answeredFrom === 'suggestion';
         const currentGraph = !retry && !reader && proactiveSelection ? [{ ...proactiveSelection }] : [];
         const consume = (): void => {
             setDraft(previous => previous === prompt ? '' : previous);
@@ -422,6 +422,15 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, context: extra,
                 evidence: prepareExplanationContext(undefined, listed.context, chatEvidence), modelId: model.id, request: [],
                 answer: listed.markdown, status: 'complete', answeredFrom: 'graph' }]);
+            consume();
+            return;
+        }
+        // Sounds like callers or callees but is not certain: offer the list, do not guess with the model.
+        const suggested = !retry && !source ? relationshipSuggestion(prompt, [...currentGraph, ...extra]) : undefined;
+        if (suggested) {
+            setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, context: extra,
+                evidence: prepareExplanationContext(undefined, suggested.context, chatEvidence), modelId: model.id, request: [],
+                answer: suggested.markdown, status: 'complete', answeredFrom: 'suggestion', suggestion: { question: suggested.question, context: suggested.context } }]);
             consume();
             return;
         }
@@ -495,6 +504,13 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             if (operationSettled.current === settled) operationSettled.current = undefined;
             settle();
         }
+    };
+    /** The suggested list replaces the suggestion; the question stays as typed. */
+    const showSuggestedList = (turn: ChatTurn): void => {
+        const listed = turn.suggestion && relationshipAnswer(turn.suggestion.question, [turn.suggestion.context]);
+        if (!listed) return;
+        setTurns(previous => previous.map(item => item.id === turn.id ? { ...item, answer: listed.markdown, answeredFrom: 'graph', suggestion: undefined,
+            evidence: prepareExplanationContext(undefined, listed.context, chatEvidence) } : item));
     };
     const deleteCache = async (): Promise<void> => {
         if (pending.current) return;
@@ -599,9 +615,11 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                     </> : null}
                 </SourceDisclosure><div className="cbm-chat-answer-text"><ChatMarkdown text={turn.answer || (turn.status === 'generating' ? 'Thinking…' : turn.status === 'stopped' ? 'Stopped before an answer.' : '')} /></div>
                     {turn.status === 'stopped' && turn.answer && <small>Stopped · partial answer</small>}
-                    {turn.status !== 'generating' && turn.answeredFrom !== 'graph' && <AnswerNotes shortened={limitNote(turn.shortened, turn.limit)} packet={turn.evidence} model={BROWSER_MODELS.find(candidate => candidate.id === turn.modelId)?.displayName ?? turn.modelId} historyOmitted={turn.historyOmitted} />}
+                    {turn.status !== 'generating' && !turn.answeredFrom && <AnswerNotes shortened={limitNote(turn.shortened, turn.limit)} packet={turn.evidence} model={BROWSER_MODELS.find(candidate => candidate.id === turn.modelId)?.displayName ?? turn.modelId} historyOmitted={turn.historyOmitted} />}
                     {turn.status === 'error' && <p className="cbm-chat-turn-error" role="alert">{turn.error}</p>}
-                    {index === turns.length - 1 && turn.status !== 'generating' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { void send(turn); }}>{turn.answeredFrom === 'graph' ? browserChatText.askModel : 'Retry'}</button>}
+                    {index === turns.length - 1 && turn.answeredFrom === 'suggestion' && turn.suggestion && <button type="button" className="cbm-chat-retry"
+                        onClick={() => showSuggestedList(turn)}>{relationshipWords.en.showList}</button>}
+                    {index === turns.length - 1 && turn.status !== 'generating' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { void send(turn); }}>{turn.answeredFrom ? browserChatText.askModel : 'Retry'}</button>}
                 </div>
             </article>)}
         </div>}
