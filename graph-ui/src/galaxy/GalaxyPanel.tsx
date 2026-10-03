@@ -1946,10 +1946,11 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         setTrailStep(0);
         setBackgroundCleared(false);
         setNote('');
-        // A symbol scope reports its root itself once it is complete (see `notifiedScopedSymbol`).
-        if (entry.scope) selectOnComplete.current = entry.scope.kind === 'symbol' ? undefined : scopeIdentity(entry.scope);
+        // A symbol scope reports its root itself once it is complete (see `notifiedScopedSymbol`); the same root stays selected.
+        const sameRoot = entry.scope && scope.scope && scopeIdentity(entry.scope) === scopeIdentity(scope.scope);
+        if (entry.scope && !sameRoot) selectOnComplete.current = entry.scope.kind === 'symbol' ? undefined : scopeIdentity(entry.scope);
         else { setHighlighted(null); props.onClearSelection?.(); }
-    }, [scope.restore, changeTraceTypes, project, props.onClearSelection]);
+    }, [scope.restore, scope.scope, changeTraceTypes, project, props.onClearSelection]);
     const historyBack = peekNavigation(history, -1);
     const historyForward = peekNavigation(history, 1);
     const goHistory = useCallback((step: -1 | 1) => {
@@ -2028,6 +2029,17 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     const groupsText = groupCount > 1 ? galaxyToolbarText.groupsTitle(groupCount) : undefined;
     const outsideLimits = props.workspaceExpanded && data && shown && (shown.nodes.length < data.nodes.length || shown.edges.length < data.edges.length)
         ? galaxyToolbarText.outsideLimits(data.nodes.length - shown.nodes.length, data.edges.length - shown.edges.length) : undefined;
+
+    /*
+     * "−" waehrend des Ladens ist ein Abbruch (K8), und ein Abbruch ist ein
+     * Schritt zurueck und kein neuer: steht die vorige Ebene direkt davor im
+     * Verlauf, geht es dorthin, und Vor laedt die abgebrochene Ebene wieder.
+     */
+    const cancelOrRemoveLayer = () => {
+        const previous = historyEntry && { ...historyEntry, depth: scope.depth - 1 };
+        if (scope.loading && previous && historyBack && galaxyHistoryOptions.key(historyBack) === galaxyHistoryOptions.key(previous)) goHistory(-1);
+        else scope.setDepth(scope.depth - 1);
+    };
 
     /* Was die Leiste ueber das Laden der Ebenen sagt (Handtest K8). */
     const partial = scope.complete ? scope.result?.partial : undefined;
@@ -2556,7 +2568,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                       */}
                     <button type="button" disabled={scope.depth <= scope.minDepth}
                         title={scope.loading ? galaxyLayerText.cancelLoading(scope.depth) : galaxyLayerText.removeLayer}
-                        onClick={() => scope.setDepth(scope.depth - 1)} aria-label="Remove graph layer">−</button>
+                        onClick={cancelOrRemoveLayer} aria-label="Remove graph layer">−</button>
                     <span>{scope.depth} {scope.depth === 1 ? 'layer' : 'layers'}</span>
                     <button type="button" disabled={scope.loading || scope.result?.exhausted || Boolean(scope.result?.partial)}
                         data-warning={expandWarning || undefined} title={expandTitle}

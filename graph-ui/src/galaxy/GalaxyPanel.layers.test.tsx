@@ -70,6 +70,10 @@ it('K8: shows loaded nodes and edges while a layer loads, and "−" cancels back
     await settle(() => expect(status()?.textContent).toBe('3 nodes · 2 edges'));
     await act(async () => { release(); });
     await settle(() => expect(status()?.textContent).toBe('3 nodes · 2 edges'));
+    // A cancelled layer is a step back, not a new step: Forward retries it, and the history holds no duplicate.
+    expect(seam().history.entries).toEqual(['All graph', 'n1 · 1 layer', 'n1 · 2 layers']);
+    expect(seam().history.index).toBe(1);
+    expect(host.querySelector<HTMLButtonElement>('button[aria-label="Forward"]')?.title).toBe('Forward to n1 · 2 layers (Alt+Right)');
 });
 
 it('K8: a layer past the render limit stops there, says it is partial and cannot be expanded further', async () => {
