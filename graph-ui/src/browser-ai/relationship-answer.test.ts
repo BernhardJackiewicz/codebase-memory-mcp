@@ -211,3 +211,95 @@ describe('tolerant caller and callee questions (K16)', () => {
         expect(relationshipSuggestion('BaseCommand aufrufe', [jsonbAggEvidence()])).toBeUndefined();
     });
 });
+
+describe('caller questions with a misspelled selection or a free word order (K16)', () => {
+    const evidence = () => [jsonbAggEvidence()];
+    const listedAnswer = (prompt: string) => relationshipAnswer(prompt, evidence())?.markdown ?? '';
+
+    // The order of the words is free in German: "wo" asks where, it is never the subject.
+    it.each([
+        ['jsonbagg wird wo aufgerufen', 'de'],
+        ['jsonbagg wird wo aufgerufen?', 'de'],
+        ['JSONBAgg wird wo überall aufgerufen', 'de'],
+        ['wo wird jsonbagg aufgerufen', 'de'],
+        ['wo wird jsonbagg überall aufgerufen?', 'de'],
+        ['wo überall wird jsonbagg aufgerufen', 'de'],
+        ['von wo wird jsonbagg aufgerufen', 'de'],
+        ['von wo aus wird jsonbagg aufgerufen', 'de'],
+        ['woher wird jsonbagg aufgerufen', 'de'],
+        ['jsonbagg wird von wo aufgerufen', 'de'],
+        ['jsonbagg wird von wem aufgerufen', 'de'],
+        ['jsonbagg wird aufgerufen von wem?', 'de'],
+        ['wird jsonbagg irgendwo aufgerufen', 'de'],
+        ['wer ruft jsonbagg auf', 'de'],
+        ['Wer ruft JSONBAgg eigentlich auf?', 'de'],
+        ['welche tests rufen jsonbagg auf', 'de'],
+        ['aufrufer von jsonbagg?', 'de'],
+        ['where is jsonbagg called', 'en'],
+        ['where is jsonbagg called from?', 'en'],
+        ['jsonbagg is called by whom?', 'en'],
+        ['jsonbagg is called from where', 'en'],
+        ['who calls jsonbagg', 'en'],
+        ['what calls jsonbagg?', 'en'],
+        ['callers of jsonbagg', 'en'],
+        ['list the callers of JSONBAgg', 'en'],
+        ['who uses jsonbagg', 'en'],
+    ] as const)('lists the callers for %s', (prompt, language) => {
+        const question = relationshipQuestion(prompt);
+        expect(question?.sides).toEqual(['incoming']);
+        expect(question?.language).toBe(language);
+        expect(question?.subject?.toLowerCase()).not.toMatch(/^(?:wo|woher|irgendwo|überall|where|whom)$/);
+        expect(listedAnswer(prompt)).toContain(language === 'de' ? 'Aufrufer von `JSONBAgg` im geladenen Graphen' : 'Callers of `JSONBAgg` in the loaded graph');
+    });
+
+    // A typo in the selected name, up to two edits and in any case: never straight to the model.
+    it.each([
+        ['wer ruft JSONBAg auf', 'de', 'incoming'],
+        ['wer ruft jsonbgg auf?', 'de', 'incoming'],
+        ['wer ruft jsnbagg auf', 'de', 'incoming'],
+        ['wer ruft JSONBAGG auf', 'de', 'listed'],
+        ['wer ruft jsonbaggg auf', 'de', 'incoming'],
+        ['wer ruft jsonbga auf', 'de', 'incoming'],
+        ['wer ruft jsonag auf', 'de', 'incoming'],
+        ['wo wird jsonbag aufgerufen', 'de', 'incoming'],
+        ['jsonbag wird wo aufgerufen', 'de', 'incoming'],
+        ['von wem wird jsnbagg aufgerufen', 'de', 'incoming'],
+        ['aufrufer von jsonbgg', 'de', 'incoming'],
+        ['was ruft jsonbgg auf', 'de', 'outgoing'],
+        ['who calls jsonbag', 'en', 'incoming'],
+        ['callers of jsonbag', 'en', 'incoming'],
+        ['who calls JSONBAg?', 'en', 'incoming'],
+        ['Who calls jsonbagh', 'en', 'incoming'],
+        ['where is jsonbgg called', 'en', 'incoming'],
+        ['what does jsonbag call?', 'en', 'outgoing'],
+        ['callees of jsonbga', 'en', 'outgoing'],
+        ['jsonbag aufrufe?', 'de', 'incoming'],
+        ['jsonbgg calls', 'en', 'outgoing'],
+    ] as const)('answers or suggests the selection for %s', (prompt, language, expected) => {
+        const listed = relationshipAnswer(prompt, evidence());
+        const suggestion = relationshipSuggestion(prompt, evidence());
+        if (expected === 'listed') {
+            expect(listed?.markdown).toContain(language === 'de' ? 'Aufrufer von `JSONBAgg`' : 'Callers of `JSONBAgg`');
+            return;
+        }
+        expect(listed).toBeUndefined();
+        expect(suggestion?.language).toBe(language);
+        expect(suggestion?.markdown).toContain(language === 'de'
+            ? expected === 'incoming' ? 'Meintest du: Aufrufer von `JSONBAgg`?' : 'Meintest du: von `JSONBAgg` aufgerufene Symbole?'
+            : expected === 'incoming' ? 'Did you mean: callers of `JSONBAgg`?' : 'Did you mean: what `JSONBAgg` calls?');
+        // The uncertain part is the name, and the reply says so.
+        if (relationshipQuestion(prompt)) expect(suggestion?.markdown).toContain(language === 'de' ? 'ist nicht genau der Name der Auswahl' : 'is not exactly the name of the selection');
+        // The suggested question lists the selection when chosen.
+        expect(relationshipAnswer(suggestion!.question, evidence())?.markdown).toContain(expected === 'incoming'
+            ? language === 'de' ? 'Aufrufer von `JSONBAgg` im geladenen Graphen' : 'Callers of `JSONBAgg` in the loaded graph'
+            : language === 'de' ? 'Von `JSONBAgg` aufgerufen' : 'Called by `JSONBAgg`');
+    });
+
+    it.each([
+        'who calls jsonb', 'wer ruft json auf', 'who calls Aggregate', 'who calls OrderableAggMixin', 'Wer ruft BaseCommand auf?',
+        'who calls test_jsonb_agg', 'wo wird BaseCommand aufgerufen', 'BaseCommand wird wo aufgerufen', 'Who calls JSONBAgg and why?',
+    ])('neither lists nor suggests the selection for %s, which names another symbol or asks why', prompt => {
+        expect(relationshipAnswer(prompt, evidence())).toBeUndefined();
+        expect(relationshipSuggestion(prompt, evidence())).toBeUndefined();
+    });
+});
