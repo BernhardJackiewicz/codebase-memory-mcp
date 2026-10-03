@@ -25,7 +25,7 @@ const selection: BrowserChatAttachment = { id: 'selection-1', text: '\t a +\r\n 
 const reader = (text: string, kind: 'file' | 'selection' = 'file', path = 'src/sum.ts'): BrowserChatReaderContext => ({ project: 'sample', path, status: 'ready', source: { ...selection, text, path, kind, id: `reader-${path}-${kind}` } });
 function fixture() {
     const runtime = {
-        prepare: vi.fn(async (_progress: (value: BrowserAiProgress) => void) => {}),
+        prepare: vi.fn(async (_progress: (value: BrowserAiProgress) => void, _options?: { cacheOnly?: boolean }) => {}),
         explain: vi.fn(async () => 'Legacy'),
         countTokens: vi.fn(async (_messages: readonly BrowserChatMessage[]) => 100),
         chat: vi.fn(async (_messages: readonly BrowserChatMessage[], _onToken: (chunk: string) => void, _options?: BrowserChatOptions) => 'Adds the two values.'),
@@ -43,7 +43,7 @@ function button(label: string): HTMLButtonElement {
     expect(target, `button ${label}`).toBeDefined(); return target!;
 }
 async function click(label: string): Promise<void> {
-    if (['Download & load', 'Load model', 'Reload model'].includes(label) && !document.querySelector('#cbm-chat-model')) await models();
+    if (['Download & load', 'Load model (cached, no download)', 'Reload model'].includes(label) && !document.querySelector('#cbm-chat-model')) await models();
     await act(async () => button(label).click());
 }
 async function type(value: string): Promise<void> {
@@ -604,7 +604,7 @@ describe('proactive selection explanations', () => {
         expect(runtime.chat).toHaveBeenCalledOnce();
         expect(container.textContent).not.toContain('LATE_ANSWER');
         expect(container.querySelector('.cbm-chat-turn')).toBeNull();
-        await click('Load model'); await click('Send ↑');
+        await click('Load model (cached, no download)'); await click('Send ↑');
         expect(runtime.chat).toHaveBeenCalledTimes(2);
         expect(runtime.chat.mock.calls[1][0].at(-1)?.content).toBe('Do not send after unload');
     });
@@ -1354,3 +1354,51 @@ describe('grounded automatic explanations (K14, K7)', () => {
         expect(prompt).not.toMatch(/Selected\.|members\[\d+\]|startLine/);
     });
 });
+
+describe('a cached model across reloads and project switches (K10, K24)', () => {
+    const configButtons = () => [...document.querySelectorAll('dialog .cbm-chat-model-actions button')].map(item => item.textContent);
+
+    it('says the model is cached and loads it without a download label', async () => {
+        const { props, runtime } = fixture(); const isCached = vi.fn(async (id: string) => id === BROWSER_MODELS[0].id);
+        await render({ ...props, isCached }); await models();
+        expect(document.querySelector<HTMLSelectElement>('#cbm-chat-model')?.selectedOptions[0].textContent).toBe(`${BROWSER_MODELS[0].displayName} · Cached`);
+        expect(configButtons()).toContain('Load model (cached, no download)');
+        expect(configButtons()).not.toContain('Download & load');
+        expect(props.createRuntime).not.toHaveBeenCalled();
+        await act(async () => button('Load model (cached, no download)').click());
+        expect(runtime.prepare).toHaveBeenCalledOnce();
+        expect(runtime.prepare.mock.calls[0][1]).toEqual({ cacheOnly: true });
+    });
+
+    it('offers loading the chosen model on start, off by default, and then loads it from the cache by itself', async () => {
+        const first = fixture(); const isCached = vi.fn(async () => true);
+        await render({ ...first.props, isCached }); await models();
+        const option = document.querySelector<HTMLInputElement>('#cbm-chat-auto-load')!;
+        expect(option.checked).toBe(false);
+        expect(first.props.createRuntime).not.toHaveBeenCalled();
+        await act(async () => option.click());
+        await act(async () => root.unmount());
+        root = createRoot(container);
+        const second = fixture();
+        await render({ ...second.props, isCached });
+        expect(second.props.createRuntime).toHaveBeenCalledOnce();
+        expect(second.runtime.prepare.mock.calls[0][1]).toEqual({ cacheOnly: true });
+    });
+
+    it('does not load by itself when the files are not cached', async () => {
+        window.localStorage.setItem(AGENT_PREFERENCES_KEY, JSON.stringify({ version: 1, preferences: { modelId: BROWSER_MODELS[0].id, automatic: true, autoLoad: true, limits: {} } }));
+        const { props } = fixture();
+        await render({ ...props, isCached: vi.fn(async () => false) });
+        expect(props.createRuntime).not.toHaveBeenCalled();
+    });
+
+    it('resumes a model that was active before a project switch, once, without the automatic option', async () => {
+        window.sessionStorage.setItem('cbm-agent-resume', JSON.stringify({ at: Date.now() }));
+        const { props, runtime } = fixture();
+        await render({ ...props, isCached: vi.fn(async () => true) });
+        expect(props.createRuntime).toHaveBeenCalledOnce();
+        expect(runtime.prepare.mock.calls[0][1]).toEqual({ cacheOnly: true });
+        expect(window.sessionStorage.getItem('cbm-agent-resume')).toBeNull();
+    });
+});
+

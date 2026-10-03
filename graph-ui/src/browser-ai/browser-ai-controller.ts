@@ -1,7 +1,8 @@
 export interface BrowserAiSource { text: string; path: string; startLine: number; project: string }
 export interface BrowserAiProgress { file?: string; loaded?: number; total?: number; progress?: number }
 export interface BrowserAiRuntime {
-    prepare(onProgress: (progress: BrowserAiProgress) => void): Promise<void>;
+    /** `cacheOnly` loads from the browser cache and fails rather than download. */
+    prepare(onProgress: (progress: BrowserAiProgress) => void, options?: { cacheOnly?: boolean }): Promise<void>;
     explain(source: BrowserAiSource): Promise<string>;
     dispose(): void;
 }

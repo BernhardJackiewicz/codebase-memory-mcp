@@ -130,6 +130,7 @@ import { resolveRepositorySelection, useRepositorySnapshot } from './architectur
 import ActivityPanel from './agents/ActivityPanel';
 import WelcomePanel from './app/WelcomePanel';
 import BrowserChatDock from './browser-ai/BrowserChatDock';
+import { requestAgentResume } from './browser-ai/agent-resume';
 import { browserChatHistoryProjectKey } from './browser-ai/chat-history-cache';
 import type { BrowserChatAttachment } from './browser-ai/BrowserChatDock';
 import { browserGraphContext } from './browser-ai/graph-context';
@@ -822,7 +823,10 @@ export default function App(): JSX.Element {
         }),
         [client, api],
     );
+    // Opening a project reloads the page; a loaded agent comes back from the cache (K24).
+    const agentStateRef = useRef(localAgentState); agentStateRef.current = localAgentState;
     const openProject = useCallback((name: string) => {
+        if (agentStateRef.current === 'active' || agentStateRef.current === 'busy' || agentStateRef.current === 'loading') requestAgentResume();
         window.location.assign(projectHref(name));
     }, []);
 

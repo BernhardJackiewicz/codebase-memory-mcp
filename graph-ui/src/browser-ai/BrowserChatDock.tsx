@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type JSX, type ReactNode } from 'react';
 import type { BrowserAiProgress } from './browser-ai-controller';
 import { createBrowserChatRuntime, type BrowserChatRuntime } from './browser-ai-runtime';
-import { BROWSER_MODELS, removeBrowserModelCache, type BrowserModel } from './model-policy';
+import { BROWSER_MODELS, getBrowserModel, isBrowserModelCached, removeBrowserModelCache, type BrowserModel } from './model-policy';
+import { takeAgentResume } from './agent-resume';
 import { buildChatMessages, selectionLocation, snapshotAttachment, snapshotReaderContext, trimChatHistory, type BrowserChatAttachment, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatSource, type BrowserChatTurn } from './chat-model';
 import { explanationInput, EXPLANATION_DELAY_MS, type ExplanationInput } from './proactive-selection';
 import { prepareExplanationContext, selectionSummary, type PreparedExplanationContext } from './explanation-context';
@@ -42,6 +43,8 @@ export interface BrowserChatDockProps {
     removeCache?: (modelId: string) => Promise<void>;
     /** Reads a selected symbol's source (get_code_snippet), so explanations stand on code, not names. */
     readSource?: SymbolSourceReader;
+    /** Whether a model's files are in the browser cache (K10). */
+    isCached?: (modelId: string) => Promise<boolean>;
 }
 
 type Phase = 'off' | 'preparing' | 'ready' | 'counting' | 'generating' | 'removing';
@@ -50,6 +53,7 @@ type Explanation = { key: string; label: string; answer: string; status: string;
 /** Finished explanations per selection, so returning to one does not run the model again. */
 const EXPLANATION_CACHE_SIZE = 32;
 const initialModel = BROWSER_MODELS.find(model => model.availability === 'available')!;
+const cachedInBrowser = (modelId: string) => isBrowserModelCached(getBrowserModel(modelId)).catch(() => false);
 const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error);
 const sizeLabel = (bytes: number): string => bytes >= 1_000_000_000 ? `${(bytes / 1_000_000_000).toFixed(2)} GB` : `${Math.ceil(bytes / 1_000_000)} MB`;
 /** Symbol sources read for explanations and questions, newest last. */
@@ -136,7 +140,7 @@ function ContextSnapshot({ context }: { context: BrowserChatContext }): JSX.Elem
 }
 
 /** Keep mounted when collapsed: state and worker lifetime are independent of visibility. */
-export default function BrowserChatDock({ proactiveSelection, selectionScope = "", historyKey, proactive = true, onAgentStateChange, onAgentModelChange, settingsRequest = 0, open, onClose, showCollapsed = false, onOpen, attachment, readerContext, context = [], pendingContext, onContextConsumed, onContextRemoved, onAttachmentConsumed, onAttachmentRemoved, createRuntime = createBrowserChatRuntime, removeCache = removeBrowserModelCache, readSource }: BrowserChatDockProps): JSX.Element {
+export default function BrowserChatDock({ proactiveSelection, selectionScope = "", historyKey, proactive = true, onAgentStateChange, onAgentModelChange, settingsRequest = 0, open, onClose, showCollapsed = false, onOpen, attachment, readerContext, context = [], pendingContext, onContextConsumed, onContextRemoved, onAttachmentConsumed, onAttachmentRemoved, createRuntime = createBrowserChatRuntime, removeCache = removeBrowserModelCache, readSource, isCached = cachedInBrowser }: BrowserChatDockProps): JSX.Element {
     const { preferences, setPreferences } = useAgentPreferences();
     const automatic = preferences.automatic;
     const [explanation, setExplanation] = useState<Explanation>();
@@ -168,7 +172,8 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     const [runtimeFailed, setRuntimeFailed] = useState(false);
     const [notice, setNotice] = useState<string>();
     const [progress, setProgress] = useState<BrowserAiProgress>();
-    const [downloaded, setDownloaded] = useState<Set<string>>(() => new Set());
+    /** Models whose files are in the browser cache: checked on start, not remembered per session (K10). */
+    const [cached, setCached] = useState<ReadonlySet<string>>(() => new Set());
     const [settingsOpen, setSettingsOpen] = useState(false);
     /** The token-limit note opens the configuration at its output limit. */
     const focusOutputLimit = useRef(false);
@@ -193,6 +198,20 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     const busy = phase === 'preparing' || phase === 'counting' || phase === 'generating' || phase === 'removing';
 
     useEffect(() => () => { epoch.current += 1; runtime.current?.dispose(); runtime.current = undefined; }, []);
+    useEffect(() => {
+        // A model active before a project switch comes back, as does the chosen one when asked
+        // to load on start; both only from the cache (K10, K24).
+        const resume = takeAgentResume();
+        let alive = true;
+        void Promise.all(BROWSER_MODELS.filter(candidate => candidate.availability === 'available').map(async candidate => [candidate.id, await isCached(candidate.id)] as const))
+            .then(entries => {
+                if (!alive) return;
+                const found = new Set(entries.filter(([, inCache]) => inCache).map(([id]) => id));
+                setCached(found);
+                if ((resume || preferences.autoLoad) && found.has(model.id) && !runtime.current && !pending.current) void prepare(true);
+            });
+        return () => { alive = false; };
+    }, []);
     useEffect(() => {
         if (historyProject.current === historyKey) return;
         historyProject.current = historyKey;
@@ -413,7 +432,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         release(); setRuntimeFailed(true); setError(message);
         if (id) setTurns(previous => previous.map(turn => turn.id === id ? { ...turn, status: 'error', error: message } : turn));
     };
-    const prepare = async (): Promise<void> => {
+    const prepare = async (cacheOnly = cached.has(model.id)): Promise<void> => {
         if (pending.current || model.availability !== 'available') return;
         release(); pending.current = true;
         const ticket = epoch.current;
@@ -422,13 +441,15 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             const nextRuntime = createRuntime(model.id);
             runtime.current = nextRuntime; runtimeModel.current = model.id;
             nextRuntime.setFatalHandler?.(failure => { if (runtime.current === nextRuntime) invalidateRuntime(failure); });
-            await nextRuntime.prepare(value => { if (epoch.current === ticket) setProgress(value); });
+            await nextRuntime.prepare(value => { if (epoch.current === ticket) setProgress(value); }, cacheOnly ? { cacheOnly } : undefined);
             if (epoch.current !== ticket) return;
-            setDownloaded(previous => new Set(previous).add(model.id));
+            setCached(previous => new Set(previous).add(model.id));
             setPhase('ready'); setProgress(undefined); setSettingsOpen(false); pending.current = false;
         } catch (failure) {
             if (epoch.current !== ticket) return;
-            release(); setError(messageOf(failure));
+            release();
+            if (cacheOnly) { setCached(previous => { const next = new Set(previous); next.delete(model.id); return next; }); setError(browserChatText.resumeFailed); }
+            else setError(messageOf(failure));
         }
     };
     const stop = (): void => {
@@ -589,7 +610,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         try {
             await removeCache(model.id);
             if (epoch.current !== ticket) return;
-            setDownloaded(previous => { const next = new Set(previous); next.delete(model.id); return next; });
+            setCached(previous => { const next = new Set(previous); next.delete(model.id); return next; });
             setNotice('Cached model files deleted. Your conversation is still here.');
         } catch (failure) { if (epoch.current === ticket) setError(messageOf(failure)); }
         finally { if (epoch.current === ticket) { pending.current = false; setPhase('off'); } }
@@ -607,10 +628,11 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         {settingsOpen && <AgentSettingsDialog onClose={() => setSettingsOpen(false)}>
         <section id="cbm-chat-model-settings" className="cbm-chat-settings" aria-label="Local model settings">
             {proactive && <label><input type="checkbox" checked={automatic} onChange={event => setPreferences({ automatic: event.target.checked })} /> Explain selections automatically</label>}
+            <label title={browserChatText.autoLoadNote}><input id="cbm-chat-auto-load" type="checkbox" checked={preferences.autoLoad} onChange={event => setPreferences({ autoLoad: event.target.checked })} /> {browserChatText.autoLoad}</label>
             <span className="cbm-chat-status" role="status">{status}</span>
             <label htmlFor="cbm-chat-model">Model</label>
             <select id="cbm-chat-model" value={modelId} disabled={busy} onChange={event => { release(); setPreferences({ modelId: event.target.value }); setError(undefined); setNotice(undefined); }}>
-                {BROWSER_MODELS.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.displayName} · {candidate.availability === 'unsupported' ? 'Requires runtime support' : candidate.id === model.id && phase === 'ready' ? 'Loaded' : downloaded.has(candidate.id) ? 'Downloaded this session' : 'Available'}</option>)}
+                {BROWSER_MODELS.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.displayName} · {candidate.availability === 'unsupported' ? 'Requires runtime support' : candidate.id === model.id && phase === 'ready' ? 'Loaded' : cached.has(candidate.id) ? browserChatText.cached : 'Available'}</option>)}
             </select>
             <p>{sizeLabel(model.bytes)} download · {model.license}. Memory use is higher.</p>
             {model.compatibilityNote && <p>{model.compatibilityNote}</p>}
@@ -624,7 +646,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             </fieldset>
             <p><a href={model.modelCard} target="_blank" rel="noreferrer">Model details</a> · Downloads come from Hugging Face. No model downloads automatically.</p>
             <div className="cbm-chat-model-actions">
-                {phase === 'off' && <button type="button" className="cbm-chat-primary" disabled={model.availability !== 'available'} onClick={() => { void prepare(); }}>{runtimeFailed ? 'Reload model' : downloaded.has(model.id) ? 'Load model' : 'Download & load'}</button>}
+                {phase === 'off' && <button type="button" className="cbm-chat-primary" disabled={model.availability !== 'available'} onClick={() => { void prepare(); }}>{runtimeFailed ? 'Reload model' : cached.has(model.id) ? browserChatText.loadCached : 'Download & load'}</button>}
                 {(phase === 'ready' || phase === 'generating' || phase === 'counting') && <button type="button" onClick={() => { release(); setNotice('Model unloaded. Conversation and cached files retained.'); }}>Unload model</button>}
                 <button type="button" disabled={busy} onClick={() => { void deleteCache(); }}>Delete cached model</button>
             </div>

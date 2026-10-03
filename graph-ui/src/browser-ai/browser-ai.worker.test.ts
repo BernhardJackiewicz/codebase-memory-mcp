@@ -215,6 +215,17 @@ describe('browser generation worker', () => {
         await expect(fake.env.fetch!(allowed)).rejects.toThrow('outside');
     });
 
+    it('loads from the cache only, without one network request, when the chat resumes a cached model (K10, K24)', async () => {
+        const allowed = browserModelBaseUrl(BROWSER_MODELS[0]) + 'config.json';
+        fake.tokenizerLoad.mockImplementationOnce(async () => {
+            await expect(fake.env.fetch!(allowed)).rejects.toThrow('outside');
+            return { apply_chat_template: fake.template };
+        });
+        await send({ id: 1, kind: 'prepare', cacheOnly: true });
+        expect(replies().at(-1)).toEqual({ id: 1, kind: 'ready' });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     it('keeps the bundled runtime module at a direct same-origin URL under restrictive CSP', async () => {
         fake.modelLoad.mockImplementationOnce(async () => {
             const wasm = fake.env.backends.onnx.wasm as { wasmPaths: { mjs: string; wasm: string }; proxy: boolean };

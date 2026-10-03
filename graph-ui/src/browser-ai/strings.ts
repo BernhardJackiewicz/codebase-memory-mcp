@@ -132,6 +132,12 @@ export const browserChatText = {
     largerModels: 'A larger model may stay closer to the question. Each needs a one-time download, and its memory use is higher than the download:',
     modelDownload: (name: string, size: string) => `${name} · ${size} download`,
     newConversation: 'New conversation',
+    /** The model's state in the agent configuration (K10). */
+    cached: 'Cached',
+    loadCached: 'Load model (cached, no download)',
+    autoLoad: 'Load the chosen model on start when it is cached',
+    autoLoadNote: 'Only from this browser\'s cache; nothing is downloaded on start. Switching projects keeps a loaded model either way.',
+    resumeFailed: 'The cached model could not be loaded without a download. Load it in the agent configuration.',
     /** Under an answer that names what its source and graph facts do not contain (K12). */
     unsupportedNames: (names: readonly string[]) => `Not in the source or graph facts this answer was given: ${names.join(', ')}. Check these names before relying on them.`,
     /** Who wrote which part of a grounded automatic explanation (K7). */
