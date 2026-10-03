@@ -751,6 +751,14 @@ export interface GalaxyPanelProps {
     selectionPanel?: ReactNode | ((scope: SelectionScope | undefined) => ReactNode);
 }
 
+/**
+ * Bis zu wie vielen Knoten ein Ausschnitt auf dem Schirm auseinandergeschoben
+ * wird (Handtest K8). Die Trennung hebt Namen und Ringe kleiner Ausschnitte aus
+ * der Wolke; eine dichte Wolke aus tausenden Knoten (die dritte Ebene um
+ * JSONBAgg) schob sie dagegen zu einem Kreuz aus langen Linien auseinander.
+ */
+export const SCOPE_SEPARATION_LIMIT = 1500;
+
 /** Wie lange die Zeitangaben im Instrument stehen, bis sie neu gerechnet werden. */
 export const AGENT_TICK_MS = 1000;
 
@@ -2761,7 +2769,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                 {sceneShown !== undefined && everVisible.current && (
                     <GraphScene
                         active={visible}
-                        separateNodes={mode === 'galaxy' && sceneScoped}
+                        separateNodes={mode === 'galaxy' && sceneScoped && sceneShown.nodes.length <= SCOPE_SEPARATION_LIMIT}
                         onRenderBusyChange={setSpacingBusy}
                         idleRotation={mode === 'galaxy' && !sceneScoped}
                         rootIds={mode === 'galaxy' && sceneScoped ? scope.result?.roots : undefined}

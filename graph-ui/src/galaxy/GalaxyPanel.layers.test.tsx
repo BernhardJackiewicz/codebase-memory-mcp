@@ -13,9 +13,13 @@ import { viewPreferencesKey } from '../settings/view-preferences';
 import { scopeFetch, scopeNode } from './test-scope-fetch';
 import type { GraphEdge } from './types';
 
+const scene = vi.hoisted(() => ({ separateNodes: undefined as boolean | undefined, nodes: 0 }));
 vi.mock('./GraphScene', async importOriginal => ({
     ...await importOriginal<typeof import('./GraphScene')>(),
-    GraphScene: () => <output data-testid="scene" />,
+    GraphScene: ({ separateNodes, data }: { separateNodes?: boolean; data: { nodes: unknown[] } }) => {
+        scene.separateNodes = separateNodes; scene.nodes = data.nodes.length;
+        return <output data-testid="scene" />;
+    },
 }));
 
 let host: HTMLDivElement, root: Root;
@@ -97,4 +101,17 @@ it('K8: a layer past the render limit stops there, says it is partial and cannot
     // The partial layer can still be left the normal way.
     await act(async () => minus().click());
     await settle(() => expect(status()?.textContent).toBe('2 nodes · 1 edge'));
+});
+
+it('K8: a large finished layer keeps its arranged cloud instead of being pushed apart on screen', async () => {
+    const fan = Array.from({ length: 1600 }, (_, at) => scopeNode(100 + at));
+    const nodes = [scopeNode(1), ...fan];
+    const edges: GraphEdge[] = fan.map((node, at) => ({ id: 10 + at, source: 1, target: node.id, type: 'CALLS' }));
+    await act(async () => root.render(<GalaxyPanel project="sample" visible workspaceExpanded onOpenNode={vi.fn()} fetch={scopeFetch({ nodes, edges }).fetch} />));
+    await settle(() => expect(seam().nodes).toBeGreaterThan(0));
+    await act(async () => { seam().clickNode('sample.n1'); });
+    await settle(() => expect(status()?.textContent).toBe(`${(1601).toLocaleString()} nodes · ${(1600).toLocaleString()} edges`));
+    expect(scene.nodes).toBe(1601);
+    // Screen separation pushed a dense cloud of thousands of nodes into a cross of long lines (layer 3 of JSONBAgg).
+    expect(scene.separateNodes).toBe(false);
 });
