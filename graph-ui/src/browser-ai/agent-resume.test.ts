@@ -6,11 +6,14 @@ import { BROWSER_MODEL, browserModelBaseUrl, BROWSER_MODELS, isBrowserModelCache
 afterEach(() => { vi.unstubAllGlobals(); window.sessionStorage.clear(); });
 
 describe('keeping the agent across a project switch (K24)', () => {
-    it('resumes once, in this tab, shortly after the switch', () => {
+    it('resumes on the first page after the switch, in this tab, shortly after it', () => {
         requestAgentResume(1000);
         expect(JSON.parse(window.sessionStorage.getItem(AGENT_RESUME_KEY)!)).toEqual({ at: 1000 });
-        expect(takeAgentResume(1000 + AGENT_RESUME_WINDOW_MS - 1)).toBe(true);
-        expect(takeAgentResume(1000)).toBe(false);
+        expect(takeAgentResume(1000 + AGENT_RESUME_WINDOW_MS - 1, 7)).toBe(true);
+        // The same page reads it again (React's development double effect); a later reload does not.
+        expect(takeAgentResume(1000, 7)).toBe(true);
+        expect(takeAgentResume(1000, 8)).toBe(false);
+        expect(window.sessionStorage.getItem(AGENT_RESUME_KEY)).toBeNull();
     });
 
     it('does not resume after the window, from malformed data or without storage', () => {

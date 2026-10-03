@@ -528,7 +528,10 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const waitingEpoch = epoch.current;
         // The selected symbol's source grounds a question as it grounds the explanation (K14).
         const symbol = !retry && !reader && currentGraph.length ? await sourceFor(currentGraph[0]) : undefined;
-        if (queued.cancelled || manualRequest.current !== queued || epoch.current !== waitingEpoch || runtime.current !== currentRuntime) return;
+        if (queued.cancelled || manualRequest.current !== queued || epoch.current !== waitingEpoch || runtime.current !== currentRuntime) {
+            if (manualRequest.current === queued) manualRequest.current = undefined;
+            return;
+        }
         if (!retry && ((reader?.source?.text.length ?? 0) > 5000 || currentGraph.length)) packet = prepareExplanationContext(reader, currentGraph, chatEvidence, symbol);
         let request = retry && !ask ? retry.request.map(message => ({ ...message })) : makeRequest();
         if (automaticRun) {

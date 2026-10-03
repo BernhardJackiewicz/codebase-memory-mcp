@@ -1398,7 +1398,8 @@ describe('a cached model across reloads and project switches (K10, K24)', () => 
         await render({ ...props, isCached: vi.fn(async () => true) });
         expect(props.createRuntime).toHaveBeenCalledOnce();
         expect(runtime.prepare.mock.calls[0][1]).toEqual({ cacheOnly: true });
-        expect(window.sessionStorage.getItem('cbm-agent-resume')).toBeNull();
+        // A later reload of this tab starts with the agent off again.
+        expect(JSON.parse(window.sessionStorage.getItem('cbm-agent-resume')!).page).toBe(performance.timeOrigin);
     });
 });
 
