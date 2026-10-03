@@ -14,6 +14,27 @@
 .atlas-graph-scope-name { max-width:14rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .atlas-graph-scope-count { color:#93b2a1; margin-inline-start:auto; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .atlas-graph-scope-groups { white-space:nowrap; }
+/*
+ * Handtest K3: im Ausschnitt eine Zeile, auch bei offenem Chat (rund 1.170 px
+ * bei 1600). Die Zeile bricht nicht um; was schrumpfen darf, sind das Suchfeld
+ * (es waechst beim Tippen wieder), der Name der Wurzel und der Zaehler, jeweils
+ * mit dem vollen Text im Tooltip.
+ */
+.atlas-graph-exploration[data-scoped=true] { flex-wrap:nowrap; gap:.3rem; padding-inline:.6rem; }
+.atlas-graph-exploration[data-scoped=true] > * { flex:none; }
+.atlas-graph-exploration[data-scoped=true] .atlas-galaxy-search-container { flex:0 1 9rem; min-width:5rem; transition:flex-basis .15s ease; }
+.atlas-graph-exploration[data-scoped=true] .atlas-galaxy-search-container:focus-within { flex-basis:18rem; }
+.atlas-graph-exploration[data-scoped=true] .atlas-graph-scope-name { flex:0 1 auto; min-width:3.5rem; max-width:11rem; }
+/* Der Zaehler gibt zuletzt nach: der Name steht auch am Ring in der Szene, die Zahl nur hier. */
+.atlas-graph-exploration[data-scoped=true] .atlas-graph-scope-count { flex:none; max-width:12rem; overflow:hidden; text-overflow:ellipsis; }
+.atlas-graph-exploration[data-scoped=true] .atlas-graph-scope-warning { flex:0 1 auto; width:auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.atlas-graph-exploration button.atlas-graph-scope-name { position:relative; padding-right:1.2rem; font-weight:600; border-color:transparent; background:transparent; text-align:left; }
+.atlas-graph-exploration button.atlas-graph-scope-name::after { content:'↗'; position:absolute; right:.35rem; color:#7fa592; font-weight:400; }
+.atlas-graph-exploration button.atlas-graph-scope-name:hover { text-decoration:underline; }
+.atlas-graph-more > summary, .atlas-graph-recent > summary { min-width:1.1rem; text-align:center; list-style:none; }
+.atlas-graph-more > summary::-webkit-details-marker, .atlas-graph-recent > summary::-webkit-details-marker { display:none; }
+.atlas-graph-more[data-attention=true] > summary { border-color:#9b7b4a; }
+.atlas-graph-more .atlas-graph-limits-menu small { color:#95a89e; white-space:nowrap; }
 /* Handtest K8: eine Ebene, die am Render-Limit anhielt, und ein Expand, das vermutlich dorthin fuehrt. */
 .atlas-graph-scope-count[data-state=partial] { color:#d8b27a; cursor:help; }
 .atlas-graph-exploration button[data-warning=true] { border-color:#9b7b4a; }

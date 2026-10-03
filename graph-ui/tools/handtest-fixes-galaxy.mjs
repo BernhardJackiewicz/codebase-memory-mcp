@@ -365,8 +365,67 @@ async function checkK8(page) {
 }
 
 /* ------------------------------------------------------------------ */
+/* K3: eine Zeile, auch bei offenem Chat                                */
 
-const CHECKS = { K9: checkK9, K2: checkK2, K8: checkK8 };
+async function toolbarRows(page) {
+    return page.evaluate(() => {
+        const bar = document.querySelector('.atlas-graph-exploration');
+        if (!bar) return null;
+        const box = bar.getBoundingClientRect();
+        const items = [...bar.children].filter((el) => el.getBoundingClientRect().height > 0);
+        const centres = items.map((el) => { const r = el.getBoundingClientRect(); return Math.round((r.top + r.bottom) / 2); });
+        const rows = [...new Set(centres.map((centre) => Math.round(centre / 16)))].length;
+        const clipped = items.filter((el) => el.scrollWidth > el.clientWidth + 1 && getComputedStyle(el).textOverflow === 'ellipsis')
+            .map((el) => el.textContent?.trim().slice(0, 40));
+        return { width: Math.round(box.width), height: Math.round(box.height), rows, overflow: bar.scrollWidth > bar.clientWidth + 1, clipped,
+            items: items.map((el) => `${(el.getAttribute('aria-label') || el.textContent || el.tagName).trim().slice(0, 18)}:${Math.round(el.getBoundingClientRect().width)}`) };
+    });
+}
+
+async function checkK3(page) {
+    await section(page, 'K3', 'The scoped Galaxy toolbar stays one row at 1600 px, with the chat closed and open');
+    await open(page);
+    const chatToggle = async (open) => {
+        const button = page.getByRole('button', { name: open ? 'Open chat' : 'Hide chat' }).first();
+        if (await button.count()) { await button.click(); await wait(1500); }
+    };
+    const rows = [];
+    const measure = async (label, caption) => {
+        const value = await toolbarRows(page);
+        rows.push({ label, ...value });
+        await shot(page, 'K3', label, `${caption}: toolbar ${value?.width} x ${value?.height} px, ${value?.rows} row(s)`);
+        await page.locator('.atlas-graph-exploration').first().screenshot({ path: join(OUT, 'K3', `${label}-toolbar.png`) }).catch(() => {});
+    };
+    await select(page, ROOT);
+    await settled(page);
+    await measure('closed-root', `Chat closed, ${ROOT} at 1 layer`);
+    await chatToggle(true);
+    await measure('open-root', `Chat open, ${ROOT} at 1 layer`);
+    await expand(page);
+    await measure('open-two-layers', 'Chat open, 2 layers');
+    const child = await qualifiedName('test_jsonb_agg_jsonfield_order_by');
+    await page.evaluate((qn) => globalThis.__atlasGalaxy?.clickNode(qn), child);
+    await settled(page);
+    await measure('open-long-root', 'Chat open, long root name test_jsonb_agg_jsonfield_order_by');
+    const back = page.getByRole('button', { name: 'Back', exact: true });
+    // Ohne Zurueck (Stand vor K2) fuehrt die Suche zur selben Lage.
+    if (await back.count()) await back.click(); else { await select(page, ROOT); await settled(page); await expand(page); }
+    await settled(page);
+    await page.getByRole('button', { name: 'Expand +1' }).click();
+    await wait(600);
+    await measure('open-loading', 'Chat open while layer 3 loads');
+    await page.waitForFunction(() => ['complete', 'partial'].includes(document.querySelector('.atlas-graph-scope-count')?.getAttribute('data-state') ?? ''), null, { timeout: 120000 }).catch(() => {});
+    await wait(1500);
+    await measure('open-partial', 'Chat open, layer 3 stopped at the render limit');
+    await chatToggle(false);
+    await measure('closed-partial', 'Chat closed again, layer 3 partial');
+    const pass = rows.length === 7 && rows.every((row) => row.rows === 1 && row.height < 60 && !row.overflow);
+    await check('K3', 'One toolbar row in every state, chat open (bar about 1170 px) and closed (1600 px)', pass, { rows });
+}
+
+/* ------------------------------------------------------------------ */
+
+const CHECKS = { K9: checkK9, K2: checkK2, K8: checkK8, K3: checkK3 };
 
 await mkdir(OUT, { recursive: true });
 const context = await chromium.launchPersistentContext(PROFILE, {

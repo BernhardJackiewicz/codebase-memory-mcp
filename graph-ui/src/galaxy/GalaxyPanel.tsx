@@ -1973,7 +1973,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         {history.recent.length > 1 && <details className="atlas-graph-recent" onKeyDown={event => {
             if (event.key === 'Escape') { event.stopPropagation(); event.currentTarget.open = false; }
         }}>
-            <summary title={galaxyHistoryText.recentTitle}>{galaxyHistoryText.recent}</summary>
+            <summary title={galaxyHistoryText.recentTitle} aria-label={galaxyHistoryText.recent}>{galaxyHistoryText.recentGlyph}</summary>
             <ul className="atlas-graph-recent-menu" aria-label={galaxyHistoryText.recentList}>{history.recent.map((entry) => {
                 const current = galaxyHistoryOptions.recentKey?.(entry) === (scope.scope ? scopeIdentity(scope.scope) : undefined);
                 return <li key={galaxyHistoryOptions.recentKey?.(entry)}>
@@ -1987,10 +1987,24 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         </details>}
     </span> : null;
 
+    /* Was die Leiste sonst noch braucht (K3): Quelle der Wurzel, Gruppen und was ausserhalb der Limits liegt. */
+    const openRoot = props.workspaceExpanded && scopedRoot?.file_path
+        ? () => props.onOpenNode(layoutNodeForSelection(layout, scopedRoot) ?? scopedRoot) : undefined;
+    const groupCount = mode === 'galaxy' && organic ? organic.groups.length : 0;
+    const groupsText = groupCount > 1 ? galaxyToolbarText.groupsTitle(groupCount) : undefined;
+    const outsideLimits = props.workspaceExpanded && data && shown && (shown.nodes.length < data.nodes.length || shown.edges.length < data.edges.length)
+        ? galaxyToolbarText.outsideLimits(data.nodes.length - shown.nodes.length, data.edges.length - shown.edges.length) : undefined;
+
     /* Was die Leiste ueber das Laden der Ebenen sagt (Handtest K8). */
     const partial = scope.complete ? scope.result?.partial : undefined;
     const scopeState = scope.validating ? 'checking' : scope.loading ? 'loading' : organicTask.loading ? 'arranging'
         : partial ? 'partial' : scope.complete ? 'complete' : 'preview';
+    const scopeStatus = scope.validating ? galaxyLayerText.checking
+        : scope.loading ? scope.progress ? galaxyLayerText.loadingProgress(scope.progress.layer, scope.progress.nodes, scope.progress.edges) : galaxyLayerText.loading(scope.depth)
+            : organicTask.loading ? galaxyLayerText.arranging
+                : scope.complete ? partial ? galaxyLayerText.partial(galaxyLayerText.counts(data?.nodes.length ?? 0, data?.edges.length ?? 0))
+                    : `${galaxyLayerText.counts(data?.nodes.length ?? 0, data?.edges.length ?? 0)}${scope.result?.exhausted ? galaxyLayerText.endOfTrace : ''}`
+                    : galaxyLayerText.partialPreview;
     const estimate = scope.complete ? nextLayerEstimate(scope.result) : undefined;
     const expandWarning = Boolean(estimate && props.workspaceExpanded && (data?.nodes.length ?? 0) + estimate.estimate > nodeBudget);
     const expandTitle = partial ? galaxyLayerText.expandPartial : scope.result?.exhausted ? galaxyLayerText.expandEnd
@@ -2474,17 +2488,26 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                     </span>
                 )}
             </header>
-            {(props.workspaceExpanded || scope.scope) && <div className="atlas-graph-exploration" aria-label="Graph scope">
+            {(props.workspaceExpanded || scope.scope) && <div className="atlas-graph-exploration" aria-label="Graph scope"
+                data-scoped={props.workspaceExpanded && scope.scope ? 'true' : undefined}>
                 {historyControls}
                 {props.workspaceExpanded && <GalaxyNavigator embedded nodes={layout?.nodes ?? []} project={project} fetch={fetchImpl} onSelect={handleNodeClick} onSelectScope={next => { props.onClearSelection?.(); setBackgroundCleared(false); clearTrail(); scope.select(next); }} />}
                 {scope.scope ? <>
                     {props.workspaceExpanded && <button type="button" onClick={leaveScope}>{galaxyHistoryText.allGraph}</button>}
-                    <strong className="atlas-graph-scope-name" title={scope.scope.name}>{scope.scope.name}</strong>
-                    {props.workspaceExpanded && scopedRoot?.file_path && <button type="button" onClick={() => props.onOpenNode(layoutNodeForSelection(layout, scopedRoot) ?? scopedRoot)}>Open source</button>}
-                    {props.workspaceExpanded && <label>Trace <select aria-label="Trace direction" value={scope.direction}
+                    {/*
+                      * Handtest K3: die Wurzel ist zugleich der Weg zu ihrer
+                      * Quelle. Ein eigener Knopf "Open source" daneben kostete die
+                      * Zeile bei offenem Chat rund hundert Pixel; er steht fuer
+                      * die Tastatur weiter im Menue "⋯".
+                      */}
+                    {props.workspaceExpanded && openRoot
+                        ? <button type="button" className="atlas-graph-scope-name" onClick={openRoot}
+                            title={galaxyToolbarText.openRootTitle(scope.scope.name, scopedRoot?.file_path ?? '', scopedRoot?.start_line)}>{scope.scope.name}</button>
+                        : <strong className="atlas-graph-scope-name" title={scope.scope.name}>{scope.scope.name}</strong>}
+                    {props.workspaceExpanded && <select aria-label="Trace direction" title={galaxyToolbarText.traceTitle} value={scope.direction}
                         onChange={event => scope.setDirection(event.target.value as 'both' | 'inbound' | 'outbound')}>
                         <option value="both">Both directions</option><option value="inbound">Incoming</option><option value="outbound">Outgoing</option>
-                    </select></label>}
+                    </select>}
                     {props.workspaceExpanded && <TraceEdgeFilter kinds={traceKinds} availableTypes={kinds.map(kind => kind.type)} selected={traceTypes} onChange={changeTraceTypes} />}
                     {/*
                       * Handtest K8: waehrend eine Ebene laedt, ist "−" der Weg
@@ -2506,15 +2529,11 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                             {galaxyPathText.callOrder}</button>
                     </>}
                     <span className="atlas-graph-scope-count" role="status" data-state={scopeState}
-                        title={partial ? galaxyLayerText.partialTitle(partial.layer, partial.limit === 'nodes' ? nodeBudget : edgeBudget, partial.limit) : undefined}>
-                        {scope.validating ? galaxyLayerText.checking
-                            : scope.loading ? scope.progress ? galaxyLayerText.loadingProgress(scope.progress.layer, scope.progress.nodes, scope.progress.edges) : galaxyLayerText.loading(scope.depth)
-                                : organicTask.loading ? galaxyLayerText.arranging
-                                    : scope.complete ? `${galaxyLayerText.counts(data?.nodes.length ?? 0, data?.edges.length ?? 0)}${partial ? galaxyLayerText.partial : scope.result?.exhausted ? galaxyLayerText.endOfTrace : ''}`
-                                        : galaxyLayerText.partialPreview}</span>
+                        title={partial ? galaxyLayerText.partialTitle(partial.layer, partial.limit === 'nodes' ? nodeBudget : edgeBudget, partial.limit)
+                            : [scopeStatus, groupsText].filter(Boolean).join('. ')}>{scopeStatus}</span>
                     {scope.error && <span className="atlas-graph-scope-warning" title={scope.error}>Some relationships could not be loaded. <button type="button" onClick={scope.retry}>Retry</button></span>}
                     {!props.workspaceExpanded && scope.complete && <small>All indexed direct dependencies included.</small>}
-                    {mode === 'galaxy' && organic && organic.groups.length > 1 && <small className="atlas-graph-scope-groups" title={galaxyToolbarText.groupsTitle(organic.groups.length)}>{galaxyToolbarText.groups(organic.groups.length)}</small>}
+                    {!props.workspaceExpanded && groupCount > 1 && <small className="atlas-graph-scope-groups" title={groupsText}>{galaxyToolbarText.groups(groupCount)}</small>}
                 </> : null}
                 {props.workspaceExpanded && <>
                     {/*
@@ -2524,18 +2543,24 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                       * Zeile sonst um. Ein Scope liegt fast immer unter dem
                       * Deckel; im ganzen Graphen bleibt er in der Zeile.
                       */}
-                    {scope.scope ? <details className="atlas-graph-limits" title={galaxyToolbarText.limitsTitle} onKeyDown={event => {
-                        if (event.key === 'Escape') { event.stopPropagation(); event.currentTarget.open = false; }
-                    }}>
-                        <summary>{galaxyToolbarText.limits}</summary>
-                        <div className="atlas-graph-limits-menu">{renderLimits}</div>
+                    {/* K3: im Ausschnitt stehen Quelle, Limits, Gruppen und abgeschnittene Knoten im Menue "⋯". */}
+                    {scope.scope ? <details className="atlas-graph-limits atlas-graph-more" title={galaxyToolbarText.moreTitle}
+                        data-attention={outsideLimits ? 'true' : undefined} onKeyDown={event => {
+                            if (event.key === 'Escape') { event.stopPropagation(); event.currentTarget.open = false; }
+                        }}>
+                        <summary aria-label={galaxyToolbarText.more}>{galaxyToolbarText.moreGlyph}</summary>
+                        <div className="atlas-graph-limits-menu">
+                            {openRoot && <button type="button" onClick={openRoot}>{galaxyToolbarText.openSource}</button>}
+                            {renderLimits}
+                            {groupCount > 1 && <small className="atlas-graph-scope-groups" title={groupsText}>{galaxyToolbarText.groups(groupCount)}</small>}
+                            {outsideLimits && <small>{outsideLimits}</small>}
+                        </div>
                     </details> : renderLimits}
                     {mode === 'galaxy' && !scope.scope && <label className="atlas-graph-coverage-filter" title="Show files and folders with indexing gaps">
                         <input type="checkbox" aria-label="Show coverage graph" checked={showCoverage} onChange={event => setViewPreferences({ coverageShadow: event.target.checked })} />
                         Coverage
                     </label>}
-                    {data && shown && (shown.nodes.length < data.nodes.length || shown.edges.length < data.edges.length) &&
-                        <small>{data.nodes.length - shown.nodes.length} nodes · {data.edges.length - shown.edges.length} edges outside render limits</small>}
+                    {!scope.scope && outsideLimits && <small>{outsideLimits}</small>}
                 </>}
             </div>}
             {legendOpen && (

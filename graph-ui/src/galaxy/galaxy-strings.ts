@@ -45,6 +45,7 @@ export const galaxyHistoryText = {
     noBack: 'Nothing to go back to yet',
     noForward: 'Nothing to go forward to',
     recent: 'Recent',
+    recentGlyph: '▾',
     recentTitle: 'Jump straight to a recently visited root with its last depth, direction and edge types',
     recentList: 'Recently visited roots',
     allGraph: 'All graph',
@@ -68,7 +69,8 @@ export const galaxyLayerText = {
     arranging: 'Arranging nodes…',
     counts: (nodes: number, edges: number) => `${count(nodes, 'node', 'nodes')} · ${count(edges, 'edge', 'edges')}`,
     endOfTrace: ' · end of trace',
-    partial: ' · partial',
+    // "Partial" leads, so a narrow toolbar that cuts the end never cuts the warning.
+    partial: (counts: string) => `Partial: ${counts}`,
     partialPreview: 'Partial preview',
     previewLoading: (layer: number) => `Partial preview while layer ${layer} loads`,
     partialTitle: (layer: number, limit: number, kind: 'nodes' | 'edges') =>
@@ -90,4 +92,11 @@ export const galaxyToolbarText = {
     groupsTitle: (count: number) => `${count.toLocaleString()} connection groups. Groups reflect connections in this trace, not inferred architecture components.`,
     limits: 'Limits',
     limitsTitle: 'Rendered node and edge limits',
+    more: 'More',
+    moreGlyph: '⋯',
+    moreTitle: 'More: open the source, rendered node and edge limits, connection groups',
+    openSource: 'Open source',
+    openRootTitle: (name: string, path: string, line?: number) => `Open the source of ${name} in Explore: ${path}${line ? `:${line}` : ''}`,
+    traceTitle: 'Trace direction: incoming, outgoing or both',
+    outsideLimits: (nodes: number, edges: number) => `${nodes.toLocaleString()} nodes · ${edges.toLocaleString()} edges outside render limits`,
 };

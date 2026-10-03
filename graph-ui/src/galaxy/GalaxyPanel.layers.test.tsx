@@ -85,7 +85,7 @@ it('K8: a layer past the render limit stops there, says it is partial and cannot
     expect(button('Expand +1').title).toContain('Load layer 2: 1 node to expand');
 
     await act(async () => button('Expand +1').click());
-    await settle(() => expect(status()?.textContent).toBe('602 nodes · 601 edges · partial'));
+    await settle(() => expect(status()?.textContent).toBe('Partial: 602 nodes · 601 edges'));
     expect(status()?.getAttribute('data-state')).toBe('partial');
     expect(status()?.getAttribute('title')).toBe('Layer 2 stopped at the render limit of 500 nodes. Raise the limit under Limits or trace fewer edge types to load all of it.');
     expect(button('Expand +1').disabled).toBe(true);
