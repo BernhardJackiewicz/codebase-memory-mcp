@@ -1,4 +1,5 @@
 import type { BrowserChatMessage } from './browser-ai-runtime';
+import type { ChatTopic } from './chat-context';
 
 /** An immutable snapshot, not a live reference to the reader selection. */
 export interface BrowserChatAttachment {
@@ -41,12 +42,15 @@ export interface BrowserChatTurn {
     shortened?: boolean;
     /** The limits that answer ran into. */
     limit?: { inputTokens: number; outputTokens: number };
-    /** Listed from the loaded graph without the model, or a suggestion to list it. */
-    answeredFrom?: 'graph' | 'suggestion';
+    /** Listed from the loaded graph without the model, a suggestion to list it, or the chat's
+     * own reply that a question has no context to answer from. */
+    answeredFrom?: 'graph' | 'suggestion' | 'local';
     /** The listed question a suggestion offers, with the graph evidence it lists from. */
     suggestion?: { question: string; context: BrowserChatContext };
     /** Earlier turns left out of this request to fit the input limit. */
     historyOmitted?: number;
+    /** What the question was about; undefined for a question without context. */
+    topic?: ChatTopic;
 }
 
 export interface BrowserChatContext {
@@ -118,7 +122,7 @@ export function buildChatMessages(turns: readonly BrowserChatTurn[], prompt: str
             + JSON.stringify(currentContext.map(({ label, text }) => ({ label, text }))) + '\n--- END CURRENT GRAPH DATA ---' : '') }];
     for (const turn of turns) {
         // A suggestion is a question back to the reader, not an answer the model should build on.
-        if (turn.status === 'error' || turn.status === 'generating' || turn.answeredFrom === 'suggestion') continue;
+        if (turn.status === 'error' || turn.status === 'generating' || turn.answeredFrom === 'suggestion' || turn.answeredFrom === 'local') continue;
         messages.push({ role: 'user', content: userMessage(turn.prompt, reader || turn.readerContext ? undefined : turn.attachment, turn.context) });
         if (turn.answer) messages.push({ role: 'assistant', content: turn.answer });
     }

@@ -13,6 +13,7 @@ import { isGpuRuntimeFailure, BrowserRuntimeFatalError } from './runtime-fault';
 import ChatMarkdown from './ChatMarkdown';
 import AgentSettingsDialog from './AgentSettingsDialog';
 import { useChatHistory } from './use-chat-history';
+import { chatTopic, followedTopic, missingContextAnswer } from './chat-context';
 import './browser-chat.css';
 
 export type { BrowserChatAttachment, BrowserChatContext, BrowserChatReaderContext, BrowserChatSource } from './chat-model';
@@ -415,11 +416,21 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             if (source) onAttachmentConsumed(source.id);
             if (selectedGraph) { setHandledContextId(selectedGraph.id); onContextConsumed?.(selectedGraph.id); }
         };
+        // A question without its own context may follow up on attached code in this view.
+        const topic = retry ? retry.topic : chatTopic(selectionScope, { reader, graph: currentGraph[0], attachment: source, context: extra })
+            ?? followedTopic(turns, selectionScope);
+        // Without code or graph facts the model can only guess: say what to select instead.
+        if (!retry && !topic) {
+            setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, modelId: model.id, request: [],
+                answer: missingContextAnswer(prompt, reader), status: 'complete', answeredFrom: 'local' }]);
+            consume();
+            return;
+        }
         // Callers and callees of the selection come from the loaded graph, complete and
         // without the model: a small model drops and repeats names in long lists.
         const listed = !retry && !source ? relationshipAnswer(prompt, [...currentGraph, ...extra]) : undefined;
         if (listed) {
-            setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, context: extra,
+            setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, context: extra, topic,
                 evidence: prepareExplanationContext(undefined, listed.context, chatEvidence), modelId: model.id, request: [],
                 answer: listed.markdown, status: 'complete', answeredFrom: 'graph' }]);
             consume();
@@ -428,7 +439,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         // Sounds like callers or callees but is not certain: offer the list, do not guess with the model.
         const suggested = !retry && !source ? relationshipSuggestion(prompt, [...currentGraph, ...extra]) : undefined;
         if (suggested) {
-            setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, context: extra,
+            setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, context: extra, topic,
                 evidence: prepareExplanationContext(undefined, suggested.context, chatEvidence), modelId: model.id, request: [],
                 answer: suggested.markdown, status: 'complete', answeredFrom: 'suggestion', suggestion: { question: suggested.question, context: suggested.context } }]);
             consume();
@@ -477,7 +488,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             const id = retry?.id ?? `local-turn-${crypto.randomUUID()}`;
             const historyOmitted = retry && !ask ? retry.historyOmitted
                 : earlier.filter(item => item.status !== 'error' && item.status !== 'generating' && !history.includes(item)).length;
-            const turn: ChatTurn = { id, prompt, attachment: source, readerContext: reader, context: extra, evidence: packet, modelId: model.id, request, answer: '', status: 'generating',
+            const turn: ChatTurn = { id, prompt, attachment: source, readerContext: reader, context: extra, evidence: packet, modelId: model.id, request, answer: '', status: 'generating', topic,
                 ...historyOmitted ? { historyOmitted } : {} };
             activeTurn.current = id;
             if (retry) setTurns(previous => previous.map(item => item.id === id ? turn : item));
@@ -619,7 +630,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                     {turn.status === 'error' && <p className="cbm-chat-turn-error" role="alert">{turn.error}</p>}
                     {index === turns.length - 1 && turn.answeredFrom === 'suggestion' && turn.suggestion && <button type="button" className="cbm-chat-retry"
                         onClick={() => showSuggestedList(turn)}>{relationshipWords.en.showList}</button>}
-                    {index === turns.length - 1 && turn.status !== 'generating' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { void send(turn); }}>{turn.answeredFrom ? browserChatText.askModel : 'Retry'}</button>}
+                    {index === turns.length - 1 && turn.status !== 'generating' && turn.answeredFrom !== 'local' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { void send(turn); }}>{turn.answeredFrom ? browserChatText.askModel : 'Retry'}</button>}
                 </div>
             </article>)}
         </div>}
