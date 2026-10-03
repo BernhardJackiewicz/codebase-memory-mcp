@@ -1332,6 +1332,16 @@ describe('grounded automatic explanations (K14, K7)', () => {
         expect(card().textContent).toContain("The model's sentence named something the evidence does not show and was left out.");
     });
 
+    it('does not show a prompt capacity note on a card whose facts are listed in full', async () => {
+        vi.useFakeTimers(); const { props } = fixture();
+        const callers = Array.from({ length: 40 }, (_, index) => ({ id: 2000 + index, name: `caller_with_a_long_descriptive_name_number_${index}`, label: 'Function',
+            file_path: `tests/postgres_tests/callers/test_module_number_${index}.py`, x: 0, y: 0, z: 0, size: 1, color: '#999' }));
+        const evidence = jsonbAggEvidence({ edges: callers.map(caller => ({ source: caller.id, target: 32360, type: 'CALLS' })), nodes: callers });
+        await render({ ...props, proactive: true, proactiveSelection: evidence, readSource: vi.fn(async () => snippet) }); await click('Download & load'); await settle();
+        expect(card().textContent).toContain('Incoming relationships: 40 from 40 symbols (CALLS 40).');
+        expect(card().textContent).not.toContain('too large for the local');
+    });
+
     it('does not ask the model at all without source: the listed facts are the explanation', async () => {
         vi.useFakeTimers(); const { props, runtime } = fixture();
         const readSource = vi.fn(async () => { throw new Error('source unavailable'); });

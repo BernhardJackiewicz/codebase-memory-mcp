@@ -49,7 +49,8 @@ export interface BrowserChatDockProps {
 
 type Phase = 'off' | 'preparing' | 'ready' | 'counting' | 'generating' | 'removing';
 type ChatTurn = BrowserChatTurn & { evidence?: PreparedExplanationContext };
-type Explanation = { key: string; label: string; answer: string; status: string; error?: string; packet?: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; mode?: 'interpretation'; shortened?: boolean; limit?: TokenLimits; evidence?: string };
+/** `grounded`: the facts are listed in the card, so the prompt's name budget is not the reader's limit. */
+type Explanation = { key: string; label: string; answer: string; status: string; error?: string; packet?: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; mode?: 'interpretation'; shortened?: boolean; limit?: TokenLimits; evidence?: string; grounded?: boolean };
 /** Finished explanations per selection, so returning to one does not run the model again. */
 const EXPLANATION_CACHE_SIZE = 32;
 const initialModel = BROWSER_MODELS.find(model => model.availability === 'available')!;
@@ -348,7 +349,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             // Without source the model could only restate the facts or guess from names (an area
             // became "a high-level web framework"): the listed facts are the explanation (K7).
             if (summary.length && explanationMode(packet) === 'graph') {
-                const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: groundedExplanation(summary, undefined, false), status: 'complete', packet,
+                const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: groundedExplanation(summary, undefined, false), status: 'complete', packet, grounded: true,
                     ...snapshot.evidence ? { evidence: snapshot.evidence } : {} };
                 remember(complete); setExplanation(complete);
                 if (!followExplanation.current) setNewExplanation(true);
@@ -381,7 +382,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 const checked = result.status === 'generated' ? explanationSentence(result.markdown, packet, request.map(message => message.content).join('\n')) : {};
                 if (summary.length || (result.status === 'generated' && checked.dropped)) {
                     const markdown = summary.length ? groundedExplanation(summary, checked.sentence, checked.dropped !== undefined) : `_${browserChatText.explanationDropped}_`;
-                    const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: markdown, status: 'complete', mode: 'interpretation', packet,
+                    const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: markdown, status: 'complete', mode: 'interpretation', packet, grounded: summary.length > 0,
                         ...shortened && checked.sentence ? { shortened, limit: { inputTokens: autoInput, outputTokens: autoOutput } } : {}, ...snapshot.evidence ? { evidence: snapshot.evidence } : {} };
                     remember(complete); setExplanation(complete);
                 } else if (result.status === 'generated') {
@@ -699,7 +700,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 </SourceDisclosure>
                 {explanation?.key === selected.key ? <>
                     <ChatMarkdown text={explanation.answer || (explanation.status === 'generating' ? 'Explaining selection…' : explanation.status === 'stopped' ? 'Explanation stopped.' : '')} />
-                    {explanation.status !== 'generating' && <AnswerNotes shortened={limitNote(explanation.shortened, explanation.limit, true)} packet={explanation.packet} model={model.displayName} />}
+                    {explanation.status !== 'generating' && <AnswerNotes shortened={limitNote(explanation.shortened, explanation.limit, true)} packet={explanation.grounded ? undefined : explanation.packet} model={model.displayName} />}
                     {explanation.error && <p className="cbm-chat-turn-error" role="alert">{explanation.error}</p>}
                     {explanation.status !== 'generating' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready' || !!selected.waiting} onClick={() => {
                         lastAttempt.current = undefined; explanations.current.delete(selected.key); setRetryExplanation(value => value + 1);
