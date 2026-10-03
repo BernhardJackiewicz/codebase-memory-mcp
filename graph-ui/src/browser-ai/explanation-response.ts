@@ -1,5 +1,6 @@
 import type { BrowserChatMessage } from './browser-ai-controller';
 import type { PreparedExplanationContext } from './explanation-context';
+import { fileKind } from './file-kind';
 
 export const AUTO_INPUT_TOKENS = 1536;
 export const AUTO_OUTPUT_TOKENS = 128;
@@ -9,8 +10,9 @@ export const CHAT_INPUT_TOKENS = 2048;
  * their own words ("Selected:", "Incoming relationships:"). Numbered ids such as
  * "[graph-1]" stay out: a small model repeats them as "Graph 1" in its answer. */
 export function formatExplanationEvidence(packet: PreparedExplanationContext): string {
+    const kind = (path: string) => { const name = fileKind(path); return name ? `, a ${name}` : ''; };
     return [packet.label, ...packet.evidence.map(item => item.source === 'code'
-        ? `Source${item.location ? ` ${item.location.path}:${item.location.startLine}-${item.location.endLine}` : ''}:\n${item.text}` : item.text),
+        ? `Source${item.location ? ` ${item.location.path}:${item.location.startLine}-${item.location.endLine}${kind(item.location.path)}` : ''}:\n${item.text}` : item.text),
     ...packet.limitations.map(limit => `Limit: ${limit}`)].join('\n\n');
 }
 
@@ -54,9 +56,16 @@ const UNSUPPORTED_CLAIM = /\b(?:returns?|returning|list of|lists of|integers?|st
 /** Identifier-shaped words: snake_case, camelCase, PascalCase with an inner capital, or letters with digits. */
 const IDENTIFIER = /\b(?:[A-Za-z]+_\w+|[a-z]+[A-Z]\w*|[A-Z][a-z0-9]+[A-Z]\w*|[A-Za-z]+\d+\w*)\b/g;
 
+/** Names an answer uses that the request it was given does not contain: written in
+ * backticks or shaped like an identifier (flake8, json_agg_helper). Shown under the answer (K12). */
+export function namesNotIn(answer: string, given: string): string[] {
+    const named = [...answer.matchAll(/`([^`\n]+)`/g)].map(match => match[1].trim()).concat(answer.replace(/`[^`]*`/g, ' ').match(IDENTIFIER) ?? []);
+    return [...new Set(named.filter(name => name && !given.includes(name)))];
+}
+
 /** The model's part of an automatic explanation: its first sentence (two for reader code),
  * or nothing when it names what the evidence does not contain. */
-export function explanationSentence(output: string, packet: PreparedExplanationContext): { sentence?: string; dropped?: 'unsupported' } {
+export function explanationSentence(output: string, packet: PreparedExplanationContext, given = ''): { sentence?: string; dropped?: 'unsupported' } {
     const mode = explanationMode(packet);
     const text = output.trim().replace(/^```\w*\s*|\s*```$/g, '').replace(/\s+/g, ' ').trim();
     if (!/[\p{L}\p{N}]/u.test(text)) return {};
@@ -70,7 +79,8 @@ export function explanationSentence(output: string, packet: PreparedExplanationC
     }
     const keep = mode === 'code' ? 2 : 1;
     const sentence = (ends.length >= keep ? text.slice(0, ends[keep - 1]) : ends.length ? text.slice(0, ends.at(-1)) : text).trim();
-    const evidence = [packet.label, ...packet.evidence.map(item => item.text)].join('\n');
+    // Everything the model was given counts: the evidence, its headings and the file kind.
+    const evidence = [packet.label, ...packet.evidence.map(item => item.text), given].join('\n');
     const named = [...sentence.matchAll(/`([^`]+)`/g)].map(match => match[1]).concat(sentence.replace(/`[^`]*`/g, ' ').match(IDENTIFIER) ?? []);
     // Without source every type or input/output claim is a guess; with source only one the code itself shows.
     const code = packet.evidence.filter(item => item.source === 'code').map(item => item.text).join('\n').toLowerCase();

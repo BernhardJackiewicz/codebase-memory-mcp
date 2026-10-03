@@ -991,6 +991,16 @@ describe('graph answers and answer limits', () => {
         expect(runtime.chat.mock.calls[2][0].map(message => message.content).join('\n')).not.toContain('flake8');
     });
 
+    it('marks names in an answer that are not in the file or the graph facts (K12)', async () => {
+        const { props, runtime } = fixture();
+        runtime.chat.mockResolvedValueOnce('Dieses Script ruft `flake8` mit `subprocess.run` auf und prüft `pull_request_target`.');
+        const workflow = reader('name: New contributor message\n\non:\n  pull_request_target:\n    types: [opened]', 'file', '.github/workflows/new_contributor_pr.yml');
+        await render({ ...props, readerContext: workflow }); await click('Download & load');
+        await type('was kannst du mir über dieses aktuelle File sagen'); await click('Send ↑');
+        const note = [...container.querySelectorAll('.cbm-chat-turn .cbm-chat-answer-note')].map(item => item.textContent).find(text => /Not in the source/.test(text ?? ''));
+        expect(note).toBe('Not in the source or graph facts this answer was given: flake8, subprocess.run. Check these names before relying on them.');
+    });
+
     it('hands a listed answer to the model on request, with its evidence and without the list as history', async () => {
         const { props, runtime } = fixture();
         await render({ ...props, proactiveSelection: jsonbAggEvidence() }); await click('Download & load');

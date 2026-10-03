@@ -32,7 +32,7 @@ describe('Architecture selections as readable facts (K7)', () => {
         const prompt = formatExplanationEvidence(prepareExplanationContext(undefined, context, 3200, carriedSource(context)));
         expect(prompt).toContain('Starting operation: `main` (Function) in `django/conf/project_template/manage.py-tpl:7-18`.');
         expect(prompt).toContain("2 direct calls with call-site evidence: line 9 with 'DJANGO_SETTINGS_MODULE', '{{ project_name }}.settings'; line 18 with sys.argv.");
-        expect(prompt).toContain('Source django/conf/project_template/manage.py-tpl:7-8:');
+        expect(prompt).toContain('Source django/conf/project_template/manage.py-tpl:7-8, a Python source template:');
         expect(prompt).not.toContain('Source unavailable');
         expect(sourceTargetOf(context)).toBeUndefined();
         expect(sourceTargetOf(behaviorMainEvidence())).toMatchObject({ qualifiedName: 'django-demo.django.conf.project_template.manage.main', path: 'django/conf/project_template/manage.py-tpl' });
@@ -52,7 +52,7 @@ describe('the selected symbol source in a Galaxy explanation (K14)', () => {
         const source = symbolSource(sourceTargetOf(jsonbAggEvidence())!, snippet, 'g1')!;
         const packet = prepareExplanationContext(undefined, jsonbAggEvidence(), 3200, source);
         const prompt = formatExplanationEvidence(packet);
-        expect(prompt).toContain('Source django/contrib/postgres/aggregates/general.py:50-52:\nclass JSONBAgg(OrderableAggMixin, Aggregate):');
+        expect(prompt).toContain('Source django/contrib/postgres/aggregates/general.py:50-52, a Python source file:\nclass JSONBAgg(OrderableAggMixin, Aggregate):');
         expect(prompt).toContain('Incoming relationships: 23 from 12 symbols.');
         expect(packet.limitations.join('\n')).not.toContain('Source unavailable');
         expect(prepareExplanationContext(undefined, jsonbAggEvidence(), 3200).limitations.join('\n')).toContain('Source unavailable');
