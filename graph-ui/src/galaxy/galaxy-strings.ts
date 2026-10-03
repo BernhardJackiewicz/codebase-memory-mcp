@@ -54,6 +54,8 @@ export const galaxyHistoryText = {
     /** The accessible name of the Back, Forward and Recent group. */
     group: 'History',
     allGraph: 'All graph',
+    allGraphNarrow: 'All',
+    allGraphTitle: 'Leave the scope and show the whole graph (Esc)',
     layers: (depth: number) => (depth === 1 ? '1 layer' : `${depth} layers`),
     direction: { inbound: 'incoming', outbound: 'outgoing' } as Record<'inbound' | 'outbound', string>,
     noTypes: 'no edge types',

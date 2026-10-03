@@ -9,8 +9,9 @@
  * verweist. Jetzt wird gemessen, in drei Stufen:
  *
  *  - `full`: alle Beschriftungen ausgeschrieben.
- *  - `compact`: knappe Beschriftungen ("+1" statt "Expand +1", "Path…",
- *    "Types · All", "Calls"); so passt sie bei offenem Chat und 1.494 px.
+ *  - `compact`: knappe Beschriftungen ("+1" statt "Expand +1", "All",
+ *    "Path…", "Types · All", "Calls"); so passt sie bei offenem Chat und
+ *    1.494 px, auch mit der Liste der letzten Wurzeln.
  *  - `tight`: dazu wird der Zaehler kuerzer, nie unter 8,5rem und mit vollem
  *    Text im Tooltip; "Partial:" steht vorn und bleibt. So passt sie bis rund
  *    1.440 px.

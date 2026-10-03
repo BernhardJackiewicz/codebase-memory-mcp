@@ -2573,7 +2573,8 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                 {historyControls}
                 {props.workspaceExpanded && <GalaxyNavigator embedded nodes={layout?.nodes ?? []} project={project} fetch={fetchImpl} onSelect={handleNodeClick} onSelectScope={next => { props.onClearSelection?.(); setBackgroundCleared(false); clearTrail(); scope.select(next); }} />}
                 {scope.scope ? <>
-                    {props.workspaceExpanded && <button type="button" onClick={leaveScope}>{galaxyHistoryText.allGraph}</button>}
+                    {props.workspaceExpanded && <button type="button" onClick={leaveScope} aria-label={galaxyHistoryText.allGraph} title={galaxyHistoryText.allGraphTitle}>
+                        <FitLabel wide={galaxyHistoryText.allGraph} narrow={galaxyHistoryText.allGraphNarrow} /></button>}
                     {/*
                       * Handtest K3: die Wurzel ist zugleich der Weg zu ihrer
                       * Quelle. Ein eigener Knopf "Open source" daneben kostete die

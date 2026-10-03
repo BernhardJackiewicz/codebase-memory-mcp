@@ -105,9 +105,9 @@ export function useGraphScope({ project, layout, filePath, range, fetch: fetchIm
     const complete = result?.key === key ? result.value : undefined;
     const error = failure?.key === key ? failure.message : undefined;
     /*
-     * Die Aufrufe am Rand, sobald eine Ebene fertig ist (Review zu K8): eine
-     * kurze Zaehlabfrage, damit "Expand +1" vor einer Explosion warnt und nicht
-     * erst das Render-Limit sie anhaelt. Je Ausschnitt und Tiefe einmal.
+     * The calls at the edge, once a layer is complete (review of K8): one short
+     * count query, so "Expand +1" warns before a layer explodes instead of the
+     * render limit stopping it later. Once per scope and depth.
      */
     const edgeCallsCache = useRef(new Map<string, number>());
     const [edgeCalls, setEdgeCalls] = useState<{ key: string; calls: number }>();
@@ -121,7 +121,7 @@ export function useGraphScope({ project, layout, filePath, range, fetch: fetchIm
             if (abort.signal.aborted || calls === undefined) return;
             if (edgeCallsCache.current.size >= 16) edgeCallsCache.current.delete(edgeCallsCache.current.keys().next().value!);
             edgeCallsCache.current.set(key, calls); setEdgeCalls({ key, calls });
-        }).catch(() => { /* Ohne Zahl bleibt es bei der Schaetzung aus dem Wachstum. */ });
+        }).catch(() => { /* Without a count the estimate from the growth remains. */ });
         return () => abort.abort();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [complete, key]);

@@ -97,6 +97,11 @@ it('K3: the scoped toolbar measures its fit and carries a short label for each w
     expect(narrow(bar.querySelector('.atlas-graph-path-picker > summary'))).toBe('Path…');
     expect(narrow(bar.querySelector('.atlas-trace-edge-filter > summary'))).toBe('Types · All');
     expect(narrow([...bar.querySelectorAll('button')].find(entry => entry.textContent === 'Call order'))).toBe('Calls');
+    // At 1,494 px with the chat open and the recent list shown, the short "All" keeps the count whole.
+    const allGraph = [...bar.querySelectorAll('button')].find(entry => entry.textContent === 'All graph');
+    expect(narrow(allGraph)).toBe('All');
+    expect(allGraph?.getAttribute('aria-label')).toBe('All graph');
+    expect(allGraph?.title).toBe('Leave the scope and show the whole graph (Esc)');
     // The short label is drawn by CSS only: the text of each control stays what it was.
     expect(bar.querySelector('.atlas-trace-edge-filter > summary')?.textContent).toBe('Edge types · All');
     // Out of the scope the toolbar wraps as before and is not measured.
