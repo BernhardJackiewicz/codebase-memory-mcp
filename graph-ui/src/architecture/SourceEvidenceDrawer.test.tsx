@@ -181,14 +181,25 @@ it('focuses close, lets Escape close the modeless drawer, then restores its orig
 });
 
 it('says "end of file" when the last page reaches the end of the Module, so a disabled Next is not a mystery (hand test K13)', async () => {
-    // django/contrib/postgres/aggregates/general.py: 65 lines plus the empty EOF line, read from line 42.
-    const last = { start_line: 42, end_line: 66, source: Array.from({ length: 25 }, (_, i) => `line ${42 + i}`).join('\n'),
+    // django/contrib/postgres/aggregates/general.py: 65 lines; the Module range ends at 66, the empty segment after the last line break.
+    const last = { start_line: 42, end_line: 66, source: `${Array.from({ length: 24 }, (_, i) => `line ${42 + i}`).join('\n')}\n`,
         source_truncated: false, source_clipped: false, next_start_line: undefined, original_end_line: undefined };
     const ui = await mount(vi.fn(async () => page(42, last)));
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
     const pager = ui.container.querySelector('nav[aria-label="Source pages"]')!;
+    expect(ui.container.querySelector('[role=alert]')).toBeNull();
     expect(pager.textContent).toContain('Lines 42 to 66 · end of file');
     const next = [...pager.querySelectorAll('button')].find(button => button.textContent === 'Next lines')!;
     expect(next.disabled).toBe(true);
-    expect(next.title).toBe('Line 66 is the end of this file.');
+    // The title names the file's real last line, not the empty end segment the range counts.
+    expect(next.title).toBe('Line 65 is the last line of this file.');
+});
+
+it('names the last line itself when a file ends without a final line break (hand test K13)', async () => {
+    const last = { start_line: 42, end_line: 66, source: Array.from({ length: 25 }, (_, i) => `line ${42 + i}`).join('\n'),
+        source_truncated: false, source_clipped: false, next_start_line: undefined, original_end_line: undefined };
+    const ui = await mount(vi.fn(async () => page(42, last)));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    const next = [...ui.container.querySelectorAll('nav[aria-label="Source pages"] button')].find(button => button.textContent === 'Next lines')!;
+    expect(next.getAttribute('title')).toBe('Line 66 is the last line of this file.');
 });

@@ -9,7 +9,7 @@ export interface SourceEvidenceTarget { filePath: string; line?: number; name?: 
 const PAGE_LINES = 160;
 /* Hand test K13: a disabled "Next lines" at the last page read like a fault. The page says where the file ends. */
 const END_OF_FILE = ' · end of file';
-const endOfFileTitle = (line: number) => `Line ${line} is the end of this file.`;
+const endOfFileTitle = (line: number) => `Line ${line} is the last line of this file.`;
 const validLine = (value: number | undefined): value is number => value !== undefined && Number.isSafeInteger(value) && value > 0;
 
 export function fileQualifiedName(graph: GraphData | undefined, path: string): string | undefined {
@@ -104,6 +104,8 @@ export default function SourceEvidenceDrawer({ project, target, graph, client, o
     const next = source?.next_start_line;
     const canNext = Boolean(more && validLine(next) && validLine(lastLine) && next === lastLine + 1 && rangeMatches);
     const atEnd = Boolean(source && !more && rangeMatches && validLine(lastLine));
+    // The Module range counts the empty segment after the final line break; the file's last line is the one before it.
+    const lastFileLine = atEnd && lines.length > 1 && lines.at(-1) === '' ? lastLine! - 1 : lastLine;
     const locationVisible = requestedLine !== undefined && validLine(firstLine) && validLine(lastLine)
         && requestedLine >= firstLine && requestedLine <= lastLine && rangeMatches;
     useEffect(() => {
@@ -150,7 +152,7 @@ export default function SourceEvidenceDrawer({ project, target, graph, client, o
             {more && !canNext && <p role="status">The source is truncated, but no valid next page was supplied. Refresh or open Explore to inspect the available source.</p>}
             <nav aria-label="Source pages"><button disabled={!rangeMatches || !firstLine || firstLine <= 1} onClick={() => moveTo(Math.max(1, firstLine! - PAGE_LINES))}>Previous lines</button>
                 <span>{rangeMatches ? `Lines ${firstLine} to ${lastLine}` : 'Unverified line range'}{source.original_end_line ? ` · reported end ${source.original_end_line}` : ''}{atEnd ? END_OF_FILE : ''}</span>
-                <button disabled={!canNext} title={atEnd ? endOfFileTitle(lastLine!) : undefined} onClick={() => moveTo(next!)}>Next lines</button></nav>
+                <button disabled={!canNext} title={atEnd ? endOfFileTitle(lastFileLine!) : undefined} onClick={() => moveTo(next!)}>Next lines</button></nav>
         </>}
     </aside>;
 }
