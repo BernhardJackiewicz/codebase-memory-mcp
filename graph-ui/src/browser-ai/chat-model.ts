@@ -39,6 +39,8 @@ export interface BrowserChatTurn {
     error?: string;
     /** The answer ended at the output token limit. */
     shortened?: boolean;
+    /** The limits that answer ran into. */
+    limit?: { inputTokens: number; outputTokens: number };
     /** Listed from the loaded graph without the model. */
     answeredFrom?: 'graph';
     /** Earlier turns left out of this request to fit the input limit. */

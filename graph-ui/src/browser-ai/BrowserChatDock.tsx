@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type JSX, type ReactNode } from 'react';
 import type { BrowserAiProgress } from './browser-ai-controller';
 import { createBrowserChatRuntime, type BrowserChatRuntime } from './browser-ai-runtime';
-import { BROWSER_MODELS, removeBrowserModelCache } from './model-policy';
+import { BROWSER_MODELS, removeBrowserModelCache, type BrowserModel } from './model-policy';
 import { buildChatMessages, selectionLocation, snapshotAttachment, snapshotReaderContext, trimChatHistory, type BrowserChatAttachment, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatTurn } from './chat-model';
 import { explanationInput, EXPLANATION_DELAY_MS, type ExplanationInput } from './proactive-selection';
 import { prepareExplanationContext, type PreparedExplanationContext } from './explanation-context';
 import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, citedInterpretation, parseExplanationResponse, explanationMessages, formatExplanationEvidence } from './explanation-response';
 import { relationshipAnswer } from './relationship-answer';
-import { clampTokenLimits, tokenLimitBounds, tokenLimitsFor, useAgentPreferences } from './agent-preferences';
+import { clampTokenLimits, tokenLimitBounds, tokenLimitsFor, useAgentPreferences, type TokenLimits } from './agent-preferences';
 import { browserChatText } from './strings';
 import { isGpuRuntimeFailure, BrowserRuntimeFatalError } from './runtime-fault';
 import ChatMarkdown from './ChatMarkdown';
@@ -42,7 +42,7 @@ export interface BrowserChatDockProps {
 
 type Phase = 'off' | 'preparing' | 'ready' | 'counting' | 'generating' | 'removing';
 type ChatTurn = BrowserChatTurn & { evidence?: PreparedExplanationContext };
-type Explanation = { key: string; label: string; answer: string; status: string; error?: string; packet?: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; mode?: 'interpretation'; shortened?: boolean; evidence?: string };
+type Explanation = { key: string; label: string; answer: string; status: string; error?: string; packet?: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; mode?: 'interpretation'; shortened?: boolean; limit?: TokenLimits; evidence?: string };
 /** Finished explanations per selection, so returning to one does not run the model again. */
 const EXPLANATION_CACHE_SIZE = 32;
 const initialModel = BROWSER_MODELS.find(model => model.availability === 'available')!;
@@ -64,11 +64,26 @@ function SourceDisclosure({ children, title }: { children?: ReactNode; title?: s
     </details> : <span className="cbm-chat-speaker" title={title}>Agent</span>;
 }
 
+/** Where an answer stopped and what can be changed: the limits it ran into, the way to
+ * the output limit and the larger models with their download. */
+interface LimitNote { limit: TokenLimits; automatic?: boolean; chatOutput: number; model: BrowserModel; onChangeOutput: () => void }
+function TokenLimitNote({ limit, automatic, chatOutput, model, onChangeOutput }: LimitNote): JSX.Element {
+    const larger = BROWSER_MODELS.filter(candidate => candidate.availability === 'available' && candidate.bytes > model.bytes);
+    return <details className="cbm-chat-limit-note">
+        <summary>{browserChatText.shortened}</summary>
+        <p>{automatic ? browserChatText.limitAutomatic(limit.outputTokens, chatOutput) : browserChatText.limitReached(limit.inputTokens, limit.outputTokens)}</p>
+        <p>{browserChatText.outputRoom(chatOutput, model.maxOutputTokens)}</p>
+        <button type="button" onClick={onChangeOutput}>{browserChatText.changeOutputLimit}</button>
+        {larger.length > 0 && <><p>{browserChatText.largerModels}</p>
+            <ul>{larger.map(candidate => <li key={candidate.id}>{browserChatText.modelDownload(candidate.displayName, sizeLabel(candidate.bytes))}</li>)}</ul></>}
+    </details>;
+}
+
 /** How an answer was bounded: cut at the output limit, scope too large, history left out. */
-function AnswerNotes({ shortened, packet, model, historyOmitted }: { shortened?: boolean; packet?: PreparedExplanationContext; model: string; historyOmitted?: number }): JSX.Element {
+function AnswerNotes({ shortened, packet, model, historyOmitted }: { shortened?: LimitNote; packet?: PreparedExplanationContext; model: string; historyOmitted?: number }): JSX.Element {
     const capacity = packet?.capacity;
     return <>
-        {shortened && <small className="cbm-chat-answer-note">{browserChatText.shortened}</small>}
+        {shortened && <TokenLimitNote {...shortened} />}
         {capacity && <small className="cbm-chat-answer-note">{browserChatText.capacity(capacity.nodes, capacity.edges, model, capacity.shown)}</small>}
         {!!historyOmitted && <small className="cbm-chat-answer-note">{browserChatText.historyTrimmed(historyOmitted)}</small>}
     </>;
@@ -139,6 +154,8 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     const [progress, setProgress] = useState<BrowserAiProgress>();
     const [downloaded, setDownloaded] = useState<Set<string>>(() => new Set());
     const [settingsOpen, setSettingsOpen] = useState(false);
+    /** The token-limit note opens the configuration at its output limit. */
+    const focusOutputLimit = useRef(false);
     const [newOutput, setNewOutput] = useState(false);
     const [stopping, setStopping] = useState(false);
     const [selectedContext, setSelectedContext] = useState<BrowserChatContext[]>([]);
@@ -206,6 +223,16 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     useEffect(() => {
         if (settingsSeen.current !== settingsRequest) { settingsSeen.current = settingsRequest; setSettingsOpen(true); }
     }, [settingsRequest]);
+    useEffect(() => {
+        // Runs after the dialog's own showModal, which focuses its first control.
+        if (!settingsOpen || !focusOutputLimit.current) return;
+        focusOutputLimit.current = false;
+        const field = document.getElementById('cbm-chat-output-tokens');
+        if (field instanceof HTMLInputElement) { field.focus(); field.select(); field.scrollIntoView?.({ block: 'center' }); }
+    }, [settingsOpen]);
+    const openOutputLimit = (): void => { focusOutputLimit.current = true; setSettingsOpen(true); };
+    const limitNote = (shortened: boolean | undefined, limit: TokenLimits | undefined, automatic?: boolean): LimitNote | undefined => shortened
+        ? { limit: limit ?? (automatic ? { inputTokens: autoInput, outputTokens: autoOutput } : limits), automatic, chatOutput: limits.outputTokens, model, onChangeOutput: openOutputLimit } : undefined;
     useEffect(() => {
         const run = autoRun.current;
         if (run && !run.cancelled && (run.key !== selected?.key || !automatic || !proactive)) {
@@ -276,7 +303,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 if (!followExplanation.current) setNewExplanation(true);
                 if (result.status === 'generated') {
                     const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: result.markdown, status: 'complete', mode: 'interpretation', packet, citation: result.citation,
-                        ...shortened ? { shortened } : {}, ...snapshot.evidence ? { evidence: snapshot.evidence } : {} };
+                        ...shortened ? { shortened, limit: { inputTokens: autoInput, outputTokens: autoOutput } } : {}, ...snapshot.evidence ? { evidence: snapshot.evidence } : {} };
                     remember(complete); setExplanation(complete);
                 } else setExplanation({ key: snapshot.key, label: snapshot.label, answer: '', status: 'error', packet, error: result.reason });
             }
@@ -454,7 +481,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             }, { maxOutputTokens: limits.outputTokens, onComplete: ({ stopReason }) => { shortened = stopReason === 'length'; } });
             if (epoch.current !== ticket) return;
             setTurns(previous => previous.map(item => item.id === id ? { ...item, answer: stopRequested.current ? item.answer : output, status: stopRequested.current ? 'stopped' : 'complete',
-                ...shortened && !stopRequested.current ? { shortened } : {} } : item));
+                ...shortened && !stopRequested.current ? { shortened, limit: { inputTokens: limits.inputTokens, outputTokens: limits.outputTokens } } : {} } : item));
         } catch (failure) {
             if (epoch.current !== ticket) return;
             if (isGpuRuntimeFailure(failure)) { invalidateRuntime(failure); return; }
@@ -551,7 +578,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 </SourceDisclosure>
                 {explanation?.key === selected.key ? <>
                     <ChatMarkdown text={explanation.answer || (explanation.status === 'generating' ? 'Explaining selection…' : explanation.status === 'stopped' ? 'Explanation stopped.' : '')} />
-                    {explanation.status !== 'generating' && <AnswerNotes shortened={explanation.shortened} packet={explanation.packet} model={model.displayName} />}
+                    {explanation.status !== 'generating' && <AnswerNotes shortened={limitNote(explanation.shortened, explanation.limit, true)} packet={explanation.packet} model={model.displayName} />}
                     {explanation.error && <p className="cbm-chat-turn-error" role="alert">{explanation.error}</p>}
                     {explanation.status !== 'generating' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready' || !!selected.waiting} onClick={() => {
                         lastAttempt.current = undefined; explanations.current.delete(selected.key); setRetryExplanation(value => value + 1);
@@ -572,7 +599,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                     </> : null}
                 </SourceDisclosure><div className="cbm-chat-answer-text"><ChatMarkdown text={turn.answer || (turn.status === 'generating' ? 'Thinking…' : turn.status === 'stopped' ? 'Stopped before an answer.' : '')} /></div>
                     {turn.status === 'stopped' && turn.answer && <small>Stopped · partial answer</small>}
-                    {turn.status !== 'generating' && turn.answeredFrom !== 'graph' && <AnswerNotes shortened={turn.shortened} packet={turn.evidence} model={BROWSER_MODELS.find(candidate => candidate.id === turn.modelId)?.displayName ?? turn.modelId} historyOmitted={turn.historyOmitted} />}
+                    {turn.status !== 'generating' && turn.answeredFrom !== 'graph' && <AnswerNotes shortened={limitNote(turn.shortened, turn.limit)} packet={turn.evidence} model={BROWSER_MODELS.find(candidate => candidate.id === turn.modelId)?.displayName ?? turn.modelId} historyOmitted={turn.historyOmitted} />}
                     {turn.status === 'error' && <p className="cbm-chat-turn-error" role="alert">{turn.error}</p>}
                     {index === turns.length - 1 && turn.status !== 'generating' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { void send(turn); }}>{turn.answeredFrom === 'graph' ? browserChatText.askModel : 'Retry'}</button>}
                 </div>

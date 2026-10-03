@@ -945,11 +945,49 @@ describe('graph answers and answer limits', () => {
         await render({ ...props, proactiveSelection: longCallers() }); await click('Download & load');
         await type('Explain this class'); await click('Send ↑');
         const notes = [...container.querySelectorAll('.cbm-chat-answer-note')].map(item => item.textContent);
-        expect(notes).toContain('Shortened (token limit)');
+        expect(container.querySelector('.cbm-chat-limit-note > summary')?.textContent).toBe('Token limit reached: the answer was cut short');
         const capacity = notes.map(note => /^55 nodes \/ 40 edges: too large for the local Qwen2\.5 Coder 0\.5B model; showing (\d+)$/.exec(note ?? '')).find(Boolean);
         expect(Number(capacity?.[1])).toBeGreaterThan(0);
         expect(Number(capacity?.[1])).toBeLessThan(24);
         expect(runtime.chat.mock.calls[0][0].at(-1)!.content).toMatch(/\+\d+ more/);
+    });
+
+    it('explains a cut answer: current limits, a way to the output limit and larger models with their download (K1)', async () => {
+        window.localStorage.setItem(AGENT_PREFERENCES_KEY, JSON.stringify({ version: 1, preferences: { modelId: BROWSER_MODELS[0].id, automatic: true,
+            limits: { [BROWSER_MODELS[0].id]: { inputTokens: 2048, outputTokens: 256 } } } }));
+        const { props, runtime } = fixture();
+        runtime.chat.mockImplementationOnce(async (_messages, _onToken, options) => {
+            options?.onComplete?.({ stopReason: 'length' }); return 'A long answer that';
+        });
+        await render({ ...props, attachment: selection }); await click('Download & load');
+        await type('Explain this part'); await click('Send ↑');
+        const note = container.querySelector<HTMLDetailsElement>('.cbm-chat-turn details.cbm-chat-limit-note');
+        expect(note?.querySelector('summary')?.textContent).toBe('Token limit reached: the answer was cut short');
+        expect(note?.textContent).toContain('all 256 output tokens');
+        expect(note?.textContent).toContain('2,048 tokens');
+        expect(note?.textContent).toContain('up to 512 tokens');
+        for (const [name, size] of [['Qwen3 0.6B', '579 MB'], ['LFM2.5 1.2B', '764 MB'], ['Qwen3.5 2B', '1.40 GB']]) expect(note?.textContent).toContain(`${name} · ${size} download`);
+        expect(note?.textContent).not.toContain(`${BROWSER_MODELS[0].displayName} ·`);
+        expect(document.querySelector('dialog')).toBeNull();
+        await act(async () => button('Change the output limit').click());
+        expect(document.querySelector('dialog')).not.toBeNull();
+        expect(document.activeElement?.id).toBe('cbm-chat-output-tokens');
+    });
+
+    it('says why an automatic explanation stops early and that a question may answer longer (K1)', async () => {
+        vi.useFakeTimers();
+        try {
+            const { props, runtime } = fixture();
+            runtime.chat.mockImplementationOnce(async (_messages, _onToken, options) => {
+                options?.onComplete?.({ stopReason: 'length' }); return 'Defines the aggregate and lists the tests that';
+            });
+            await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence() }); await click('Download & load');
+            await act(async () => { await vi.advanceTimersByTimeAsync(650); });
+            const note = container.querySelector<HTMLDetailsElement>('.cbm-chat-explanation details.cbm-chat-limit-note');
+            expect(note?.querySelector('summary')?.textContent).toBe('Token limit reached: the answer was cut short');
+            expect(note?.textContent).toContain('Automatic explanations stop after 128 output tokens');
+            expect(note?.textContent).toContain('up to 512 output tokens');
+        } finally { vi.useRealTimers(); }
     });
 
     it('does not blame the model when only the snapshot bounds the names', async () => {

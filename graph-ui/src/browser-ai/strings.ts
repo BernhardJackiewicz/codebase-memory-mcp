@@ -114,8 +114,17 @@ export const relationshipWords: { en: RelationshipWords; de: RelationshipWords }
 };
 
 /** Notes of the local chat dock about how an answer was produced or bounded. */
+const tokens = (value: number) => value.toLocaleString('en-US');
 export const browserChatText = {
-    shortened: 'Shortened (token limit)',
+    shortened: 'Token limit reached: the answer was cut short',
+    /** What the expanded token-limit note says, with the limits the answer ran into. */
+    limitReached: (input: number, output: number) => `This answer used all ${tokens(output)} output tokens it was allowed. The input limit is ${tokens(input)} tokens for the question, its source and earlier messages.`,
+    limitAutomatic: (automatic: number, output: number) => `Automatic explanations stop after ${tokens(automatic)} output tokens so they stay short. A question in the chat may answer with up to ${tokens(output)} output tokens.`,
+    outputRoom: (output: number, max: number) => output < max ? `You can raise the output limit up to ${tokens(max)} tokens in the agent configuration.`
+        : `The output limit is at the maximum of ${tokens(max)} tokens for this model.`,
+    changeOutputLimit: 'Change the output limit',
+    largerModels: 'A larger model may stay closer to the question. Each needs a one-time download, and its memory use is higher than the download:',
+    modelDownload: (name: string, size: string) => `${name} · ${size} download`,
     /** Offered under a listed answer, which the model did not write. */
     askModel: 'Ask the model',
     capacity: (nodes: number, edges: number, model: string, shown: number) =>

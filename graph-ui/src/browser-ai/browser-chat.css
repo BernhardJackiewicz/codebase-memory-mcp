@@ -120,3 +120,8 @@
 .cbm-chat-evidence-note { font-size: 11px; color: var(--chat-muted); margin: 8px 0 !important; }
 .cbm-chat-evidence-excerpt { max-height: 150px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px; border: 1px solid var(--chat-border); border-radius: 6px; font-size: 11px; }
 .cbm-chat-dock .cbm-chat-answer-note { display: block; margin-top: 7px; color: #d6bf81; font-size: 11px; overflow-wrap: anywhere; }
+.cbm-chat-limit-note { margin-top: 7px; font-size: 11px; color: var(--chat-muted); overflow-wrap: anywhere; }
+.cbm-chat-limit-note > summary { width: fit-content; color: #d6bf81; cursor: pointer; }
+.cbm-chat-limit-note > p { margin: 6px 0 !important; }
+.cbm-chat-limit-note > ul { margin: 4px 0 0; padding-left: 18px; }
+.cbm-chat-dock .cbm-chat-limit-note > button { margin: 2px 0 4px; padding: 3px 8px; font-size: 11px; }
