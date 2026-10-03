@@ -1954,10 +1954,16 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         setTrailStep(0);
         setBackgroundCleared(false);
         setNote('');
-        // A symbol scope reports its root itself once it is complete (see `notifiedScopedSymbol`); the same root stays selected.
-        const sameRoot = entry.scope && scope.scope && scopeIdentity(entry.scope) === scopeIdentity(scope.scope);
-        if (entry.scope && !sameRoot) selectOnComplete.current = entry.scope.kind === 'symbol' ? undefined : scopeIdentity(entry.scope);
-        else { setHighlighted(null); props.onClearSelection?.(); }
+        /*
+         * Die Auswahl folgt der Wurzel: der ganze Graph hat keine, eine andere
+         * Wurzel waehlt sich, sobald sie geladen ist (ein Symbol meldet sich
+         * selbst, siehe `notifiedScopedSymbol`), und dieselbe Wurzel auf einer
+         * anderen Tiefe oder nach einem Abbruch bleibt ausgewaehlt, mit ihren
+         * "Selection details" und dem Kontext des Chats.
+         */
+        if (!entry.scope) { setHighlighted(null); props.onClearSelection?.(); }
+        else if (!scope.scope || scopeIdentity(entry.scope) !== scopeIdentity(scope.scope))
+            selectOnComplete.current = entry.scope.kind === 'symbol' ? undefined : scopeIdentity(entry.scope);
     }, [scope.restore, scope.scope, changeTraceTypes, project, props.onClearSelection]);
     const historyBack = peekNavigation(history, -1);
     const historyForward = peekNavigation(history, 1);

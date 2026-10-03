@@ -5,7 +5,7 @@
  * Attrappe mit einem Knopf fuer die leere Flaeche; die Beziehungen kommen ueber
  * dieselbe RPC-Strecke wie im Betrieb (test-scope-fetch.ts).
  */
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import GalaxyPanel from './GalaxyPanel';
@@ -205,4 +205,57 @@ it('K2: the recent list jumps straight to an earlier root with its last depth', 
     expect(layers()).toBe('2 layers');
     expect(named('Forward')?.disabled).toBe(true);
     expect(named('Back')?.title).toBe('Back to n5 · 1 layer (Alt+Left)');
+});
+
+/*
+ * Wie App.tsx: die Auswahl lebt ausserhalb des Panels, "Selection details"
+ * steht nur, solange sie besteht, und `onClearSelection` loescht sie.
+ */
+function SelectionHarness({ fetch }: { fetch: typeof globalThis.fetch }) {
+    const [selected, setSelected] = useState<string | undefined>();
+    return <GalaxyPanel project="sample" visible workspaceExpanded onOpenNode={vi.fn()} fetch={fetch}
+        onSelectNode={node => setSelected(node.name)} onClearSelection={() => setSelected(undefined)}
+        selectionPanel={selected ? <p data-testid="selected-node">{selected}</p> : undefined} />;
+}
+const selectedNode = () => host.querySelector('[data-testid="selected-node"]')?.textContent;
+
+it('K2/K8: Back to the same root at another depth, and a cancelled layer, keep the selection and its details', async () => {
+    let block = false, release: () => void = () => {};
+    const { fetch } = scopeFetch({ nodes, edges, gate: async () => {
+        if (block) await new Promise<void>(resolve => { release = resolve; });
+    } });
+    await act(async () => root.render(<SelectionHarness fetch={fetch} />));
+    await settle(() => expect(seam().nodes).toBe(5));
+    await act(async () => { seam().clickNode('sample.n1'); });
+    await settle(() => expect(host.querySelector('.atlas-graph-scope-count')?.textContent).toBe('4 nodes · 3 edges'));
+    expect(selectedNode()).toBe('n1');
+    await act(async () => button('Expand +1')!.click());
+    await settle(() => expect(layers()).toBe('2 layers'));
+    expect(selectedNode()).toBe('n1');
+
+    // Back to the same root one layer less: the root stays selected, Selection details stays open to read.
+    await act(async () => named('Back')!.click());
+    await settle(() => expect(layers()).toBe('1 layer'));
+    expect(scopeName()).toBe('n1');
+    expect(selectedNode()).toBe('n1');
+    expect(host.querySelector('.atlas-galaxy-selection-details')).not.toBeNull();
+    await act(async () => named('Forward')!.click());
+    await settle(() => expect(layers()).toBe('2 layers'));
+    expect(selectedNode()).toBe('n1');
+
+    // "−" while a layer loads cancels back one step; the selection is the same root and stays.
+    block = true;
+    await act(async () => button('Expand +1')!.click());
+    await settle(() => expect(host.querySelector('.atlas-graph-scope-count')?.getAttribute('data-state')).toBe('loading'));
+    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Remove graph layer"]')!.click());
+    await settle(() => expect(layers()).toBe('2 layers'));
+    expect(selectedNode()).toBe('n1');
+    expect(host.querySelector('.atlas-galaxy-selection-details')).not.toBeNull();
+    block = false;
+    await act(async () => { release(); });
+
+    // Back to All graph still clears it: the whole graph has no selected root.
+    await act(async () => button('All graph')!.click());
+    await settle(() => expect(host.querySelector('.atlas-graph-scope-name')).toBeNull());
+    expect(selectedNode()).toBeUndefined();
 });

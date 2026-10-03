@@ -56,6 +56,11 @@ the scope that was open before.
 10. **Empty canvas.** A click on empty canvas inside a scope clears only the
     path highlight (K9). That is a step of its own, so Back brings the path
     back.
+11. **Selection follows the root.** Back or Forward to "All graph" clears the
+    selection. An entry with another root selects that root once it is loaded.
+    An entry with the same root (another depth, direction or path, and a
+    cancelled layer) keeps the selection, so Selection details and the chat
+    context stay.
 
 ## Where it lives
 
