@@ -134,11 +134,12 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
             .map(node => ({ node, measure: measureSourceNode(node, catalog) }))
             .sort((a, b) => a.node.kind !== b.node.kind ? a.node.kind === 'area' ? -1 : 1 : (b.measure?.lines ?? -1) - (a.measure?.lines ?? -1) || (a.node.label < b.node.label ? -1 : 1));
         const links = [...model.edges].sort((a, b) => b.count - a.count);
+        const outside = model.nodes.filter(node => node.external);
         return {
             selected: { areaPath, filePath, hotspotArea, measurement: openedScope?.measure,
                 hotspots: hotspotArea ? hotspotCatalog.byArea.get(hotspotArea) : filePath ? hotspotsForNode(scopeNode('file', filePath), hotspotCatalog) : areaPath ? hotspotsForNode(scopeNode('area', areaPath), hotspotCatalog) : undefined,
                 parts: hotspotArea ? [] : parts.slice(0, 24).map(({ node, measure }) => ({ kind: node.kind, label: node.label, files: measure?.files, lines: measure?.lines })),
-                partCount: hotspotArea ? 0 : parts.length, outside: hotspotArea ? [] : model.nodes.filter(node => node.external).slice(0, 24).map(node => node.label) },
+                partCount: hotspotArea ? 0 : parts.length, outside: hotspotArea ? [] : outside.slice(0, 24).map(node => node.label), outsideCount: hotspotArea ? 0 : outside.length },
             relationships: hotspotArea ? undefined : { count: links.length, items: links.slice(0, 24).map(edge => ({ source: nodesById.get(edge.source)?.label ?? edge.source,
                 target: nodesById.get(edge.target)?.label ?? edge.target, type: edge.type, count: edge.count })), omitted: Math.max(0, links.length - 24) },
         };

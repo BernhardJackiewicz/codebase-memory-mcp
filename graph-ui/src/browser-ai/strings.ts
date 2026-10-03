@@ -201,7 +201,13 @@ export const architectureWords = {
     openedHotspots: (path: string) => `Opened hotspot area: ${path}.`,
     scopePart: (name: string, kind: string, files?: number, lines?: number) =>
         `${name} (${kind}${files !== undefined ? `, ${plural(files, 'file', 'files')}` : ''}${lines !== undefined ? `, ${plural(lines, 'indexed line', 'indexed lines')}` : ''})`,
-    parts: (items: readonly string[], total: number) => `Parts shown (${count(total)}, largest first): ${items.join(', ')}${total > items.length ? `; ${count(total - items.length)} more` : ''}.`,
+    /** The parts a view shows of an opened area or file: the ones inside it, largest first, and the ones outside it. */
+    parts: (items: readonly string[], total: number, scope: 'area' | 'file' = 'area', outside: readonly string[] = [], outsideTotal = outside.length) => {
+        const more = (listed: readonly string[], all: number) => all > listed.length ? `, +${count(all - listed.length)} more` : '';
+        if (!outsideTotal) return `Parts shown (${count(total)}, largest first): ${items.join(', ')}${total > items.length ? `; ${count(total - items.length)} more` : ''}.`;
+        const inside = total ? `${count(total)} inside the ${scope}, largest first: ${items.join(', ')}${more(items, total)}; ` : '';
+        return `Parts shown (${count(total + outsideTotal)}): ${inside}${count(outsideTotal)} outside it: ${outside.join(', ')}${more(outside, outsideTotal)}.`;
+    },
     outside: (name: string) => `${name} (outside)`,
     partConnections: (described: readonly string[], omitted: number) => `Connections of its parts: ${described.join('; ')}${omitted ? `; ${plural(omitted, 'more connection', 'more connections')} not listed` : ''}.`,
     measured: (lines: number, measured: number, files: number, languages: readonly string[]) =>

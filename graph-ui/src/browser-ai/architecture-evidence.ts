@@ -90,9 +90,12 @@ function openedFacts(selected: Row, relationships: Row | undefined): Architectur
         const label = text(item.label, 160), kind = text(item.kind, 20);
         return label && (kind === 'area' || kind === 'file') ? [words.scopePart(quote(label), kind, kind === 'area' ? count(item.files) : undefined, count(item.lines))] : [];
     });
-    if (parts.length) facts.push(words.parts(parts, Math.max(count(selected.partCount) ?? 0, parts.length)));
-    facts.push(...hotspotFacts(record(selected.hotspots)));
     const outside = new Set((Array.isArray(selected.outside) ? selected.outside : []).flatMap(name => text(name, 120) ?? []));
+    // The view counts the parts outside the opened scope with the ones inside it, so the card does too.
+    const outsideTotal = Math.max(count(selected.outsideCount) ?? 0, outside.size);
+    if (parts.length || outside.size) facts.push(words.parts(parts, Math.max(count(selected.partCount) ?? 0, parts.length), file ? 'file' : 'area',
+        [...outside].map(quote), outsideTotal));
+    facts.push(...hotspotFacts(record(selected.hotspots)));
     const described = connectionLines(rows(relationships?.items), undefined, outside);
     if (described.length) facts.push(words.partConnections(described, count(relationships?.omitted) ?? 0));
     return { facts };

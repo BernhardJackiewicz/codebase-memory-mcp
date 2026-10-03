@@ -54,6 +54,7 @@ it('explains an opened area with nothing selected from its files, lines, languag
     const text = facts.join('\n');
     expect(facts[0]).toBe('Opened source area: `django`.');
     expect(text).toContain('2,420 indexed lines in 3 measured files of 3; files by language: Python 3.');
+    expect(evidence.scope.visibleNodes).toBe(3);
     expect(text).toContain('Parts shown (3, largest first): `db` (area, 1 file, 2,000 indexed lines), `contrib` (area, 1 file, 300 indexed lines), `shortcuts.py` (file, 120 indexed lines).');
     expect(text).toContain('1 hotspot finding: `filter` (`django/db/models/query.py:1487`) fan-in 1,224.');
     expect(text).not.toContain('`setup`');
@@ -68,9 +69,13 @@ it('names the areas outside the opened area as outside in its connections', asyn
     await act(async () => root.render(<SpatialArchitecture project="sample" generation="g1" graph={outside} overview={overview} view="overview" filter="" active
         onSelectionEvidence={onSelectionEvidence} onNavigate={vi.fn()} onView={vi.fn()} />));
     await click('django'); await click('Open area →');
-    const text = (architectureFacts(JSON.parse(onSelectionEvidence.mock.lastCall![0].text).evidence)?.facts ?? []).join('\n');
+    const evidence = JSON.parse(onSelectionEvidence.mock.lastCall![0].text).evidence;
+    const text = (architectureFacts(evidence)?.facts ?? []).join('\n');
     expect(text).toMatch(/`\(root\)` \(outside\) → `shortcuts\.py`: IMPORTS ×1/);
-    expect(text).not.toMatch(/Parts shown[^\n]*\(root\)/);
+    // The card counts the parts the view counts: the ones inside the area and the ones outside it, each named as such.
+    expect(evidence.scope.visibleNodes).toBe(4);
+    expect(text).toContain('Parts shown (4): 3 inside the area, largest first: `db` (area, 1 file, 2,000 indexed lines), `contrib` (area, 1 file, 300 indexed lines), '
+        + '`shortcuts.py` (file, 120 indexed lines); 1 outside it: `(root)`.');
 });
 
 it('names the hotspot findings of an opened hotspot area', async () => {
