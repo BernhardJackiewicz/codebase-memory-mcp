@@ -37,6 +37,16 @@ describe('Architecture selections as readable facts (K7)', () => {
         expect(sourceTargetOf(context)).toBeUndefined();
         expect(sourceTargetOf(behaviorMainEvidence())).toMatchObject({ qualifiedName: 'django-demo.django.conf.project_template.manage.main', path: 'django/conf/project_template/manage.py-tpl' });
     });
+
+    it('names the function each Behavior call reaches, read from the call-site line of the source', () => {
+        const main = ['def main():', '    """Run administrative tasks."""', "    os.environ.setdefault('DJANGO_SETTINGS_MODULE', '{{ project_name }}.settings')", '    try:',
+            '        from django.core.management import execute_from_command_line', '    except ImportError as exc:', '        raise ImportError(', '            "Could not import Django. Is it installed and"',
+            '            "available on your PYTHONPATH? Did you"', '            "forget to activate a virtual environment?"', '        ) from exc', '    execute_from_command_line(sys.argv)'].join('\n');
+        const facts = selectionSummary(behaviorMainEvidence(main));
+        expect(facts).toContain("2 direct calls with call-site evidence: line 9 calls `os.environ.setdefault` with 'DJANGO_SETTINGS_MODULE', '{{ project_name }}.settings'; line 18 calls `execute_from_command_line` with sys.argv.");
+        // A line that does not hold the call's arguments names nothing.
+        expect(selectionSummary(behaviorMainEvidence('def main():\n    pass'))).toContain("2 direct calls with call-site evidence: line 9 with 'DJANGO_SETTINGS_MODULE', '{{ project_name }}.settings'; line 18 with sys.argv.");
+    });
 });
 
 describe('the selected symbol source in a Galaxy explanation (K14)', () => {

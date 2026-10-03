@@ -208,7 +208,7 @@ export const architectureWords = {
     examples: (items: readonly string[]) => `For example: ${items.join('; ')}.`,
     operation: (symbol: string) => `Starting operation: ${symbol}.`,
     call: (caller: string, callee: string, where?: string) => `Selected call: ${caller} calls ${callee}${where ? ` at ${where}` : ''}.`,
-    callAt: (line: number, args: readonly string[]) => `line ${line}${args.length ? ` with ${args.join(', ')}` : ''}`,
+    callAt: (line: number, args: readonly string[], callee?: string) => `line ${line}${callee ? ` calls ${callee}` : ''}${args.length ? ` with ${args.join(', ')}` : ''}`,
     directCalls: (total: number, calls: readonly string[]) => `${plural(total, 'direct call', 'direct calls')} with call-site evidence${calls.length ? `: ${calls.join('; ')}` : ''}.`,
     path: (names: readonly string[]) => `Call chain: ${names.join(' → ')}.`,
     component: (name: string, members?: number, files?: number) => `Component: ${name}${members !== undefined ? `, ${plural(members, 'member', 'members')}` : ''}${files !== undefined ? ` in ${plural(files, 'file', 'files')}` : ''}.`,

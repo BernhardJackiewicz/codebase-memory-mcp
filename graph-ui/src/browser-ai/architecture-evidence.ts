@@ -101,6 +101,19 @@ function spatialFacts(selected: Row, relationships: Row | undefined, scope: Row 
     return { facts, target: targetOf(symbol) };
 }
 
+/** The function a call site reaches, read from its source line: the call whose arguments
+ * begin with the recorded first argument, or an empty call when none is recorded. The
+ * calls carry only the target's id, so the line is the only name at hand. */
+function calleeAt(source: string | undefined, start: number | undefined, line: number, first: string | undefined): string | undefined {
+    const code = source && start ? source.split('\n')[line - start] : undefined;
+    if (!code) return undefined;
+    for (const match of code.matchAll(/([A-Za-z_][\w.]*)\s*\(\s*/g)) {
+        const rest = code.slice(match.index + match[0].length);
+        if (first ? rest.startsWith(first) : rest.startsWith(')')) return text(match[1], 80);
+    }
+    return undefined;
+}
+
 /** Behavior: the starting operation, the selected call and the calls it makes. */
 function behaviorFacts(selected: Row, relationships: Row | undefined): ArchitectureFacts {
     const facts: string[] = [];
@@ -109,13 +122,17 @@ function behaviorFacts(selected: Row, relationships: Row | undefined): Architect
     const call = record(selected.call);
     const site = record(call?.callsite);
     if (caller && callee && caller.name !== callee.name) facts.push(words.call(quote(caller.name), quote(callee.name), site ? `${text(site.file_path, 240) ?? ''}${lines(site.line, undefined)}` : undefined));
+    const current = record(record(selected.currentSource)?.source);
+    const sourceText = typeof current?.source === 'string' ? current.source : undefined;
+    const from = count(current?.start_line), to = count(current?.end_line);
     const calls = rows(relationships?.calls);
     if (calls.length) {
         facts.push(words.directCalls(count(relationships?.count) ?? calls.length, calls.slice(0, 6).flatMap(item => {
             const where = record(item.callsite);
             const line = count(where?.line);
             const args = rows(item.arguments).flatMap(argument => text(argument.e, 60) ?? []).slice(0, 3);
-            return line ? [words.callAt(line, args)] : [];
+            const name = line ? calleeAt(sourceText, from, line, args[0]) : undefined;
+            return line ? [words.callAt(line, args, name ? quote(name) : undefined)] : [];
         })));
     }
     const path = rows(relationships?.nodes);
@@ -123,9 +140,6 @@ function behaviorFacts(selected: Row, relationships: Row | undefined): Architect
     const component = record(selected.component);
     const label = text(component?.label, 160);
     if (label) facts.push(words.component(quote(label), count(component?.member_count), count(component?.file_count)));
-    const current = record(record(selected.currentSource)?.source);
-    const sourceText = typeof current?.source === 'string' ? current.source : undefined;
-    const from = count(current?.start_line), to = count(current?.end_line);
     const sourcePath = text(current?.file_path, 400);
     const symbol = callee ?? operation;
     return { facts, target: targetOf(operation ?? symbol),
