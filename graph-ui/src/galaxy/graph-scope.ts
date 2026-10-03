@@ -1,4 +1,3 @@
-import { hierarchyBlockPositions } from './hierarchy-blocks';
 import { RpcIntelligenceClient } from '../provider/rpc-client';
 import { escapeLiteral } from '../provider/cypher';
 import type { QueryGraphResult } from '../provider/rpc-schemas';
@@ -8,8 +7,23 @@ import type { GraphNeighborhoodTransaction } from './graph-neighborhood-cache';
 
 export type TraceDirection = 'both' | 'inbound' | 'outbound';
 export type GraphScope = { kind: 'node'; id: number; name: string; qualifiedName?: string } | { kind: 'symbol'; qualifiedName: string; name: string } | { kind: 'file' | 'folder'; path: string; name: string; range?: SourceFocusRange };
-export interface ScopedGraph { data: GraphData; roots: Set<number>; depth: number; exhausted: boolean; frontier?: number[]; levels?: Map<number, number>; traversalKey?: string }
-export interface GraphQueryClient { queryGraph(project: string, query: string, cursor?: string): Promise<QueryGraphResult> }
+/** A layer that stopped at the render limit (hand test K8): what was loaded, and which limit stopped it. */
+export interface ScopePartial { layer: number; nodes: number; edges: number; limit: 'nodes' | 'edges' }
+export interface ScopedGraph { data: GraphData; roots: Set<number>; depth: number; exhausted: boolean; frontier?: number[]; levels?: Map<number, number>; traversalKey?: string; partial?: ScopePartial }
+/** How large one query_graph page may be. */
+export interface QueryBudget { maxRows?: number; maxOutputTokens?: number }
+export interface GraphQueryClient { queryGraph(project: string, query: string, cursor?: string, budget?: QueryBudget): Promise<QueryGraphResult> }
+/** What a running load has gathered so far, for the toolbar instead of an endless "Loading". */
+export interface ScopeProgress { layer: number; nodes: number; edges: number; requests: number }
+/*
+ * Grosse Seiten, und das ist die eigentliche Antwort auf K8. Der Server rechnet
+ * eine Abfrage fuer JEDE Fortsetzungsseite vollstaendig neu und schickt davon
+ * nur ein Fenster (Vorgabe 200 Zeilen und rund 3.200 Tokens, also bei dieser
+ * Spaltenbreite etwa 30 Zeilen). Die dritte Ebene um JSONBAgg brauchte so ueber
+ * 500 Aufrufe nacheinander, je rund 0,6 s. Mit diesem Fenster ist eine Ebene
+ * eine Handvoll Aufrufe; die Ergebnisse selbst aendern sich nicht.
+ */
+export const SCOPE_PAGE_BUDGET: QueryBudget = { maxRows: 5000, maxOutputTokens: 600_000 };
 /** Undefined includes every relationship type; an explicit empty list includes none. */
 export function graphEdgeTypesKey(edgeTypes?: readonly string[]): string {
     return JSON.stringify(edgeTypes === undefined ? null : [...new Set(edgeTypes)].sort());
@@ -25,22 +39,28 @@ const nodeColumns = (alias: string, prefix: string) => [`id(${alias}) AS ${prefi
 
 /** The cursor binds a complete query result to one graph generation. Every
  * continuation is consumed; a daemon cap or missing cursor is never silently
- * accepted as the selected file's complete neighborhood. */
-export async function readGraphPages(client: GraphQueryClient, project: string, query: string, key: string, signal?: AbortSignal): Promise<Record<string, string>[]> {
+ * accepted as the selected file's complete neighborhood. The one exception is
+ * `onPage` answering 'stop' (a layer at its render limit, K8): the caller then
+ * holds a deliberately cut result and must mark it partial. */
+export async function readGraphPages(client: GraphQueryClient, project: string, query: string, key: string, signal?: AbortSignal,
+    onRequest?: () => void, onPage?: (rows: readonly Record<string, string>[]) => 'stop' | void): Promise<Record<string, string>[]> {
     signal?.throwIfAborted();
-    let page = await client.queryGraph(project, query);
+    onRequest?.();
+    let page = await client.queryGraph(project, query, undefined, SCOPE_PAGE_BUDGET);
     const columns = page.columns, total = page.total, records: Record<string, string>[] = [];
     const cursors = new Set<string>(), identities = new Set<number>();
     for (;;) {
         signal?.throwIfAborted();
         if (JSON.stringify(columns) !== JSON.stringify(page.columns) || page.total !== total
             || (page.offset !== undefined && page.offset !== records.length)) throw new Error('Graph pagination changed its result snapshot.');
+        const fresh: Record<string, string>[] = [];
         for (const row of page.rows) {
             const record = Object.fromEntries(columns.map((column, index) => [column, row[index] ?? '']));
             const identity = id(record[key]);
             if (identities.has(identity)) throw new Error('Graph pagination repeated a row.');
-            identities.add(identity); records.push(record);
+            identities.add(identity); records.push(record); fresh.push(record);
         }
+        if (onPage?.(fresh) === 'stop') return records;
         if (!page.nextCursor) {
             if (page.hasMore || page.truncated || page.totalRelation === 'gte' || (total !== undefined && records.length < total))
                 throw new Error(`Incomplete graph response (${records.length} relationships read); ${page.truncationReason ?? 'the server did not provide a continuation'}.`);
@@ -49,7 +69,8 @@ export async function readGraphPages(client: GraphQueryClient, project: string, 
         if (!page.rows.length || cursors.has(page.nextCursor)) throw new Error('Graph pagination did not advance.');
         if (page.nextOffset !== undefined && page.nextOffset !== records.length) throw new Error('Graph pagination skipped rows.');
         cursors.add(page.nextCursor); signal?.throwIfAborted();
-        page = await client.queryGraph(project, query, page.nextCursor);
+        onRequest?.();
+        page = await client.queryGraph(project, query, page.nextCursor, SCOPE_PAGE_BUDGET);
     }
 }
 
@@ -100,7 +121,11 @@ export function arrangeScopedGraph(nodes: readonly GraphNode[], edges: readonly 
 }
 
 export async function loadGraphScope(project: string, scope: GraphScope, depth: number, direction: TraceDirection,
-    layout: GraphData | undefined, options: { fetch?: typeof globalThis.fetch; signal?: AbortSignal; client?: GraphQueryClient; previous?: ScopedGraph; edgeTypes?: readonly string[]; cache?: GraphNeighborhoodTransaction } = {}): Promise<ScopedGraph> {
+    layout: GraphData | undefined, options: { fetch?: typeof globalThis.fetch; signal?: AbortSignal; client?: GraphQueryClient; previous?: ScopedGraph; edgeTypes?: readonly string[]; cache?: GraphNeighborhoodTransaction;
+        /** Called after every relationship request with what is loaded so far. */
+        onProgress?: (progress: ScopeProgress) => void;
+        /** The render limits: a layer that grows past them stops and is marked partial. */
+        limits?: { nodes: number; edges: number } } = {}): Promise<ScopedGraph> {
     options.signal?.throwIfAborted();
     const client = options.client ?? new RpcIntelligenceClient({ fetch: options.fetch, signal: options.signal });
     const edgeTypes = options.edgeTypes === undefined ? undefined : [...new Set(options.edgeTypes)].sort();
@@ -117,12 +142,15 @@ export async function loadGraphScope(project: string, scope: GraphScope, depth: 
         throw new Error('This node has no indexed qualified identity; its relationships cannot be retrieved reliably.');
     const predicate = scope.kind === 'node' ? `n.qualified_name = "${escapeLiteral(scope.qualifiedName ?? known.get(scope.id)?.qualified_name ?? '')}"` : scope.kind === 'symbol' ? `n.qualified_name = "${escapeLiteral(scope.qualifiedName)}"` : scope.kind === 'file' ? `n.file_path = "${escapeLiteral(scope.path)}"`
         : `n.file_path STARTS WITH "${escapeLiteral(scope.path.replace(/\/$/, '') + '/')}"`;
-    const previous = options.previous?.traversalKey === traversalKey && options.previous.depth <= depth ? options.previous : undefined;
+    // A partial layer misses part of its frontier, so it is never the base of the next one.
+    const previous = options.previous?.traversalKey === traversalKey && options.previous.depth <= depth && !options.previous.partial ? options.previous : undefined;
+    let requests = 0;
+    const counted = () => { requests += 1; };
     const cachedNode = scope.kind === 'node' ? options.cache?.node(scope.id) : undefined;
     let rootNodes = cachedNode && cachedNode.qualified_name === (scope.kind === 'node' ? scope.qualifiedName ?? known.get(scope.id)?.qualified_name : '')
         ? [cachedNode] : options.cache?.roots(predicate);
     if (!previous && !rootNodes) {
-        const rootRows = await readGraphPages(client, project, `MATCH (n) WHERE ${predicate} RETURN ${nodeColumns('n', '')}`, 'id', options.signal);
+        const rootRows = await readGraphPages(client, project, `MATCH (n) WHERE ${predicate} RETURN ${nodeColumns('n', '')}`, 'id', options.signal, counted);
         rootNodes = rootRows.map(row => readNode(row, '', known));
         options.cache?.rememberRoots(predicate, rootNodes);
     }
@@ -133,7 +161,11 @@ export async function loadGraphScope(project: string, scope: GraphScope, depth: 
     const levels = new Map<number, number>(previous?.levels ?? [...roots].map(identity => [identity, 0] as const));
     const edges = new Map<number, GraphEdge>(previous?.data.edges.filter(edge => edge.id !== undefined).map(edge => [edge.id!, edge]) ?? []);
     let frontier = edgeTypes?.length === 0 ? [] : previous?.frontier ?? [...roots], reachedDepth = previous?.depth ?? 0;
-    for (let hop = reachedDepth; hop < Math.max(depth, roots.size > 1 ? 1 : 0) && frontier.length; hop++) {
+    let partial: ScopePartial | undefined;
+    const overLimit = (layer: number): ScopePartial | undefined => !options.limits ? undefined
+        : nodes.size > options.limits.nodes ? { layer, nodes: nodes.size, edges: edges.size, limit: 'nodes' }
+            : edges.size > options.limits.edges ? { layer, nodes: nodes.size, edges: edges.size, limit: 'edges' } : undefined;
+    for (let hop = reachedDepth; hop < Math.max(depth, roots.size > 1 ? 1 : 0) && frontier.length && !partial; hop++) {
         const next = new Set<number>();
         const fileBoundary = hop === 0 && (scope.kind === 'folder' || (scope.kind === 'file' && !scope.range));
         const accept = (evidenceNodes: readonly GraphNode[], evidenceEdges: readonly GraphEdge[]) => {
@@ -149,6 +181,7 @@ export async function loadGraphScope(project: string, scope: GraphScope, depth: 
         };
         const legs = direction === 'both' ? ['outbound', 'inbound'] as const : [direction];
         for (const leg of legs) {
+            if (partial) break;
             const missing: number[] = [];
             for (const identity of frontier) {
                 const cached = options.cache?.neighborhood(identity, leg, edgeTypes);
@@ -156,7 +189,7 @@ export async function loadGraphScope(project: string, scope: GraphScope, depth: 
             }
             const useBoundary = fileBoundary && missing.length === frontier.length;
             const batchSize = useBoundary ? Math.max(1, missing.length) : BATCH_SIZE;
-            for (let at = 0; at < missing.length; at += batchSize) {
+            for (let at = 0; at < missing.length && !partial; at += batchSize) {
                 const batch = missing.slice(at, at + batchSize), batchIds = new Set(batch);
                 const names = batch.map(value => nodes.get(value)?.qualified_name);
                 if (!useBoundary && names.some(name => !name)) throw new Error('A selected graph node has no qualified identity; its dependencies cannot be loaded completely.');
@@ -168,23 +201,35 @@ export async function loadGraphScope(project: string, scope: GraphScope, depth: 
                 // Keep each predicate on the left seed, so early WHERE prunes before
                 // adjacency expansion. An OR spanning a and b materializes the repo.
                 const pattern = leg === 'inbound' ? `(b)<-${relationship}-(a)` : `(a)-${relationship}->(b)`;
-                const rows = await readGraphPages(client, project, `MATCH ${pattern} WHERE ${relation} RETURN id(r) AS edge_id, type(r) AS edge_type, r.line AS edge_line, ${nodeColumns('a', 'a_')}, ${nodeColumns('b', 'b_')}`, 'edge_id', options.signal);
                 const evidenceNodes = new Map(batch.map(identity => [identity, nodes.get(identity)!]));
                 const evidenceEdges: GraphEdge[] = [];
-                for (const row of rows) {
-                    // Filter before discovering a frontier, including on older servers
-                    // whose typed-pattern implementation may return extra rows.
-                    if (allowedTypes && !allowedTypes.has(row.edge_type ?? '')) continue;
-                    const source = readNode(row, 'a_', known), target = readNode(row, 'b_', known);
-                    const incident = leg === 'inbound' ? batchIds.has(target.id) : batchIds.has(source.id);
-                    if (!incident) continue; // Qualified names are not assumed unique.
-                    evidenceNodes.set(source.id, source); evidenceNodes.set(target.id, target);
-                    const identity = id(row.edge_id);
-                    evidenceEdges.push({ id: identity, source: source.id, target: target.id, type: row.edge_type ?? '', line: number(row.edge_line) });
-                }
-                const verifiedNodes = [...evidenceNodes.values()];
-                options.cache?.rememberNeighborhood(batch, leg, edgeTypes, verifiedNodes, evidenceEdges);
-                accept(verifiedNodes, evidenceEdges);
+                /*
+                 * Seite fuer Seite (Review zu K8): ein Stapel der dritten Ebene
+                 * um JSONBAgg las acht Fortsetzungsseiten, und die Leiste stand
+                 * dabei 8 s still. Jetzt zaehlt jede Seite sofort, und die Seite,
+                 * die ueber das Render-Limit fuehrt, ist die letzte: der Rest des
+                 * Stapels wird nicht mehr gelesen. Ein so abgeschnittener Stapel
+                 * kommt nicht in den Nachbarschafts-Cache.
+                 */
+                await readGraphPages(client, project, `MATCH ${pattern} WHERE ${relation} RETURN id(r) AS edge_id, type(r) AS edge_type, r.line AS edge_line, ${nodeColumns('a', 'a_')}, ${nodeColumns('b', 'b_')}`, 'edge_id', options.signal, counted, (rows) => {
+                    const pageNodes = new Map<number, GraphNode>(), pageEdges: GraphEdge[] = [];
+                    for (const row of rows) {
+                        // Filter before discovering a frontier, including on older servers
+                        // whose typed-pattern implementation may return extra rows.
+                        if (allowedTypes && !allowedTypes.has(row.edge_type ?? '')) continue;
+                        const source = readNode(row, 'a_', known), target = readNode(row, 'b_', known);
+                        const incident = leg === 'inbound' ? batchIds.has(target.id) : batchIds.has(source.id);
+                        if (!incident) continue; // Qualified names are not assumed unique.
+                        for (const end of [source, target]) { evidenceNodes.set(end.id, end); pageNodes.set(end.id, end); }
+                        const edge = { id: id(row.edge_id), source: source.id, target: target.id, type: row.edge_type ?? '', line: number(row.edge_line) };
+                        evidenceEdges.push(edge); pageEdges.push(edge);
+                    }
+                    accept([...pageNodes.values()], pageEdges);
+                    options.onProgress?.({ layer: hop + 1, nodes: nodes.size, edges: edges.size, requests });
+                    partial = overLimit(hop + 1);
+                    return partial ? 'stop' : undefined;
+                });
+                if (!partial) options.cache?.rememberNeighborhood(batch, leg, edgeTypes, [...evidenceNodes.values()], evidenceEdges);
             }
         }
         reachedDepth = hop + 1;
@@ -195,7 +240,53 @@ export async function loadGraphScope(project: string, scope: GraphScope, depth: 
         const initial = [...edges.values()].filter(edge => roots.has(edge.source) && roots.has(edge.target));
         return { data: arrangeScopedGraph([...nodes.values()].filter(node => roots.has(node.id)), initial, roots, levels), roots, depth: 0, exhausted: edgeTypes?.length === 0, frontier: edgeTypes?.length === 0 ? [] : [...roots], levels, traversalKey };
     }
-    return { data: arrangeScopedGraph([...nodes.values()], [...edges.values()], roots, levels), roots, depth: reachedDepth, exhausted: edgeTypes?.length === 0 || (depth > 0 && frontier.length === 0), frontier, levels, traversalKey };
+    return { data: arrangeScopedGraph([...nodes.values()], [...edges.values()], roots, levels), roots, depth: reachedDepth,
+        exhausted: !partial && (edgeTypes?.length === 0 || (depth > 0 && frontier.length === 0)), frontier, levels, traversalKey, ...(partial ? { partial } : {}) };
+}
+
+/*
+ * Die Aufrufe am Rand eines Ausschnitts, bevor die naechste Ebene laedt
+ * (Review zu K8). Das Wachstum der letzten Ebene sagte fuer die dritte Ebene um
+ * JSONBAgg rund 400 Knoten voraus, und es kamen ueber 9.000: unter den 75
+ * Randknoten stehen len, create, str und list mit je ueber tausend Aufrufern.
+ * Der Index zaehlt die CALLS eines Knotens, ohne eine Beziehung abzulaufen
+ * (`n.in_degree`, `n.out_degree`, rund 0,2 s fuer 64 Knoten). Was davon schon
+ * geladen ist, faellt heraus; der Rest ist eine Untergrenze fuer die Zeilen der
+ * naechsten Ebene, und meist fuehrt jede zu einem neuen Knoten. Andere Arten
+ * zaehlt der Index so nicht; ohne CALLS gibt es keine Zahl.
+ */
+export async function frontierCallCount(client: GraphQueryClient, project: string, scoped: ScopedGraph, direction: TraceDirection,
+    edgeTypes: readonly string[] | undefined, signal?: AbortSignal): Promise<number | undefined> {
+    if (scoped.exhausted || scoped.partial || !scoped.frontier?.length || (edgeTypes && !edgeTypes.includes('CALLS'))) return undefined;
+    const frontier = new Set(scoped.frontier), byId = new Map(scoped.data.nodes.map(node => [node.id, node]));
+    const names = [...frontier].map(identity => byId.get(identity)?.qualified_name).filter((name): name is string => Boolean(name));
+    let calls = 0;
+    for (let at = 0; at < names.length; at += BATCH_SIZE) {
+        const rows = await readGraphPages(client, project, `MATCH (n) WHERE ${anyNames('n', names.slice(at, at + BATCH_SIZE))} RETURN id(n) AS id, n.in_degree AS calls_in, n.out_degree AS calls_out`, 'id', signal);
+        for (const row of rows) {
+            if (!frontier.has(id(row.id))) continue;
+            calls += (direction !== 'outbound' ? number(row.calls_in) ?? 0 : 0) + (direction !== 'inbound' ? number(row.calls_out) ?? 0 : 0);
+        }
+    }
+    for (const edge of scoped.data.edges) {
+        if (edge.type !== 'CALLS') continue;
+        if (direction !== 'outbound' && frontier.has(edge.target)) calls -= 1;
+        if (direction !== 'inbound' && frontier.has(edge.source)) calls -= 1;
+    }
+    return Math.max(0, calls);
+}
+
+/** Eine Schaetzung der naechsten Ebene, bevor sie geladen wird (K8): so viele
+ * Knoten stehen an ihrem Rand, und so viele neue brachte jeder Knoten der
+ * letzten Ebene. Eine Schaetzung und keine Zusage; die Grenze beim Laden
+ * selbst haelt die Ebene trotzdem am Render-Limit an. */
+export function nextLayerEstimate(scope: ScopedGraph | undefined): { layer: number; frontier: number; perNode: number; estimate: number } | undefined {
+    if (!scope?.levels || scope.exhausted || scope.partial) return undefined;
+    const at = (level: number) => scope.data.nodes.filter(node => (scope.roots.has(node.id) ? 0 : scope.levels!.get(node.id)) === level).length;
+    const frontier = at(scope.depth);
+    if (frontier === 0) return undefined;
+    const perNode = scope.depth > 0 ? frontier / Math.max(1, at(scope.depth - 1)) : 1;
+    return { layer: scope.depth + 1, frontier, perNode, estimate: Math.round(frontier * perNode) };
 }
 
 /** Was die Galaxie zeigt, waehrend ein Scope angeordnet wird: das aktuelle
@@ -217,29 +308,136 @@ export function limitGraphRender(data: GraphData, nodeLimit: number, edgeLimit: 
     return { ...data, nodes, edges };
 }
 
-/** The same evidence in successive hop blocks. Small hops keep one column;
- * large hops wrap into compact grids so fitting thousands of neighbors does
- * not turn the entire scene into a single vertical line.
+/** Hierarchy constants for a Galaxy scope (hand test K5). Labels are NodeLabels sprites at font 12. */
+export const SCOPED_HIERARCHY_LEVEL_GAP = 160;
+export const SCOPED_HIERARCHY_ROW_GAP = 32;
+/** Texture width of a hierarchy name in a scope: about forty characters before an ellipsis. */
+export const SCOPED_HIERARCHY_LABEL_MAX_TEXT_WIDTH = 1600;
+/**
+ * Up to this many nodes every name is drawn, and columns stay single columns; above it they wrap into grids,
+ * without names or edge labels. Sixty left JSONBAgg at two layers (90 nodes) without a single name (review of K5).
+ */
+export const SCOPED_HIERARCHY_LABEL_BUDGET = 150;
+const SCOPED_HIERARCHY_WRAP_AT = 12;
+const LABEL_UNITS_PER_CHAR = 7.1, LABEL_UNITS_PADDING = 12, LABEL_GUTTER = 40;
+const LABEL_MAX_CHARS = Math.floor((SCOPED_HIERARCHY_LABEL_MAX_TEXT_WIDTH - 64) / 38);
+
+/** The world width of a name in the scoped hierarchy, as NodeLabels draws it (about 38 texture pixels per character at 64 px). */
+export function hierarchyLabelWidth(name: string): number {
+    return Math.min(name.length, LABEL_MAX_CHARS) * LABEL_UNITS_PER_CHAR + LABEL_UNITS_PADDING;
+}
+
+/*
+ * Der Ausschnitt als Hierarchie (Handtest K5).
  *
- * Hops come from the discovered levels. Only arranged rings encode them in z;
- * a preview built from the overall layout keeps its global coordinates. */
+ * Bis hierher stand alles einer Ebene in EINER Spalte rechts der Wurzel,
+ * Eingehendes und Ausgehendes aller Arten gemischt und alphabetisch, und der
+ * Hinweis behauptete "one column per call depth". Jetzt:
+ *
+ *  - Eingehendes links, die Wurzel in der Mitte, Ausgehendes rechts. Ein
+ *    Knoten der ersten Ebene steht dort, wohin seine Kante zur Wurzel zeigt;
+ *    jeder tiefere Knoten auf der Seite seines Elternknotens, also des
+ *    Nachbarn eine Ebene naeher an der Wurzel, ueber den er gefunden wurde.
+ *  - In einer Spalte stehen die Knoten nach ihrem Elternknoten, dann CALLS vor
+ *    den anderen Arten, CALLS nach Aufrufzeile (`edge.line`), dann nach Name.
+ *  - Die Spalten stehen so weit auseinander, wie ihre Namen breit sind: kein
+ *    Name wird gekuerzt, solange Platz ist.
+ *
+ * Die Ebene kommt aus den gefundenen `levels`; nur eine Ringanordnung legt sie
+ * in z ab, eine Vorschau aus dem ganzen Layout behaelt globale Koordinaten.
+ * Sehr grosse Ebenen (ohne Namen) brechen weiter in kompakte Raster um.
+ */
 export function scopedHierarchy(scope: ScopedGraph, name: string): import('./hierarchy-layout').HierarchyProjection {
+    const levelOf = (node: GraphNode) => scope.roots.has(node.id) ? 0 : scope.levels?.get(node.id) ?? Math.max(0, Math.round(-node.z / 18));
+    const level = new Map(scope.data.nodes.map(node => [node.id, levelOf(node)] as const));
+    const incident = new Map<number, GraphEdge[]>();
+    for (const edge of scope.data.edges) {
+        for (const end of [edge.source, edge.target]) { const list = incident.get(end) ?? []; list.push(edge); incident.set(end, list); }
+    }
+    const typeRank = (edge: GraphEdge | undefined) => edge?.type === 'CALLS' ? 0 : 1;
+    const side = new Map<number, -1 | 0 | 1>(), parent = new Map<number, { id: number; edge: GraphEdge }>();
+    const ordered = [...scope.data.nodes].sort((a, b) => level.get(a.id)! - level.get(b.id)! || a.id - b.id);
+    for (const node of ordered) {
+        const hop = level.get(node.id)!;
+        if (hop === 0) { side.set(node.id, 0); continue; }
+        // The neighbour one layer closer to the root decides the side; a consistently directed edge wins, then CALLS.
+        const candidates = (incident.get(node.id) ?? []).flatMap(edge => {
+            const other = edge.source === node.id ? edge.target : edge.source;
+            const otherSide = side.get(other);
+            if (other === node.id || otherSide === undefined || level.get(other) !== hop - 1) return [];
+            const towards = otherSide !== 0 ? otherSide : edge.source === other ? 1 : -1;
+            const consistent = towards === 1 ? edge.source === other : edge.target === other;
+            return [{ other, edge, towards: towards as -1 | 1, consistent }];
+        }).sort((a, b) => Number(b.consistent) - Number(a.consistent) || typeRank(a.edge) - typeRank(b.edge)
+            || (a.edge.line ?? Number.MAX_SAFE_INTEGER) - (b.edge.line ?? Number.MAX_SAFE_INTEGER) || a.other - b.other);
+        const chosen = candidates[0];
+        side.set(node.id, chosen?.towards ?? 1);
+        if (chosen) parent.set(node.id, { id: chosen.other, edge: chosen.edge });
+    }
     const columns = new Map<number, GraphNode[]>();
     for (const node of scope.data.nodes) {
-        const hop = scope.roots.has(node.id) ? 0 : scope.levels?.get(node.id) ?? Math.max(0, Math.round(-node.z / 18));
-        const entries = columns.get(hop) ?? []; entries.push(node); columns.set(hop, entries);
+        const column = side.get(node.id)! * level.get(node.id)!;
+        const entries = columns.get(column) ?? []; entries.push(node); columns.set(column, entries);
     }
-    const nodes: GraphNode[] = [], remap = new Map<number, number>();
+    const labelled = scope.data.nodes.length <= SCOPED_HIERARCHY_LABEL_BUDGET;
+    const row = new Map<number, number>();
+    const byText = (a: GraphNode, b: GraphNode) => (a.file_path ?? '').localeCompare(b.file_path ?? '') || a.name.localeCompare(b.name) || a.id - b.id;
+    const keys = [...columns.keys()].sort((a, b) => Math.abs(a) - Math.abs(b) || a - b);
+    for (const key of keys) {
+        const entries = columns.get(key)!;
+        entries.sort((a, b) => {
+            const pa = parent.get(a.id), pb = parent.get(b.id);
+            return (row.get(pa?.id ?? -1) ?? -1) - (row.get(pb?.id ?? -1) ?? -1) || typeRank(pa?.edge) - typeRank(pb?.edge)
+                || (pa?.edge.type ?? '').localeCompare(pb?.edge.type ?? '')
+                // Calls in source order; one line with two calls keeps the order of the call list (by identity).
+                || (pa?.edge.type === 'CALLS' ? (pa.edge.line ?? Number.MAX_SAFE_INTEGER) - (pb?.edge.line ?? Number.MAX_SAFE_INTEGER) || a.id - b.id : 0)
+                || byText(a, b);
+        });
+        entries.forEach((node, index) => row.set(node.id, index));
+    }
+    // Column blocks: width from wrapping and from the widest name in them.
+    const block = new Map(keys.map(key => {
+        const entries = columns.get(key)!;
+        const cols = !labelled && entries.length > SCOPED_HIERARCHY_WRAP_AT ? Math.ceil(Math.sqrt(entries.length)) : 1;
+        const label = labelled ? Math.max(...entries.map(node => hierarchyLabelWidth(node.name))) : 0;
+        const gapX = labelled ? label + LABEL_GUTTER : SCOPED_HIERARCHY_ROW_GAP * 1.25;
+        return [key, { entries, cols, rows: Math.ceil(entries.length / cols), gapX, width: (cols - 1) * gapX, label }] as const;
+    }));
+    const left = new Map<number, number>();
+    const centre = block.get(0);
+    if (centre) left.set(0, -centre.width / 2);
+    for (const direction of [1, -1] as const) {
+        let previous = centre ? 0 : undefined;
+        for (const key of keys.filter(value => Math.sign(value) === direction).sort((a, b) => Math.abs(a) - Math.abs(b))) {
+            const current = block.get(key)!, before = previous === undefined ? undefined : block.get(previous)!;
+            const gap = Math.max(SCOPED_HIERARCHY_LEVEL_GAP, before ? (before.label + current.label) / 2 + LABEL_GUTTER : 0);
+            if (direction === 1) {
+                const edge = before ? left.get(previous!)! + before.width : 0;
+                left.set(key, edge + gap);
+            } else {
+                const edge = before ? left.get(previous!)! : 0;
+                left.set(key, edge - gap - current.width);
+            }
+            previous = key;
+        }
+    }
+    const nodes: GraphNode[] = [], remap = new Map<number, number>(), sourceIds: number[] = [];
     const placements: import('./hierarchy-layout').HierarchyPlacement[] = [];
-    const blocks = [...columns].map(([level, entries]) => ({ level,
-        entries: entries.sort((a, b) => (a.file_path ?? '').localeCompare(b.file_path ?? '') || a.name.localeCompare(b.name)) }));
-    for (const { node, level: hop, x, y } of hierarchyBlockPositions(blocks, { levelGap: 160, rowGap: 32 })) {
-        const id = nodes.length;
-        remap.set(node.id, id); nodes.push({ ...node, id, x, y, z: 0 });
-        placements.push({ id, key: node.qualified_name ?? `node:${node.id}`, name: node.name, hop, x, y });
+    for (const key of keys) {
+        const { entries, cols, rows, gapX } = block.get(key)!;
+        // Outgoing blocks grow away from the root to the right, incoming ones to the left.
+        const start = left.get(key)!, width = (cols - 1) * gapX;
+        entries.forEach((node, index) => {
+            const column = index % cols;
+            const x = key < 0 ? start + width - column * gapX : start + column * gapX;
+            const y = ((rows - 1) / 2 - Math.floor(index / cols)) * SCOPED_HIERARCHY_ROW_GAP;
+            const id = nodes.length;
+            remap.set(node.id, id); sourceIds.push(node.id); nodes.push({ ...node, id, x, y, z: 0 });
+            placements.push({ id, key: node.qualified_name ?? `node:${node.id}`, name: node.name, hop: level.get(node.id)!, side: side.get(node.id)!, x, y });
+        });
     }
     return { data: { nodes, edges: scope.data.edges.map(edge => ({ ...edge, source: remap.get(edge.source)!, target: remap.get(edge.target)! })), total_nodes: nodes.length },
         rootId: scope.roots.size === 1 ? remap.get([...scope.roots][0]!) ?? -1 : -1, rootKey: name, rootName: name,
-        symbols: nodes.length, depth: columns.size, truncated: false, cap: nodes.length, walkDepth: scope.depth,
-        missing: 0, placements };
+        symbols: nodes.length, depth: new Set(level.values()).size, truncated: false, cap: nodes.length, walkDepth: scope.depth,
+        missing: 0, placements, sourceIds };
 }

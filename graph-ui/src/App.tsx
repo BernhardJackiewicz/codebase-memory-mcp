@@ -121,7 +121,7 @@ import AtlasChrome, { CLOSE_COMMAND_SEARCH_EVENT, OPEN_COMMAND_SEARCH_EVENT } fr
 import { AtlasTreeIndexDetails } from './app/AtlasTree';
 import ArchitecturePanel from './architecture/ArchitecturePanel';
 import AdrWorkspace from './adr/AdrWorkspace';
-import SelectionContextPanel from './why/SelectionContext';
+import SelectionContextPanel, { type SelectionScope } from './why/SelectionContext';
 import FileImpactSummary from './impact/FileImpactSummary';
 import SourceEvidenceDrawer, { fileQualifiedName, type SourceEvidenceTarget } from './architecture/SourceEvidenceDrawer';
 import { setUiLogProject } from './app/ui-log-install';
@@ -4515,6 +4515,20 @@ export default function App(): JSX.Element {
         <SelectionContextPanel graph={evidenceGraph} selected={activeGalaxySelection}
             path={activeGalaxySelection.file_path ?? ''} agents={experimentalAgentsEnabled ? agents.state : undefined} onNavigate={navigateEvidence} />
     </>;
+    /*
+     * Galaxy reads its selection from the loaded scope (hand test K13). The
+     * repository snapshot is capped at 20,000 nodes by file path; a symbol in
+     * the scope but behind that cap is still a valid selection here.
+     */
+    const galaxySelectionPanel = (scope: SelectionScope | undefined) => {
+        const raw = galaxySelectionProject === project ? galaxySelection : undefined;
+        const inScope = raw && scope?.graph.nodes.some(node => raw.qualified_name
+            ? node.qualified_name === raw.qualified_name && node.file_path === raw.file_path : node.id === raw.id);
+        const selected = inScope ? raw : activeGalaxySelection;
+        if (!selected) return selectionUnavailable ? <p role="status" className="repo-map-note">{selectionUnavailableText}</p> : undefined;
+        return <SelectionContextPanel graph={evidenceGraph} selected={selected} scope={scope}
+            path={selected.file_path ?? ''} agents={experimentalAgentsEnabled ? agents.state : undefined} onNavigate={navigateEvidence} />;
+    };
     const followInspectorTarget = (target: SymbolRef): void => {
         setPinnedCode(undefined);
         followTarget(target);
@@ -4558,7 +4572,7 @@ export default function App(): JSX.Element {
             project={project}
             onClearSelection={clearGraphSelection}
             onSelectionEvidence={workspace === 'galaxy' ? onSelectionEvidence : undefined}
-            selectionPanel={workspace === 'galaxy' ? mapSelectionPanel : undefined}
+            selectionPanel={workspace === 'galaxy' ? galaxySelectionPanel : undefined}
             visible={workspace === 'galaxy' || (workspace === 'explore' && galaxyOn)}
             workspaceExpanded={workspace === 'galaxy'}
             focusQualifiedName={workspace === 'galaxy' ? activeGalaxySelection?.qualified_name : markedGraphRange ? readerFocusSymbol?.qualifiedName : undefined}

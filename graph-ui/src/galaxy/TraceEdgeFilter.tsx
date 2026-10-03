@@ -1,4 +1,5 @@
 import type { EdgeKind } from './galaxy-legend';
+import { FitLabel } from './toolbar-fit';
 
 /** This changes which relationships traversal follows, not just their paint. */
 export function TraceEdgeFilter({ kinds, availableTypes, selected, onChange }: {
@@ -10,13 +11,15 @@ export function TraceEdgeFilter({ kinds, availableTypes, selected, onChange }: {
 }) {
     const included = new Set(selected ?? availableTypes ?? kinds.map(kind => kind.type));
     const includedCount = kinds.filter(kind => included.has(kind.type)).length;
+    const shown = selected === undefined ? 'All' : includedCount === 0 ? 'None' : String(includedCount);
     return <details className="atlas-trace-edge-filter" onKeyDown={event => {
         if (event.key === 'Escape') {
             event.stopPropagation(); event.currentTarget.open = false;
             event.currentTarget.querySelector('summary')?.focus();
         }
     }}>
-        <summary>Edge types · {selected === undefined ? 'All' : includedCount === 0 ? 'None' : includedCount}</summary>
+        {/* Review of K3: a narrow scoped toolbar shows "Types · All" (src/galaxy/toolbar-fit.tsx). */}
+        <summary><FitLabel wide={`Edge types · ${shown}`} narrow={`Types · ${shown}`} /></summary>
         <div className="atlas-trace-edge-menu" role="group" aria-label="Trace edge types">
             <div className="atlas-trace-edge-actions">
                 <button type="button" onClick={() => onChange(undefined)}>All types</button>

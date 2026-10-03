@@ -210,8 +210,12 @@ export class RpcIntelligenceClient {
      * schreibt an derselben Stelle `""`, und ohne die Uebersetzung wuerde ein
      * Bindestrich als Dateiname durch das Produkt wandern.
      */
-    async queryGraph(project: string, query: string, cursor?: string): Promise<QueryGraphResult> {
-        const text = await this.text('query_graph', { project, query, ...(cursor ? { cursor } : {}) });
+    async queryGraph(project: string, query: string, cursor?: string,
+        /* Groessere Seiten fuer Lader, die alles brauchen (Galaxy-Scope, Handtest K8). */
+        budget?: { maxRows?: number; maxOutputTokens?: number }): Promise<QueryGraphResult> {
+        const text = await this.text('query_graph', { project, query, ...(cursor ? { cursor } : {}),
+            ...(budget?.maxRows ? { max_rows: budget.maxRows } : {}),
+            ...(budget?.maxOutputTokens ? { max_output_tokens: budget.maxOutputTokens } : {}) });
         let parsed: CompactRows;
         try {
             parsed = parseCompactRows(text);

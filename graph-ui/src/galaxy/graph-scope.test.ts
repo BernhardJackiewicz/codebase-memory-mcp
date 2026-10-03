@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { arrangeScopedGraph, graphEdgeTypesKey, limitGraphRender, loadGraphScope, readGraphPages, scenePictureFor, scopedHierarchy, type GraphQueryClient } from './graph-scope';
+import { arrangeScopedGraph, frontierCallCount, graphEdgeTypesKey, hierarchyLabelWidth, limitGraphRender, loadGraphScope, nextLayerEstimate, readGraphPages, scenePictureFor, scopedHierarchy, type GraphQueryClient } from './graph-scope';
 import type { QueryGraphResult } from '../provider/rpc-schemas';
 import type { GraphData, GraphNode } from './types';
 
@@ -229,6 +229,53 @@ it('retains simple columns for small hierarchy levels', () => {
     expect(result.data.nodes.map(node => [node.x, node.y])).toEqual([[0, 0], [160, 16], [160, -16]]);
 });
 
+describe('hand test K5: the scoped hierarchy reads incoming left, root in the middle, outgoing right', () => {
+    const at = (result: ReturnType<typeof scopedHierarchy>, name: string) => result.placements.find(placement => placement.name === name)!;
+    const scoped = (nodes: GraphNode[], edges: { id?: number; source: number; target: number; type: string; line?: number }[], levels: [number, number][]) =>
+        scopedHierarchy({ data: { nodes, edges, total_nodes: nodes.length }, roots: new Set([1]), depth: Math.max(...levels.map(([, hop]) => hop)), exhausted: false,
+            levels: new Map(levels) }, 'root');
+
+    it('puts callers and tests left of the root, its bases right, and keeps the root at the centre', () => {
+        // JSONBAgg: tests call and test it, its module defines it, it inherits two bases.
+        const nodes = [node(1), node(10), node(11), node(30), node(40), node(41)];
+        const result = scoped(nodes, [{ source: 10, target: 1, type: 'CALLS', line: 5 }, { source: 10, target: 1, type: 'TESTS' },
+            { source: 11, target: 1, type: 'CALLS', line: 9 }, { source: 30, target: 1, type: 'DEFINES' },
+            { source: 1, target: 40, type: 'INHERITS' }, { source: 1, target: 41, type: 'INHERITS' }],
+        [[1, 0], [10, 1], [11, 1], [30, 1], [40, 1], [41, 1]]);
+        expect([at(result, 'n1').x, at(result, 'n1').y]).toEqual([0, 0]);
+        for (const name of ['n10', 'n11', 'n30']) expect(at(result, name).x).toBeLessThan(0);
+        for (const name of ['n40', 'n41']) expect(at(result, name).x).toBeGreaterThan(0);
+        expect(result.placements.find(placement => placement.name === 'n10')?.side).toBe(-1);
+        // Every node maps back to its scope identity, for paths drawn in this picture.
+        expect(result.sourceIds?.[at(result, 'n40').id]).toBe(40);
+    });
+
+    it('orders outgoing calls by their call-site line, top to bottom, before other relationship types', () => {
+        const nodes = [node(1), node(2), node(3), node(4), node(5)];
+        const result = scoped(nodes, [{ source: 1, target: 2, type: 'CALLS', line: 30 }, { source: 1, target: 3, type: 'CALLS', line: 12 },
+            { source: 1, target: 4, type: 'CALLS', line: 20 }, { source: 1, target: 5, type: 'IMPORTS' }], [[1, 0], [2, 1], [3, 1], [4, 1], [5, 1]]);
+        const top = [...result.placements].filter(placement => placement.hop === 1).sort((a, b) => b.y - a.y).map(placement => placement.name);
+        expect(top).toEqual(['n3', 'n4', 'n2', 'n5']);
+    });
+
+    it('keeps a second layer on the side of its parent, next to it', () => {
+        const nodes = [node(1), node(2), node(3), node(4), node(5)];
+        // 1 calls 2, 2 calls 3, 4 calls 2 (reached from 2), 5 calls 1.
+        const result = scoped(nodes, [{ source: 1, target: 2, type: 'CALLS' }, { source: 2, target: 3, type: 'CALLS' },
+            { source: 4, target: 2, type: 'CALLS' }, { source: 5, target: 1, type: 'CALLS' }], [[1, 0], [2, 1], [5, 1], [3, 2], [4, 2]]);
+        expect(at(result, 'n3').x).toBeGreaterThan(at(result, 'n2').x);
+        expect(at(result, 'n4').x).toBe(at(result, 'n3').x);
+        expect(at(result, 'n5').x).toBeLessThan(0);
+    });
+
+    it('spaces columns by the names they carry, so long names keep their full width', () => {
+        const long = { ...node(2), name: 'test_jsonb_agg_jsonfield_order_by' };
+        const result = scoped([node(1), long], [{ source: 2, target: 1, type: 'CALLS' }], [[1, 0], [2, 1]]);
+        expect(Math.abs(at(result, long.name).x)).toBeGreaterThanOrEqual((hierarchyLabelWidth(long.name) + hierarchyLabelWidth('n1')) / 2);
+        expect(hierarchyLabelWidth(long.name)).toBeGreaterThan(200);
+    });
+});
+
 it('keeps the whole graph on screen while the first scope picture is still empty', () => {
     const graph = (count: number): GraphData => ({ nodes: Array.from({ length: count }, (_, id) => ({ id, name: `n${id}`, label: 'Function', x: 0, y: 0, z: 0, size: 1, color: '#999999' })), edges: [], total_nodes: count });
     const layout = graph(5), stale = graph(2), current = graph(3), empty = graph(0);
@@ -238,4 +285,126 @@ it('keeps the whole graph on screen while the first scope picture is still empty
     expect(scenePictureFor(empty, stale, layout)).toBe(stale);
     expect(scenePictureFor(current, stale, layout)).toBe(current);
     expect(scenePictureFor(undefined, stale, layout)).toBe(stale);
+});
+
+describe('handtest K8: deep layers load in few large pages, report progress and stop at the render limit', () => {
+    const scope = { kind: 'node' as const, id: 1, name: 'n1', qualifiedName: 'p.n1' };
+    const star = (from: GraphNode, count: number, first: number) => Array.from({ length: count }, (_, at) => edgeRow(first + at, from, node(first + at)));
+
+    it('asks for large pages, so one hop is not split into dozens of re-executed continuations', async () => {
+        const a = node(1), b = node(2);
+        const queryGraph = vi.fn<GraphQueryClient['queryGraph']>().mockResolvedValueOnce(page([row(a)]))
+            .mockResolvedValueOnce(page([edgeRow(1, a, b)])).mockResolvedValueOnce(page([]));
+        await loadGraphScope('p', scope, 1, 'both', undefined, { client: { queryGraph } });
+        expect(queryGraph).toHaveBeenCalledTimes(3);
+        for (const call of queryGraph.mock.calls) {
+            expect(call[3]?.maxRows).toBeGreaterThanOrEqual(2000);
+            expect(call[3]?.maxOutputTokens).toBeGreaterThanOrEqual(100_000);
+        }
+    });
+
+    it('reports loaded nodes and edges after every request', async () => {
+        const a = node(1), b = node(2), c = node(3);
+        const queryGraph = vi.fn<GraphQueryClient['queryGraph']>().mockResolvedValueOnce(page([row(a)]))
+            .mockResolvedValueOnce(page([edgeRow(1, a, b)])).mockResolvedValueOnce(page([edgeRow(2, b, c)]));
+        const progress = vi.fn();
+        await loadGraphScope('p', scope, 2, 'outbound', undefined, { client: { queryGraph }, onProgress: progress });
+        expect(progress.mock.calls.map(([value]) => [value.layer, value.nodes, value.edges, value.requests])).toEqual([[1, 2, 1, 2], [2, 3, 2, 3]]);
+    });
+
+    it('stops at the node limit, marks the layer partial and never continues from it', async () => {
+        const a = node(1), b = node(2);
+        const queryGraph = vi.fn<GraphQueryClient['queryGraph']>().mockResolvedValueOnce(page([row(a)]))
+            .mockResolvedValueOnce(page([edgeRow(1, a, b)]))
+            .mockResolvedValueOnce(page(star(b, 6, 10)));
+        const result = await loadGraphScope('p', scope, 3, 'outbound', undefined, { client: { queryGraph }, limits: { nodes: 5, edges: 1000 } });
+        expect(result.partial).toEqual({ layer: 2, nodes: 8, edges: 7, limit: 'nodes' });
+        expect(result.exhausted).toBe(false);
+        expect(result.depth).toBe(2);
+        // Hop 3 was never requested: the layer before it was already over the limit.
+        expect(queryGraph).toHaveBeenCalledTimes(3);
+        const fresh = vi.fn<GraphQueryClient['queryGraph']>().mockResolvedValueOnce(page([row(a)])).mockResolvedValue(page([]));
+        await loadGraphScope('p', scope, 3, 'outbound', undefined, { client: { queryGraph: fresh }, previous: result, limits: { nodes: 50, edges: 1000 } });
+        // A partial layer is no base for the next one: the load starts again from the root.
+        expect(fresh.mock.calls[0]![1]).toMatch(/^MATCH \(n\) WHERE/);
+    });
+
+    it('estimates the next layer from the frontier and the growth of the last layer', () => {
+        const nodes = [1, 2, 3, 4, 5, 6, 7].map(id => node(id));
+        const levels = new Map([[1, 0], [2, 1], [3, 1], [4, 2], [5, 2], [6, 2], [7, 2]]);
+        const scoped = { data: { nodes, edges: [], total_nodes: 7 }, roots: new Set([1]), depth: 2, exhausted: false, levels };
+        expect(nextLayerEstimate(scoped)).toEqual({ layer: 3, frontier: 4, perNode: 2, estimate: 8 });
+        expect(nextLayerEstimate({ ...scoped, exhausted: true })).toBeUndefined();
+        expect(nextLayerEstimate({ ...scoped, partial: { layer: 2, nodes: 7, edges: 6, limit: 'nodes' } })).toBeUndefined();
+    });
+
+    /* Review of K8: one batch of layer 3 read eight continuation pages, and the toolbar stood still for 8 s. */
+    const continued = (records: Record<string, string>[][]) => {
+        const total = records.flat().length;
+        let at = 0;
+        return records.map((rows, index) => {
+            const offset = at; at += rows.length;
+            return page(rows, { total, offset, ...(index < records.length - 1 ? { nextCursor: `c${index + 1}`, nextOffset: at } : {}) });
+        });
+    };
+
+    it('reports progress after every page of a long batch, not only when the batch ends', async () => {
+        const a = node(1);
+        const queryGraph = vi.fn<GraphQueryClient['queryGraph']>().mockResolvedValueOnce(page([row(a)]));
+        for (const result of continued([star(a, 2, 10), star(a, 2, 12), star(a, 2, 14)])) queryGraph.mockResolvedValueOnce(result);
+        const progress = vi.fn();
+        await loadGraphScope('p', scope, 1, 'outbound', undefined, { client: { queryGraph }, onProgress: progress });
+        expect(progress.mock.calls.map(([value]) => [value.nodes, value.edges, value.requests])).toEqual([[3, 2, 2], [5, 4, 3], [7, 6, 4]]);
+    });
+
+    it('stops inside a batch at the page that passes the limit, and never caches the cut neighbourhood', async () => {
+        const a = node(1);
+        const queryGraph = vi.fn<GraphQueryClient['queryGraph']>().mockResolvedValueOnce(page([row(a)]));
+        for (const result of continued([star(a, 3, 10), star(a, 3, 13), star(a, 3, 16)])) queryGraph.mockResolvedValueOnce(result);
+        const cache = { node: () => undefined, roots: () => undefined, rememberRoots: vi.fn(), neighborhood: () => undefined, rememberNeighborhood: vi.fn() };
+        const result = await loadGraphScope('p', scope, 2, 'outbound', undefined,
+            { client: { queryGraph }, limits: { nodes: 5, edges: 1000 }, cache: cache as never });
+        // Root, then two of the three pages: the second page passed five nodes.
+        expect(queryGraph).toHaveBeenCalledTimes(3);
+        expect(result.partial).toEqual({ layer: 1, nodes: 7, edges: 6, limit: 'nodes' });
+        expect(result.data.nodes).toHaveLength(7);
+        expect(cache.rememberNeighborhood).not.toHaveBeenCalled();
+    });
+
+    /*
+     * Review of K8: growing like the last layer predicted about 400 nodes for layer 3 of JSONBAgg,
+     * and over 9,000 came. Its 75 edge nodes carry 9,006 indexed calls (len, create, str, list ...);
+     * the index counts them per node without walking a relationship.
+     */
+    describe('the indexed calls at the edge of a scope', () => {
+        const degrees = (rows: [number, number, number][]) => page(rows.map(([id, calls_in, calls_out]) => ({ id: String(id), calls_in: String(calls_in), calls_out: String(calls_out) })));
+        const edge = (node1: GraphNode, node2: GraphNode, node3: GraphNode) => ({
+            data: { nodes: [node1, node2, node3], edges: [{ id: 1, source: 1, target: 2, type: 'CALLS' }, { id: 2, source: 1, target: 3, type: 'IMPORTS' }], total_nodes: 3 },
+            roots: new Set([1]), depth: 1, exhausted: false, frontier: [2, 3], levels: new Map([[1, 0], [2, 1], [3, 1]]) });
+
+        it('adds the calls into and out of the edge nodes and leaves out the ones already loaded', async () => {
+            const queryGraph = vi.fn<GraphQueryClient['queryGraph']>().mockResolvedValueOnce(degrees([[2, 5, 1], [3, 0, 4]]));
+            expect(await frontierCallCount({ queryGraph }, 'p', edge(node(1), node(2), node(3)), 'both', undefined)).toBe(9);
+            expect(queryGraph).toHaveBeenCalledTimes(1);
+            expect(queryGraph.mock.calls[0]![1]).toMatch(/^MATCH \(n\) WHERE \(n\.qualified_name = "p\.n2" OR n\.qualified_name = "p\.n3"\) RETURN id\(n\) AS id, n\.in_degree AS calls_in, n\.out_degree AS calls_out$/);
+        });
+
+        it('counts only the traced direction, and nothing when calls are not traced', async () => {
+            const queryGraph = vi.fn<GraphQueryClient['queryGraph']>().mockResolvedValue(degrees([[2, 5, 1], [3, 0, 4]]));
+            expect(await frontierCallCount({ queryGraph }, 'p', edge(node(1), node(2), node(3)), 'outbound', undefined)).toBe(5);
+            expect(await frontierCallCount({ queryGraph }, 'p', edge(node(1), node(2), node(3)), 'inbound', ['CALLS', 'TESTS'])).toBe(4);
+            queryGraph.mockClear();
+            expect(await frontierCallCount({ queryGraph }, 'p', edge(node(1), node(2), node(3)), 'both', ['IMPORTS'])).toBeUndefined();
+            expect(await frontierCallCount({ queryGraph }, 'p', { ...edge(node(1), node(2), node(3)), exhausted: true }, 'both', undefined)).toBeUndefined();
+            expect(queryGraph).not.toHaveBeenCalled();
+        });
+    });
+
+    it('stops at the edge limit too', async () => {
+        const a = node(1);
+        const queryGraph = vi.fn<GraphQueryClient['queryGraph']>().mockResolvedValueOnce(page([row(a)]))
+            .mockResolvedValueOnce(page(star(a, 4, 10)));
+        const result = await loadGraphScope('p', scope, 2, 'outbound', undefined, { client: { queryGraph }, limits: { nodes: 100, edges: 3 } });
+        expect(result.partial).toMatchObject({ layer: 1, edges: 4, limit: 'edges' });
+    });
 });
