@@ -110,6 +110,14 @@ describe('behavior journeys', () => {
         await render(data, { data: undefined, pending: false, error: 'Snapshot changed.' });
         expect(container.querySelector('[data-scene]')).toBeNull(); expect(container.textContent).toContain('Snapshot changed.');
     });
+    it('shows the operation the journey opened with in the Start field, not "Choose an operation"', async () => {
+        // Without a requested entry the journey falls back to the first entry point (Django: main in manage.py-tpl).
+        await render(fixture(), { entryId: undefined });
+        const start = container.querySelector<HTMLSelectElement>('[aria-label="Behavior entry point"]')!;
+        expect(container.querySelector('.behavior-heading h2')?.textContent).toBe('What can operation1 call?');
+        expect(start.value).toBe('1');
+        expect(start.selectedOptions[0]?.textContent).toBe('operation1 · src/part1.ts');
+    });
     it('pages only real edges and component lanes within the selected path window', () => {
         const scene = behaviorJourney(fixture(), { entryId: 1, targetId: 9 }).scene;
         const page = journeyPage(scene, 6), ids = new Set(page.nodes.map(node => node.id));

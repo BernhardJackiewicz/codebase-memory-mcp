@@ -134,7 +134,8 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
             <p>{path ? 'Follow one recorded call chain across the parts it touches.' : 'Choose a starting operation. Explore its calls, or follow a path to a destination.'}</p></div>
             <button onClick={onRefresh}>Refresh</button></header>
         <div className="behavior-requests">
-            <label>Start <select aria-label="Behavior entry point" value={entryId ?? ''} onChange={event => request(availableEntries.find(item => item.id === Number(event.target.value)))}>
+            {/* The field names the operation the journey shows, also when the projection chose it. */}
+            <label>Start <select aria-label="Behavior entry point" value={entry?.id ?? ''} onChange={event => request(availableEntries.find(item => item.id === Number(event.target.value)))}>
                 <option value="">Choose an operation…</option>{availableEntries.map(item => <option key={item.id} value={item.id}>{item.name} · {item.file_path ?? item.qualified_name}</option>)}
             </select></label>
             <label>Reach <select aria-label="Behavior destination" value={targetId ?? ''} disabled={!entry || pending} onChange={event => request(entry, event.target.value ? Number(event.target.value) : undefined)}>
