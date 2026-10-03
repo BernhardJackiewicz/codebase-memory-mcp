@@ -254,6 +254,8 @@ export const fileWords = {
     children: (total: number, items: readonly string[]) => total ? `${counted(total, 'key', 'keys')}: ${listed(items, total)}` : 'no keys',
     keyCount: (total: number) => counted(total, 'key', 'keys'),
     list: (total: number) => `list of ${total.toLocaleString('en-US')}`,
+    /** The keys the items of a list have: "item keys: `repo`, `rev`, `hooks`". */
+    itemKeys: (total: number, items: readonly string[]) => `item keys: ${listed(items, total)}`,
     value: { text: 'text', number: 'number', boolean: 'true or false', empty: 'null' },
     items: (total: number) => `A list of ${counted(total, 'item', 'items')}.`,
     invalidJson: 'The text is not valid JSON, so no keys are counted.',

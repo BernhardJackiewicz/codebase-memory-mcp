@@ -66,16 +66,21 @@ function children(lines: readonly Line[], at: number): number[] {
 }
 
 /** The top-level keys of a YAML file in block layout, each with the keys right below it or
- * the length of the list it holds (K12). Keys inside block values are text, not keys. */
-export function yamlOutline(text: string): { key: string; keys: string[]; items: number }[] {
+ * the length of the list it holds (K12). Keys inside block values are text, not keys.
+ *
+ * The keys of a list's items stand at the same indent as the keys of a mapping ("- repo:"
+ * and "rev:" below it), so a key holding any item is a list: its items are counted, and
+ * their keys are named as item keys, never as keys of the parent. */
+export function yamlOutline(text: string): { key: string; keys: string[]; items: number; itemKeys: string[] }[] {
     const lines = linesOf(text);
     if (!lines.length) return [];
     const level = Math.min(...lines.map(line => line.keyIndent));
     return lines.flatMap((line, index) => {
         if (line.keyIndent !== level || line.dash || !line.key) return [];
         const below = line.value ? [] : children(lines, index);
-        return [{ key: line.key, keys: below.flatMap(child => !lines[child].dash && lines[child].key ? [lines[child].key!] : []),
-            items: below.filter(child => lines[child].dash).length }];
+        const named = below.flatMap(child => lines[child].key ? [lines[child].key!] : []);
+        const items = below.filter(child => lines[child].dash).length;
+        return [items ? { key: line.key, keys: [], items, itemKeys: [...new Set(named)] } : { key: line.key, keys: named, items: 0, itemKeys: [] }];
     });
 }
 

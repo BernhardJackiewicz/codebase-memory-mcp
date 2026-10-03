@@ -27,6 +27,24 @@ describe('facts read from a configuration or text file (K12)', () => {
         ]);
     });
 
+    it('counts a list of mappings as a list, and the keys of its items as item keys, not as keys of the parent', () => {
+        // django's .pre-commit-config.yaml: one key holding 5 items, each with repo, rev and hooks.
+        const preCommit = ['repos:', ...['black', 'blacken-docs', 'isort', 'flake8', 'eslint'].flatMap(hook => [
+            `  - repo: https://github.com/example/${hook}`, '    rev: 1.0.0', '    hooks:', `      - id: ${hook}`])].join('\n') + '\n';
+        expect(fileFactLines('.pre-commit-config.yaml', preCommit)).toEqual([
+            'File kind: YAML configuration, not program code; 21 lines.',
+            'Top-level keys (1): `repos` (list of 5; item keys: `repo`, `rev`, `hooks`).',
+        ]);
+        // The items' first key on the dash line and the rest below it; mappings that differ in their keys.
+        expect(fileFactLines('steps.yml', 'steps:\n  - name: a\n    run: x\n  - name: b\n    uses: y\n    with:\n      key: 1\n')).toContain(
+            'Top-level keys (1): `steps` (list of 2; item keys: `name`, `run`, `uses`, `with`).');
+        // A list written at its key's own indent, next to a mapping.
+        expect(fileFactLines('x.yaml', 'repos:\n- repo: a\n  rev: 1\n- repo: b\n  rev: 2\nci:\n  autofix: true\n')).toContain(
+            'Top-level keys (2): `repos` (list of 2; item keys: `repo`, `rev`), `ci` (1 key: `autofix`).');
+        // A list of plain values has no item keys.
+        expect(fileFactLines('tags.yml', 'tags:\n  - a\n  - b\n  - c\n')).toContain('Top-level keys (1): `tags` (list of 3).');
+    });
+
     it('reads a JSON file with JSON.parse: keys and what their values are', () => {
         expect(fileFactLines('package.json', '{"name": "demo", "private": true, "scripts": {"build": "tsc", "test": "vitest"}, "files": ["dist", "src"]}')).toEqual([
             'File kind: JSON data, not program code; 1 line.',

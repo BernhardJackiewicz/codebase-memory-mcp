@@ -21,7 +21,8 @@ function yamlFacts(text: string): string[] {
     const outline = yamlOutline(text);
     if (!outline.length) return [];
     return [words.topKeys(outline.length, outline.slice(0, LISTED).map(item => `${quote(item.key)}${item.keys.length
-        ? ` (${words.children(item.keys.length, item.keys.slice(0, CHILDREN).map(quote))})` : item.items ? ` (${words.list(item.items)})` : ''}`))];
+        ? ` (${words.children(item.keys.length, item.keys.slice(0, CHILDREN).map(quote))})`
+        : item.items ? ` (${words.list(item.items)}${item.itemKeys.length ? `; ${words.itemKeys(item.itemKeys.length, item.itemKeys.slice(0, CHILDREN).map(quote))}` : ''})` : ''}`))];
 }
 
 function jsonValue(value: unknown): string {
