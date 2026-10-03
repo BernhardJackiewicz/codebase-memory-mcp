@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { EDGE_LABEL_MIN_NAME_PIXELS, edgeLabelVisible, hierarchyEdgeLabels, hierarchyLabelSpot } from './HierarchyEdgeLabels';
+import { placeAlongSegment } from './path-frame';
 
 it('hand test K5: writes one label per node pair, its types without repeats and CALLS first', () => {
     const labels = hierarchyEdgeLabels([
@@ -11,24 +12,26 @@ it('hand test K5: writes one label per node pair, its types without repeats and 
 });
 
 /*
- * Review of K5: at two layers (JSONBAgg, 90 nodes) eighty labels stood on the
- * first eighty pairs in edge order, rows of "DEFINES" without a name in sight.
- * The lines at the root keep a label each; a fan further out, one node to many
- * of the same types, carries one label with its count on its middle line.
+ * Review of K5, second round: at two layers the labels further out merged a
+ * fan into "CALLS · TESTS ×8" without a direction, so who calls whom could
+ * not be read. Each line now carries its own label, with an arrow from the
+ * source to the target as the picture shows them, nearest the root first.
  */
-it('labels every line at the root, and a fan further out once with its count, nearest the root first', () => {
+it('labels every line on its own with its types and an arrow from source to target, nearest the root first', () => {
     const at = (hop: number, x: number, y: number) => ({ hop, x, y });
-    const layout = new Map([[1, at(0, 0, 0)], [10, at(1, -200, 32)], [11, at(1, -200, 0)], [30, at(1, -200, -32)],
-        [50, at(2, -400, 32)], [51, at(2, -400, 0)], [52, at(2, -400, -32)], [60, at(2, -400, 64)]]);
+    const layout = new Map([[1, at(0, 0, 0)], [10, at(1, -200, 32)], [11, at(1, -200, 0)], [30, at(1, -200, -32)], [40, at(1, 200, 0)],
+        [50, at(2, -400, 32)], [51, at(2, -400, 0)], [52, at(2, -400, -32)], [60, at(2, -190, -400)]]);
     const labels = hierarchyEdgeLabels([
         { source: 30, target: 52, type: 'DEFINES' }, { source: 30, target: 50, type: 'DEFINES' }, { source: 10, target: 60, type: 'CALLS' },
-        { source: 10, target: 1, type: 'CALLS' }, { source: 11, target: 1, type: 'CALLS' }, { source: 30, target: 1, type: 'DEFINES' },
-        { source: 30, target: 51, type: 'DEFINES' }, { source: 50, target: 51, type: 'CALLS' },
+        { source: 10, target: 1, type: 'CALLS' }, { source: 10, target: 1, type: 'TESTS' }, { source: 11, target: 1, type: 'CALLS' },
+        { source: 30, target: 1, type: 'DEFINES' }, { source: 1, target: 40, type: 'INHERITS' }, { source: 40, target: 1, type: 'USAGE' },
+        { source: 30, target: 51, type: 'DEFINES' }, { source: 51, target: 50, type: 'CALLS' },
     ], layout);
     expect(labels.map(label => [label.text, label.source, label.target])).toEqual([
-        ['CALLS', 10, 1], ['CALLS', 11, 1], ['DEFINES', 30, 1],
-        ['DEFINES ×3', 30, 51], ['CALLS', 10, 60], ['CALLS', 50, 51],
+        ['CALLS · TESTS →', 10, 1], ['CALLS →', 11, 1], ['DEFINES →', 30, 1], ['INHERITS → · ← USAGE', 1, 40],
+        ['← DEFINES', 30, 52], ['← DEFINES', 30, 50], ['CALLS ↓', 10, 60], ['← DEFINES', 30, 51], ['CALLS ↑', 51, 50],
     ]);
+    expect(labels.some(label => /×/.test(label.text))).toBe(false);
 });
 
 /*
@@ -46,16 +49,6 @@ it('shows an edge label only while the names read and its line is in view', () =
     expect(edgeLabelVisible(12, { x: 800, y: 960 }, canvas)).toBe(false);
 });
 
-it('gathers lines that converge further out on one node too, when they leave no fan of their own', () => {
-    const at = (hop: number, x: number, y: number) => ({ hop, x, y });
-    const layout = new Map([[1, at(0, 0, 0)], [10, at(1, -200, 32)], [11, at(1, -200, 0)], [12, at(1, -200, -32)], [70, at(2, -400, 0)], [71, at(2, -400, 32)]]);
-    const labels = hierarchyEdgeLabels([
-        { source: 10, target: 70, type: 'WRITES' }, { source: 11, target: 70, type: 'WRITES' }, { source: 12, target: 70, type: 'WRITES' },
-        { source: 12, target: 71, type: 'CALLS' },
-    ], layout);
-    expect(labels.map(label => [label.text, label.source, label.target])).toEqual([['WRITES ×3', 11, 70], ['CALLS', 12, 71]]);
-});
-
 it('drops a hierarchy edge label that finds no free place instead of laying it over a name', () => {
     const name = { left: 90, right: 210, top: 90, bottom: 110 };
     // A short edge whose whole neighbourhood is a name: no spot without overlap.
@@ -63,4 +56,16 @@ it('drops a hierarchy edge label that finds no free place instead of laying it o
     const spot = hierarchyLabelSpot({ x: 100, y: 100 }, { x: 400, y: 100 }, { width: 60, height: 14 }, [name], []);
     expect(spot).toBeDefined();
     expect(spot!.rect.left >= name.right || spot!.rect.bottom <= name.top || spot!.rect.top >= name.bottom).toBe(true);
+});
+
+/*
+ * Second review of K5, seen in the browser: with up to three side steps a
+ * label of a dense fan stood in empty space, far from the line it belongs to.
+ * In the hierarchy it stays on its line or right beside it, or is not shown.
+ */
+it('keeps a hierarchy edge label on its line or one step beside it, never further out in empty space', () => {
+    const from = { x: 0, y: 100 }, to = { x: 400, y: 100 }, size = { width: 60, height: 14 };
+    const names = { left: -100, right: 500, top: 70, bottom: 130 };
+    expect(placeAlongSegment(from, to, size, [names], []).overlap).toBe(0);
+    expect(hierarchyLabelSpot(from, to, size, [names], [])).toBeUndefined();
 });

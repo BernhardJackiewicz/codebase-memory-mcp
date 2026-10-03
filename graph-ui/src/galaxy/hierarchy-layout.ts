@@ -186,6 +186,8 @@ export interface HierarchyPlacement {
     hop: number;
     /** Im Ausschnitt (K5): links eingehend (-1), Mitte Wurzel (0), rechts ausgehend (+1). */
     side?: -1 | 0 | 1;
+    /** Im Ausschnitt (Review zu K5): ueber gemischte Richtungen erreicht, steht im Band unter den Spalten und auf keiner Seite. */
+    mixed?: boolean;
     /** Die `id` des erzeugten Szene-Knotens. */
     id: number;
     x: number;
@@ -218,6 +220,12 @@ export interface HierarchyProjection {
     placements: HierarchyPlacement[];
     /** Im Ausschnitt (K5): je Szene-ID die ID im Scope, damit Pfade auch in diesem Bild liegen. */
     sourceIds?: number[];
+    /** Im Ausschnitt (Review zu K5): das Band der gemischt erreichten Knoten, mit Zahl und Lage seiner Ueberschrift. */
+    band?: { count: number; x: number; y: number; left: number; right: number; bottom: number };
+    /** Im Ausschnitt (Review zu K5): wer einen Namen traegt, alle, nur die Wurzel und ihre direkten Nachbarn, oder niemand. */
+    names?: 'all' | 'neighbours' | 'none';
+    /** Im Ausschnitt (zweites Review zu K5): ohne `names: 'all'` die Szene-IDs, die einen Namen tragen. */
+    namedIds?: number[];
 }
 
 /** Die Knoten, die eine Projektion aus dem Server-Layout uebernehmen darf. */

@@ -107,6 +107,9 @@
  *     um ihre Ringe (src/galaxy/marker-names.ts), statt bei mehreren Wurzeln
  *     aufeinander zu liegen; ein Name ohne freien Platz wird ausgeblendet. Eine
  *     einzelne Wurzel behaelt ihren Namen unter dem Ring.
+ * 21. Neu (Review zu K5): die Prop `labelIds`. Mit ihr bekommen nur diese
+ *     Knoten einen Namen (die Hierarchie eines grossen Ausschnitts benennt die
+ *     Wurzel und ihre direkten Nachbarn). Ohne die Prop wie vorher.
  */
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -905,6 +908,8 @@ interface GraphSceneProps {
     labelMaxTextWidth?: number | undefined;
     /* Wie viele Namen hoechstens; ohne Angabe die achtzig von NodeLabels (Review zu K5: die Hierarchie eines Ausschnitts traegt mehr). */
     labelBudget?: number | undefined;
+    /* Nur diese Knoten tragen einen Namen (Aenderung 21); ohne Angabe jeder, den die Namensebene waehlt. */
+    labelIds?: ReadonlySet<number> | undefined;
     onLabelLayout?: ((boxes: LabelBox[]) => void) | undefined;
     /* Aenderung 10 (W10): was Rechenzeit kostet. Ohne diese vier zeichnet die
      * Szene wie vorher. */
@@ -959,6 +964,7 @@ export function GraphScene({
     labelWorldFontSize,
     labelMaxTextWidth,
     labelBudget,
+    labelIds,
     onLabelLayout,
     projection = 'spatial',
     drawEdges = true,
@@ -990,9 +996,9 @@ export function GraphScene({
         [markedRoots, renderedCode]);
     // Der Ring traegt den Namen der Wurzel, die Pfadebene die Namen ihrer Knoten (K6); ein zweiter Name waere doppelt.
     const pathIds = useMemo(() => (path ? new Set(pathNodeIds(path)) : undefined), [path]);
-    const labelNodes = useMemo(() => markedRoots || pathIds
-        ? renderedCode.filter((node) => !markedRoots?.has(node.id) && !pathIds?.has(node.id)) : renderedCode,
-    [markedRoots, pathIds, renderedCode]);
+    const labelNodes = useMemo(() => markedRoots || pathIds || labelIds
+        ? renderedCode.filter((node) => !markedRoots?.has(node.id) && !pathIds?.has(node.id) && (!labelIds || labelIds.has(node.id))) : renderedCode,
+    [markedRoots, pathIds, labelIds, renderedCode]);
     /* Das Kameraziel: das des Panels, oder die Fahrt auf einen neuen Pfad, je nachdem, was zuletzt kam. */
     const [sceneTarget, setSceneTarget] = useState<CameraTarget | null>(cameraTarget);
     useEffect(() => { setSceneTarget(cameraTarget); }, [cameraTarget]);
