@@ -97,6 +97,10 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
     const selectedNode = selection?.scope === scope ? model.nodes.find(node => node.id === selection.node) : undefined;
     const selectedEdge = selection?.scope === scope ? model.edges.find(edge => edge.id === selection.edge) : undefined;
     const selectedMeasure = selectedNode ? measureSourceNode(selectedNode, catalog) : undefined;
+    // Inside an opened area or file the inspector speaks about that scope, not the repository.
+    const openedScope = (view === 'overview' || view === 'dependencies') && (filePath || areaPath) ? filePath
+        ? { eyebrow: text.openedFile, title: filePath.split('/').at(-1) ?? filePath, path: filePath, measure: measureSourceNode({ id: `file:${filePath}`, kind: 'file', label: filePath, detail: '', position: [0, 0, 0], count: 0, members: [], filePath }, catalog) }
+        : { eyebrow: text.openedArea, title: areaPath!, path: areaPath!, measure: catalog.areas.get(areaPath!) } : undefined;
     const selectedHotspots = selectedNode ? hotspotsForNode(selectedNode, hotspotCatalog) : undefined;
     const nodesById = useMemo(() => new Map(model.nodes.map(node => [node.id, node])), [model.nodes]);
     const edges = selectedNode ? model.edges.filter(edge => edge.source === selectedNode.id || edge.target === selectedNode.id) : model.edges;
@@ -189,6 +193,9 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
                     {!!selectedNode.members.length && <details className="spatial-selection-details"><summary>Source members · {selectedNode.members.length}</summary><div className="spatial-members">{selectedNode.members.slice(0, memberLimit).map(node => <button key={`${node.qualified_name}:${node.id}`} onClick={() => inspectMember(node)}>{node.name}<small>{node.file_path}{node.start_line ? `:${node.start_line}` : ''}</small></button>)}</div>
                         {selectedNode.members.length > memberLimit && <button onClick={() => setMemberLimit(value => value + 16)}>More members</button>}</details>}
                     {selectedNode.graphNode && selectionPanel}
+                </> : openedScope ? <><span className="spatial-eyebrow">{openedScope.eyebrow}</span><h3 title={openedScope.path}>{openedScope.title}</h3>
+                    {openedScope.measure && <details className="spatial-selection-details"><summary>{text.scopeMeasure(openedScope.measure.files, openedScope.measure.lines)}</summary><SourceMetricsDetails measure={openedScope.measure} catalog={catalog} /></details>}
+                    <p>{text.openedScopeHint}</p>
                 </> : <><span className="spatial-eyebrow">{view === 'hotspots' ? 'Review areas' : 'Repository'}</span><h3>{view === 'hotspots' ? `${hotspotCatalog.findings.length} hotspot findings` : `${catalog.files.size.toLocaleString()} files`}</h3>
                     {view === 'hotspots' ? <><p>Grouped by source area. Outside dependents are distinct files with direct incoming relationships in the loaded graph.</p><div className="spatial-area-summary" aria-label="Hotspots by source area">{areas.slice(0, 5).map(area => <button key={area.path} aria-pressed={hotspotArea === area.path} onClick={() => { setHotspotArea(area.path); setSelection(undefined); setResetKey(value => value + 1); }}><strong>{area.path}</strong><small>{area.findings} findings · {area.files} files</small><small>{area.dependentFiles} outside dependent files</small></button>)}</div>{areas.length > 5 && <details className="spatial-selection-details"><summary>{areas.length - 5} more areas</summary><div className="spatial-area-summary">{areas.slice(5).map(area => <button key={area.path} onClick={() => { setHotspotArea(area.path); setSelection(undefined); setResetKey(value => value + 1); }}><strong>{area.path}</strong><small>{area.findings} findings · {area.dependentFiles} outside dependent files</small></button>)}</div></details>}</>
                         : <p>Select a part or connection to inspect it. Open an area to explore its files.</p>}

@@ -12,6 +12,9 @@
 .architecture-scene canvas { display: block; outline: none; touch-action: none; }
 .architecture-scene button { font-family: inherit; }
 .architecture-folder-label { display: block; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--arch-folder-label); font: 10px/1.4 var(--atlas-mono, monospace); letter-spacing: 0.02em; text-shadow: 0 1px 5px var(--arch-background); }
+/* A name on a right-hand corner ends at it; a name without a free corner waits hidden (SceneLabels). */
+.architecture-folder-label[data-align="end"] { transform: translateX(-100%); }
+.architecture-folder-label.is-hidden { visibility: hidden; }
 
 .architecture-node-label {
     display: flex;

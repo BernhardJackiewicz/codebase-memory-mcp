@@ -88,4 +88,8 @@ export const architectureText = {
         compareFailed: 'Could not read that project. Its index may be unavailable.',
     },
     showEndpoints: 'Show endpoints →',
+    openedArea: 'Opened area',
+    openedFile: 'Opened file',
+    scopeMeasure: (files: number, lines?: number) => `${files.toLocaleString()} files · ${lines === undefined ? 'unknown' : lines.toLocaleString()} indexed lines`,
+    openedScopeHint: 'Select a part or connection to inspect it. The location above leads back to the repository.',
 };

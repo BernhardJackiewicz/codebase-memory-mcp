@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isContiguousPath, projectionLimits, projectionUnavailable, rankSystemPaths, systemBehaviorGraph, systemComponentGraph, systemOverviewGraph, systemBehaviorOverviewGraph } from './system-architecture-model';
+import { isContiguousPath, laneRepeatsMember, projectionLimits, projectionUnavailable, rankSystemPaths, systemBehaviorGraph, systemComponentGraph, systemOverviewGraph, systemBehaviorOverviewGraph } from './system-architecture-model';
 import type { SystemComponent, SystemDependency, SystemPath, SystemProjection, SystemSymbol } from './system-architecture-source';
 
 const symbol = (id: number, component = 'app'): SystemSymbol => ({ id, name: `f${id}`, qualified_name: `app.f${id}`, label: 'Function', component_id: component, file_path: `src/${component}.ts`, start_line: id });
@@ -61,6 +61,20 @@ describe('persistent system overview', () => {
         const renamed = systemOverviewGraph({ ...data, overview: { ...data.overview!, groups: [...data.overview!.groups].reverse().map(group => ({ ...group, id: `new-${group.label}` })) } });
         for (const node of base.nodes) expect(renamed.nodes.find(item => item.label === node.label)?.position).toEqual(node.position);
         expect(new Set(base.nodes.map(node => node.position.join(','))).size).toBe(4);
+    });
+    it('names a group once: a directory lane that only repeats its single group name gives way to the chip', () => {
+        // Django: the lanes "django", "js_tests" and "Repository root" each hold one group of the same name.
+        const data = overviewProjection(['g-django', 'g-js', 'g-root', 'g-a', 'g-b'], []);
+        data.overview!.groups.forEach((group, index) => { group.label = ['django', 'js_tests', '(root)', 'src/a', 'src/b'][index]; });
+        const model = systemOverviewGraph(data);
+        const lane = (label: string) => model.lanes.find(item => item.label === label)!;
+        expect(lane('django').memberIds).toEqual(['g-django']);
+        expect(laneRepeatsMember(lane('django'), model.nodes)).toBe(true);
+        expect(laneRepeatsMember(lane('js_tests'), model.nodes)).toBe(true);
+        expect(laneRepeatsMember(lane('Repository root'), model.nodes)).toBe(true);
+        // A lane that holds several groups, or names a different one, keeps its own name.
+        expect(lane('src').memberIds).toEqual(['g-a', 'g-b']);
+        expect(laneRepeatsMember(lane('src'), model.nodes)).toBe(false);
     });
     it('uses common source directories as layout hints when no aggregate directory is reported', () => {
         const data = projection([{ ...component('opaque'), representatives: [

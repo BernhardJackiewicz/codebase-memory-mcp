@@ -28,3 +28,35 @@ export function labelRect(x: number, y: number, width: number, height: number, [
 
 export const labelsCollide = (a: LabelRect, b: LabelRect): boolean =>
     a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+
+/** Where a folder or lane name may sit: its top-left ('start') or top-right ('end') corner on the point. */
+export interface LabelSpot { x: number; y: number; align: 'start' | 'end' }
+export interface SecondaryLabel { id: string; width: number; height: number; spots: readonly LabelSpot[] }
+
+export function spotRect(spot: LabelSpot, width: number, height: number): LabelRect {
+    const left = spot.align === 'start' ? spot.x : spot.x - width;
+    return { left, right: left + width, top: spot.y, bottom: spot.y + height };
+}
+
+/**
+ * Folder and lane names come after the chips. Each takes the first of its
+ * spots that stays inside the canvas and touches no label placed before it
+ * (with a small margin), or stays hidden: a name under a chip reads as
+ * "Outsi ◉ (root)", two names on one corner as "djdbmodels". Returns the
+ * chosen spot per label, -1 for hidden.
+ */
+export function placeSecondaryLabels(labels: readonly SecondaryLabel[], occupied: readonly LabelRect[], width: number, height: number, margin = 3): Map<string, number> {
+    const taken = [...occupied];
+    const result = new Map<string, number>();
+    for (const label of labels) {
+        const chosen = label.spots.findIndex(spot => {
+            const rect = spotRect(spot, label.width, label.height);
+            const padded = { left: rect.left - margin, right: rect.right + margin, top: rect.top - margin, bottom: rect.bottom + margin };
+            return rect.left >= 0 && rect.top >= 0 && rect.right <= width && rect.bottom <= height && !taken.some(other => labelsCollide(padded, other));
+        });
+        result.set(label.id, chosen);
+        if (chosen >= 0) taken.push(spotRect(label.spots[chosen]!, label.width, label.height));
+    }
+    return result;
+}
+

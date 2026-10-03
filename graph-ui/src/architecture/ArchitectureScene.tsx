@@ -6,7 +6,7 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import type { SemanticEdge, SemanticGraph, SemanticNode, SemanticPlatform } from './semantic-graph';
 import { languageColor, measureSourceNode, scopeBrickHeights, sourceLanguage, sourceNodeSizePercent, type SourceCatalog, type SourceMeasure } from './source-metrics';
 import { gravityPercent, gravityStrength, hotspotsForNode, type HotspotCatalog, type HotspotGroup } from './hotspot-map';
-import { labelEdges, labelInset, labelRect, labelsCollide, type LabelBox, type LabelRect } from './label-space';
+import { labelEdges, labelInset, labelRect, labelsCollide, placeSecondaryLabels, type LabelBox, type LabelRect, type SecondaryLabel } from './label-space';
 import { edgeColor, isDirectedEdge } from '../graph/edge-style';
 import { EdgePulseLayer } from '../graph/EdgePulseLayer';
 import './architecture-scene.css';
@@ -49,17 +49,29 @@ function centerOf(node: RenderNode): Vector3 {
     return new Vector3(...node.position).add(new Vector3(0, dimensions(node)[1] / 2, 0));
 }
 
+/**
+ * The corners a platform name may take, relative to the platform centre: the
+ * front-left corner first (where it always sat), then the others. The label
+ * manager picks the first one no chip or other name covers.
+ */
+function folderSpots(platform: SemanticPlatform): { local: [number, number, number]; align: 'start' | 'end' }[] {
+    const x = platform.width / 2 - 3, front = platform.depth / 2 - 2, back = -platform.depth / 2 + 2;
+    return [{ local: [-x, 0.12, front], align: 'start' }, { local: [-x, 0.12, back], align: 'start' },
+        { local: [x, 0.12, front], align: 'end' }, { local: [x, 0.12, back], align: 'end' }];
+}
+
 /** Folder containment is scenery, never an extra dependency or selectable symbol. */
-function FolderPlatform({ platform }: { platform: SemanticPlatform }) {
+function FolderPlatform({ platform, spot = 0 }: { platform: SemanticPlatform; spot?: number }) {
+    const place = folderSpots(platform)[Math.max(0, spot)]!;
     return <group position={platform.position}>
         <mesh position={[0, -0.225, 0]} raycast={() => null}>
             <boxGeometry args={[platform.width, 0.45, platform.depth]} />
             <meshStandardMaterial color={SCENE_PALETTE.plate} roughness={0.95} transparent opacity={0.11 + platform.level * 0.015} depthWrite={false} />
             <Edges color={SCENE_PALETTE.plateEdge} transparent opacity={0.3} />
         </mesh>
-        <Html position={[-platform.width / 2 + 3, 0.12, platform.depth / 2 - 2]} zIndexRange={[5, 1]} style={{ pointerEvents: 'none' }}>
-            <span className="architecture-folder-label" data-folder-path={platform.path} data-level={platform.level}
-                data-position={platform.position.join(',')} data-width={platform.width} data-depth={platform.depth}
+        <Html position={place.local} zIndexRange={[5, 1]} style={{ pointerEvents: 'none' }}>
+            <span className={`architecture-folder-label${spot < 0 ? ' is-hidden' : ''}`} data-folder-id={platform.id} data-folder-path={platform.path} data-level={platform.level}
+                data-position={platform.position.join(',')} data-width={platform.width} data-depth={platform.depth} data-align={place.align}
                 title={platform.path}>{platform.path ? platform.path.split('/').at(-1) : platform.label}</span>
         </Html>
     </group>;
@@ -182,31 +194,52 @@ function ArchitectureNode({ node, selected, highlighted, dimmed, labelVisible = 
     </group>;
 }
 
+/** Folder names claim space outermost first; the lane of outside areas first of all. */
+const folderPriority = (a: SemanticPlatform, b: SemanticPlatform) => Number(b.id === 'hierarchy:outside') - Number(a.id === 'hierarchy:outside')
+    || a.level - b.level || b.width * b.depth - a.width * a.depth || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
 /**
  * Screen-space label density changes with zoom; source positions never do.
  * Label boxes are measured once per model, so culling follows the CSS of the
  * map that shows them (the compact Overview labels are far smaller than the
  * service map's); the estimate only covers a label not laid out yet.
+ *
+ * Without culling every chip stays, but the folder names still go where no
+ * chip and no other name lies: the chips are placed first, then each folder
+ * name takes a free corner of its platform or hides.
  */
-function HotspotLabels({ model, priorityId, onVisible }: { model: RenderGraph; priorityId?: string; onVisible: (ids: Set<string>) => void }) {
+function SceneLabels({ model, priorityId, cull, onVisible, onFolders }: {
+    model: RenderGraph; priorityId?: string; cull: boolean;
+    onVisible: (ids: Set<string>) => void; onFolders: (spots: Map<string, number>) => void;
+}) {
     const { camera, size, gl, events, invalidate } = useThree();
     // Html labels mount where drei puts them: the event source, else the canvas parent.
     const labelHost = (events.connected as HTMLElement | undefined) ?? gl.domElement.parentElement;
     const previous = useRef('');
+    const previousFolders = useRef('');
     const boxes = useRef(new Map<string, LabelBox>());
+    const folderBoxes = useRef(new Map<string, { width: number; height: number }>());
     const attempts = useRef(0);
-    useEffect(() => { boxes.current.clear(); attempts.current = 0; }, [model]);
+    useEffect(() => { boxes.current.clear(); folderBoxes.current.clear(); attempts.current = 0; }, [model]);
     useFrame(() => {
-        const unmeasured = () => model.nodes.some(node => !boxes.current.has(node.id));
-        if (unmeasured()) labelHost?.querySelectorAll<HTMLElement>('.architecture-node-label[data-node-id]').forEach(label => {
-            // A selected label carries extra rows; it is the priority label and keeps its reserve below.
-            if (!label.offsetWidth || label.classList.contains('is-selected')) return;
-            const [edgeX, edgeY] = labelEdges(getComputedStyle(label));
-            boxes.current.set(label.dataset.nodeId!, { width: label.offsetWidth, height: label.offsetHeight, edgeX, edgeY });
-        });
+        const platforms = model.platforms ?? [];
+        const unmeasured = () => model.nodes.some(node => !boxes.current.has(node.id)) || platforms.some(platform => !folderBoxes.current.has(platform.id));
+        if (unmeasured()) {
+            labelHost?.querySelectorAll<HTMLElement>('.architecture-node-label[data-node-id]').forEach(label => {
+                // A selected label carries extra rows; it is the priority label and keeps its reserve below.
+                if (!label.offsetWidth || label.classList.contains('is-selected')) return;
+                const [edgeX, edgeY] = labelEdges(getComputedStyle(label));
+                boxes.current.set(label.dataset.nodeId!, { width: label.offsetWidth, height: label.offsetHeight, edgeX, edgeY });
+            });
+            labelHost?.querySelectorAll<HTMLElement>('.architecture-folder-label[data-folder-id]').forEach(label => {
+                if (label.offsetWidth) folderBoxes.current.set(label.dataset.folderId!, { width: label.offsetWidth, height: label.offsetHeight });
+            });
+        }
         // A measured label may overlap a neighbour by its padding, never by its text.
         const inset = labelInset(boxes.current.values());
         const occupied: LabelRect[] = [];
+        // A folder name may not sit under any part of a chip: its whole box counts.
+        const chips: LabelRect[] = [];
         const ids = new Set<string>();
         // Hotspot wells, then larger parts, claim their label space first.
         const ordered = [...model.nodes].sort((a, b) => Number(b.id === priorityId) - Number(a.id === priorityId)
@@ -218,12 +251,24 @@ function HotspotLabels({ model, priorityId, onVisible }: { model: RenderGraph; p
             const width = box?.width ?? Math.min(178, Math.max(78, (node.shortLabel ?? node.label).length * 7 + (node.gravityPercent === undefined ? 26 : 68)));
             const height = node.id === priorityId ? 96 : box?.height ?? 38;
             const rect = labelRect(x, y, width, height, box ? inset : [-5, 0]);
-            if (node.id !== priorityId && (rect.right < 0 || rect.left > size.width || rect.bottom < 0 || rect.top > size.height
+            if (cull && node.id !== priorityId && (rect.right < 0 || rect.left > size.width || rect.bottom < 0 || rect.top > size.height
                 || occupied.some(other => labelsCollide(rect, other)))) continue;
-            ids.add(node.id); occupied.push(rect);
+            ids.add(node.id); occupied.push(rect); chips.push(labelRect(x, y, width, height, [0, 0]));
         }
         const key = [...ids].sort().join('|');
         if (previous.current !== key) { previous.current = key; onVisible(ids); }
+        const names: SecondaryLabel[] = [...platforms].sort(folderPriority).map(platform => {
+            const measured = folderBoxes.current.get(platform.id);
+            const text = platform.path ? platform.path.split('/').at(-1) ?? '' : platform.label;
+            return { id: platform.id, width: measured?.width ?? Math.min(150, text.length * 6.5 + 4), height: measured?.height ?? 14,
+                spots: folderSpots(platform).map(({ local, align }) => {
+                    const point = new Vector3(...platform.position).add(new Vector3(...local)).project(camera);
+                    return { x: (point.x + 1) * size.width / 2, y: (1 - point.y) * size.height / 2, align };
+                }) };
+        });
+        const spots = placeSecondaryLabels(names, chips, size.width, size.height);
+        const folderKey = [...spots].map(([id, spot]) => `${id}:${spot}`).join('|');
+        if (previousFolders.current !== folderKey) { previousFolders.current = folderKey; onFolders(spots); }
         // Labels mount a moment after the scene; a few extra frames pick up their real size.
         if (unmeasured() && attempts.current++ < 8) invalidate();
     });
@@ -301,6 +346,7 @@ export function ArchitectureScene({ model: graphModel, selectedId, selectedEdgeI
     const [hoveredId, setHoveredId] = useState<string>();
     const [hoveredEdgeId, setHoveredEdgeId] = useState<string>();
     const [visibleHotspotLabels, setVisibleHotspotLabels] = useState<Set<string>>();
+    const [folderSpotsShown, setFolderSpotsShown] = useState<Map<string, number>>();
     const background = useGraphBackgroundReset(() => { setHoveredId(undefined); setHoveredEdgeId(undefined); onClearSelection?.(); });
     const controls = useRef<OrbitControlsImpl | null>(null);
     const nodesById = useMemo(() => new Map(model.nodes.map(node => [node.id, node])), [model.nodes]);
@@ -354,7 +400,7 @@ export function ArchitectureScene({ model: graphModel, selectedId, selectedEdgeI
             <directionalLight position={[30, 80, 20]} intensity={2.4} color={SCENE_PALETTE.keyLight} />
             <directionalLight position={[-20, 20, -30]} intensity={1.2} color={SCENE_PALETTE.fillLight} />
             <gridHelper args={[extent, Math.min(80, Math.ceil(extent / 12)), SCENE_PALETTE.gridMajor, SCENE_PALETTE.gridMinor]} position={[0, floorY, 0]} />
-            {model.platforms?.map(platform => <FolderPlatform key={platform.id} platform={platform} />)}
+            {model.platforms?.map(platform => <FolderPlatform key={platform.id} platform={platform} spot={folderSpotsShown?.get(platform.id)} />)}
             {model.nodes.filter(node => node.gravity).map(node => <GravityWell key={`gravity:${node.id}`} node={node} floorY={floorY} dimmed={related.size > 0 && !related.has(node.id)} />)}
             {model.edges.map(edge => {
                 const geometry = edgeGeometry.get(edge.id);
@@ -374,7 +420,7 @@ export function ArchitectureScene({ model: graphModel, selectedId, selectedEdgeI
                 touches={{ ONE: planar ? TOUCH.PAN : TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }}
                 minZoom={0.15} maxZoom={60} rotateSpeed={0.5} zoomSpeed={0.8} maxPolarAngle={SCENE_MAX_TILT} zoomToCursor />
             <FitArchitecture model={model} planar={planar} resetKey={resetKey} controls={controls} active={active} />
-            {(adaptiveLabels || model.view === 'hotspots') && <HotspotLabels model={model} priorityId={selectedId ?? hoveredId} onVisible={setVisibleHotspotLabels} />}
+            <SceneLabels model={model} priorityId={selectedId ?? hoveredId} cull={adaptiveLabels || model.view === 'hotspots'} onVisible={setVisibleHotspotLabels} onFolders={setFolderSpotsShown} />
         </Canvas>
         <div className="architecture-scene-guide" aria-hidden="true"><span>{planar ? 'PLAN' : '3D MAP'}</span>{planar ? 'Drag to pan · Scroll to zoom' : 'Drag to orbit · Right-drag to pan · Scroll to zoom'}</div>
     </div>;

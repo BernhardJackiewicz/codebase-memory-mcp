@@ -42,7 +42,7 @@ function laneLayout(data: SystemProjection, nodes: SystemSceneNode[]): SystemSce
         const left = Math.min(...xs), right = Math.max(...xs), bottom = Math.min(...ys), top = Math.max(...ys);
         return { id: `journey-component:${id}`, label: labels.get(id) ?? id,
             position: [(left + right) / 2, (bottom + top) / 2, -2] as [number, number, number],
-            width: right - left + 62, height: top - bottom + 32, depth: 0.4 };
+            width: right - left + 62, height: top - bottom + 32, depth: 0.4, memberIds: members.map(node => node.id) };
     });
 }
 

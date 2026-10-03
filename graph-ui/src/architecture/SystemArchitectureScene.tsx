@@ -1,13 +1,14 @@
-import { Component, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Component, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Edges, Html, Line, OrbitControls, OrthographicCamera } from '@react-three/drei';
 import { Box3, Color, MOUSE, TOUCH, OrthographicCamera as ThreeOrthographicCamera, QuadraticBezierCurve3, Vector3 } from 'three';
-import type { SystemSceneEdge, SystemSceneLane, SystemSceneModel, SystemSceneNode } from './system-architecture-model';
+import { laneRepeatsMember, type SystemSceneEdge, type SystemSceneLane, type SystemSceneModel, type SystemSceneNode } from './system-architecture-model';
 import { edgeColor, isDirectedEdge, normalizeEdgeType } from '../graph/edge-style';
 import { EdgePulseLayer } from '../graph/EdgePulseLayer';
 import { useGraphBackgroundReset } from '../graph/useGraphBackgroundReset';
 import { connectionLoad, type ConnectionLoad } from '../graph/connection-load';
 import { SCENE_MAX_TILT, SCENE_PALETTE } from './scene-palette';
+import { placeSecondaryLabels, type LabelRect, type SecondaryLabel } from './label-space';
 
 /** The model keeps its stable XY layout; rendering places that footprint on XZ. */
 const groundPosition = ([x, y, z]: [number, number, number]): Vector3 => new Vector3(x, z, -y);
@@ -77,7 +78,7 @@ function ScopeCamera({ model, resetKey, planar, presentation }: { model: SystemS
     return null;
 }
 
-/** Folder backplates are visual containment, never selectable nodes or relationships. */
+/** Folder backplates are visual containment, never selectable nodes or relationships; NodeLabels names them. */
 function FolderBackplate({ lane }: { lane: SystemSceneLane }) {
     const height = lane.height ?? 24;
     return <group position={groundPosition(lane.position)}>
@@ -86,10 +87,15 @@ function FolderBackplate({ lane }: { lane: SystemSceneLane }) {
             <meshStandardMaterial color={SCENE_PALETTE.plate} roughness={0.95} transparent opacity={0.09} depthWrite={false} />
             <Edges color={SCENE_PALETTE.plateEdge} transparent opacity={0.24} />
         </mesh>
-        <Html position={[-lane.width / 2 + 3, lane.depth / 2 + 0.2, -height / 2 + 3]} zIndexRange={[5, 1]} style={{ pointerEvents: 'none' }}>
-            <span className="system-scene-lane-label" data-folder-id={lane.id} title={lane.label}>{lane.label}</span>
-        </Html>
     </group>;
+}
+
+/** The corners a lane name may take, the far left first (where it always sat). */
+function laneSpots(lane: SystemSceneLane): { point: [number, number, number]; align: 'start' | 'end' }[] {
+    const height = lane.height ?? 24, base = groundPosition(lane.position), top = lane.depth / 2 + 0.2;
+    const x = lane.width / 2 - 3, far = -height / 2 + 3, near = height / 2 - 6;
+    return ([[-x, far, 'start'], [-x, near, 'start'], [x, far, 'end'], [x, near, 'end']] as const)
+        .map(([dx, dz, align]) => ({ point: base.clone().add(new Vector3(dx, top, dz)).toArray() as [number, number, number], align }));
 }
 
 /** Source-to-target geometry is shared by the base edge and the GPU pulse batch. */
@@ -139,14 +145,23 @@ const labelPosition = (node: SystemSceneNode): [number, number, number] => {
     return [point.x, point.y + size[1] / 2 + (node.parentId ? 2.6 : 4), point.z - (node.expanded ? size[2] / 2 + 2 : 0)];
 };
 
-/** Corridor labels take priority; neither hovering nor ordinary selection changes membership. */
+/**
+ * Corridor labels take priority; neither hovering nor ordinary selection changes membership.
+ * Lane names come last and take a free corner of their lane, or wait hidden; a
+ * lane that only repeats its one visible group name gives way to that chip.
+ */
 function NodeLabels({ model, selectedNode, highlightedPathIndex, onSelect, onExpand, loads, presentation }: {
     model: SystemSceneModel; selectedNode?: string; highlightedPathIndex?: number;
     onSelect: (id: string) => void; onExpand?: (id: string) => void;
     loads?: Map<string, ConnectionLoad>; presentation?: 'system' | 'journey';
 }) {
-    const { camera, size, gl } = useThree(), previous = useRef('');
+    const { camera, size, gl, events } = useThree(), previous = useRef(''), previousLanes = useRef('');
+    // Html labels mount where drei puts them: the event source, else the canvas parent.
+    const labelHost = (events.connected as HTMLElement | undefined) ?? gl.domElement.parentElement;
     const [visible, setVisible] = useState<Set<string>>(new Set());
+    const [laneSpot, setLaneSpot] = useState<Map<string, number>>(new Map());
+    const laneBoxes = useRef(new Map<string, { width: number; height: number }>());
+    useEffect(() => { laneBoxes.current.clear(); }, [model.lanes]);
     const [captionHeight, setCaptionHeight] = useState(36);
     const ordered = useMemo(() => [...model.nodes].sort((a, b) => (model.highlightActive
         ? Number(Boolean(activeNode(model, b, highlightedPathIndex))) - Number(Boolean(activeNode(model, a, highlightedPathIndex))) : 0)
@@ -160,13 +175,16 @@ function NodeLabels({ model, selectedNode, highlightedPathIndex, onSelect, onExp
         return () => observer.disconnect();
     }, [gl]);
     useFrame(() => {
-        const boxes: { left: number; right: number; top: number; bottom: number }[] = [], ids: string[] = [];
+        const boxes: LabelRect[] = [], ids: string[] = [];
         const zoom = 'zoom' in camera ? Number(camera.zoom) : 1;
+        const screen = (point: [number, number, number]) => {
+            const projected = new Vector3(...point).project(camera);
+            return { x: (projected.x + 1) * size.width / 2, y: (1 - projected.y) * size.height / 2, z: projected.z };
+        };
         for (const node of ordered) {
             if (node.parentId && zoom < 5) continue;
-            const projected = new Vector3(...labelPosition(node)).project(camera);
-            if (projected.z < -1 || projected.z > 1) continue;
-            const x = (projected.x + 1) * size.width / 2, y = (1 - projected.y) * size.height / 2;
+            const { x, y, z } = screen(labelPosition(node));
+            if (z < -1 || z > 1) continue;
             const compact = node.kind === 'group' && !node.expanded;
             const width = presentation === 'journey' ? 116 : compact ? 76 : node.parentId ? 110 : node.expanded ? 126 : 96, height = presentation === 'journey' ? 58 : compact ? 24 : 28;
             const box = { left: x - width / 2, right: x + width / 2, top: y - height / 2, bottom: y + height / 2 };
@@ -176,8 +194,30 @@ function NodeLabels({ model, selectedNode, highlightedPathIndex, onSelect, onExp
         }
         const key = ids.join('|');
         if (key !== previous.current) { previous.current = key; setVisible(new Set(ids)); }
+        const shown = new Set(ids);
+        const names: SecondaryLabel[] = [], given: string[] = [];
+        for (const lane of [...(model.lanes ?? [])].sort((a, b) => b.width * (b.height ?? 24) - a.width * (a.height ?? 24) || a.id.localeCompare(b.id))) {
+            if (laneRepeatsMember(lane, model.nodes) && lane.memberIds!.some(id => shown.has(id))) { given.push(lane.id); continue; }
+            const measured = laneBoxes.current.get(lane.id) ?? (() => {
+                const element = [...labelHost?.querySelectorAll<HTMLElement>('.system-scene-lane-label[data-folder-id]') ?? []].find(item => item.dataset.folderId === lane.id);
+                const box = element?.offsetWidth ? { width: element.offsetWidth, height: element.offsetHeight } : undefined;
+                if (box) laneBoxes.current.set(lane.id, box);
+                return box;
+            })();
+            names.push({ id: lane.id, width: measured?.width ?? Math.min(180, lane.label.length * 6 + 14), height: measured?.height ?? 20,
+                spots: laneSpots(lane).map(({ point, align }) => ({ ...screen(point), align })) });
+        }
+        const spots = placeSecondaryLabels(names, boxes, size.width, size.height - captionHeight);
+        for (const id of given) spots.set(id, -1);
+        const laneKey = [...spots].map(([id, spot]) => `${id}:${spot}`).sort().join('|');
+        if (laneKey !== previousLanes.current) { previousLanes.current = laneKey; setLaneSpot(spots); }
     });
-    return <>{ordered.filter(node => visible.has(node.id)).map(node => <Html key={node.id}
+    return <>{(model.lanes ?? []).map(lane => {
+        const spot = laneSpot.get(lane.id) ?? 0, place = laneSpots(lane)[Math.max(0, spot)]!;
+        return <Html key={`lane:${lane.id}`} position={place.point} zIndexRange={[5, 1]} style={{ pointerEvents: 'none' }}>
+            <span className={`system-scene-lane-label${spot < 0 ? ' is-hidden' : ''}`} data-folder-id={lane.id} data-align={place.align} title={lane.label}>{lane.label}</span>
+        </Html>;
+    })}{ordered.filter(node => visible.has(node.id)).map(node => <Html key={node.id}
         position={labelPosition(node)} center zIndexRange={[10, 6]}>
         <button className="system-scene-node-label" data-presentation={presentation} data-kind={node.kind} data-expanded={node.expanded} data-child={Boolean(node.parentId)}
             data-selected={selectedNode === node.id} data-focus={model.focusId === node.id}

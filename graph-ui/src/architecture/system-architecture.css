@@ -114,6 +114,9 @@
 .system-architecture .system-scene .system-scene-node-label[data-focus=true] { border-color: color-mix(in srgb, var(--arch-label-focus) 50%, transparent); background: var(--arch-label-selected); color: var(--arch-label-text); }
 .system-architecture .system-scene .system-scene-node-label[data-selected=true] { border-color: var(--arch-label-focus); color: var(--arch-selected); background: var(--arch-label-selected); }
 .system-architecture .system-scene .system-scene-node-label:focus-visible { outline: 2px solid var(--arch-label-focus); outline-offset: 2px; }
+/* A lane name on a right-hand corner ends at it; one without a free corner waits hidden. */
+.system-scene-lane-label[data-align=end] { transform: translateX(-100%); }
+.system-scene-lane-label.is-hidden { visibility: hidden; }
 .system-architecture .system-scene .system-scene-lane-label { display: inline-block; max-width: 180px; overflow: hidden; text-overflow: ellipsis; color: var(--arch-folder-label); background: color-mix(in srgb, var(--arch-background) 80%, transparent); font-size: 10px; }
 .system-architecture .system-scene .system-scene-edge-label { background: var(--arch-edge-label); border-color: color-mix(in srgb, var(--arch-node) 25%, transparent); }
 
