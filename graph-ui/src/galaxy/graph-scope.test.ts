@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { arrangeScopedGraph, graphEdgeTypesKey, limitGraphRender, loadGraphScope, readGraphPages, scenePictureFor, scopedHierarchy, type GraphQueryClient } from './graph-scope';
+import { arrangeScopedGraph, graphEdgeTypesKey, limitGraphRender, loadGraphScope, nextLayerEstimate, readGraphPages, scenePictureFor, scopedHierarchy, type GraphQueryClient } from './graph-scope';
 import type { QueryGraphResult } from '../provider/rpc-schemas';
 import type { GraphData, GraphNode } from './types';
 
@@ -238,4 +238,64 @@ it('keeps the whole graph on screen while the first scope picture is still empty
     expect(scenePictureFor(empty, stale, layout)).toBe(stale);
     expect(scenePictureFor(current, stale, layout)).toBe(current);
     expect(scenePictureFor(undefined, stale, layout)).toBe(stale);
+});
+
+describe('handtest K8: deep layers load in few large pages, report progress and stop at the render limit', () => {
+    const scope = { kind: 'node' as const, id: 1, name: 'n1', qualifiedName: 'p.n1' };
+    const star = (from: GraphNode, count: number, first: number) => Array.from({ length: count }, (_, at) => edgeRow(first + at, from, node(first + at)));
+
+    it('asks for large pages, so one hop is not split into dozens of re-executed continuations', async () => {
+        const a = node(1), b = node(2);
+        const queryGraph = vi.fn<GraphQueryClient['queryGraph']>().mockResolvedValueOnce(page([row(a)]))
+            .mockResolvedValueOnce(page([edgeRow(1, a, b)])).mockResolvedValueOnce(page([]));
+        await loadGraphScope('p', scope, 1, 'both', undefined, { client: { queryGraph } });
+        expect(queryGraph).toHaveBeenCalledTimes(3);
+        for (const call of queryGraph.mock.calls) {
+            expect(call[3]?.maxRows).toBeGreaterThanOrEqual(2000);
+            expect(call[3]?.maxOutputTokens).toBeGreaterThanOrEqual(100_000);
+        }
+    });
+
+    it('reports loaded nodes and edges after every request', async () => {
+        const a = node(1), b = node(2), c = node(3);
+        const queryGraph = vi.fn<GraphQueryClient['queryGraph']>().mockResolvedValueOnce(page([row(a)]))
+            .mockResolvedValueOnce(page([edgeRow(1, a, b)])).mockResolvedValueOnce(page([edgeRow(2, b, c)]));
+        const progress = vi.fn();
+        await loadGraphScope('p', scope, 2, 'outbound', undefined, { client: { queryGraph }, onProgress: progress });
+        expect(progress.mock.calls.map(([value]) => [value.layer, value.nodes, value.edges, value.requests])).toEqual([[1, 2, 1, 2], [2, 3, 2, 3]]);
+    });
+
+    it('stops at the node limit, marks the layer partial and never continues from it', async () => {
+        const a = node(1), b = node(2);
+        const queryGraph = vi.fn<GraphQueryClient['queryGraph']>().mockResolvedValueOnce(page([row(a)]))
+            .mockResolvedValueOnce(page([edgeRow(1, a, b)]))
+            .mockResolvedValueOnce(page(star(b, 6, 10)));
+        const result = await loadGraphScope('p', scope, 3, 'outbound', undefined, { client: { queryGraph }, limits: { nodes: 5, edges: 1000 } });
+        expect(result.partial).toEqual({ layer: 2, nodes: 8, edges: 7, limit: 'nodes' });
+        expect(result.exhausted).toBe(false);
+        expect(result.depth).toBe(2);
+        // Hop 3 was never requested: the layer before it was already over the limit.
+        expect(queryGraph).toHaveBeenCalledTimes(3);
+        const fresh = vi.fn<GraphQueryClient['queryGraph']>().mockResolvedValueOnce(page([row(a)])).mockResolvedValue(page([]));
+        await loadGraphScope('p', scope, 3, 'outbound', undefined, { client: { queryGraph: fresh }, previous: result, limits: { nodes: 50, edges: 1000 } });
+        // A partial layer is no base for the next one: the load starts again from the root.
+        expect(fresh.mock.calls[0]![1]).toMatch(/^MATCH \(n\) WHERE/);
+    });
+
+    it('estimates the next layer from the frontier and the growth of the last layer', () => {
+        const nodes = [1, 2, 3, 4, 5, 6, 7].map(id => node(id));
+        const levels = new Map([[1, 0], [2, 1], [3, 1], [4, 2], [5, 2], [6, 2], [7, 2]]);
+        const scoped = { data: { nodes, edges: [], total_nodes: 7 }, roots: new Set([1]), depth: 2, exhausted: false, levels };
+        expect(nextLayerEstimate(scoped)).toEqual({ layer: 3, frontier: 4, perNode: 2, estimate: 8 });
+        expect(nextLayerEstimate({ ...scoped, exhausted: true })).toBeUndefined();
+        expect(nextLayerEstimate({ ...scoped, partial: { layer: 2, nodes: 7, edges: 6, limit: 'nodes' } })).toBeUndefined();
+    });
+
+    it('stops at the edge limit too', async () => {
+        const a = node(1);
+        const queryGraph = vi.fn<GraphQueryClient['queryGraph']>().mockResolvedValueOnce(page([row(a)]))
+            .mockResolvedValueOnce(page(star(a, 4, 10)));
+        const result = await loadGraphScope('p', scope, 2, 'outbound', undefined, { client: { queryGraph }, limits: { nodes: 100, edges: 3 } });
+        expect(result.partial).toMatchObject({ layer: 1, edges: 4, limit: 'edges' });
+    });
 });

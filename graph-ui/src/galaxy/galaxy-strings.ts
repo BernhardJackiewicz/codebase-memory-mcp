@@ -56,6 +56,34 @@ export const galaxyHistoryText = {
     pathTo: (name: string) => `path to ${name}`,
 };
 
+const count = (value: number, one: string, many: string) => `${value.toLocaleString()} ${value === 1 ? one : many}`;
+
+/** Loading, cancelling and the render limit of a scope layer (hand test K8). */
+export const galaxyLayerText = {
+    checking: 'Checking index…',
+    loading: (layer: number) => `Loading layer ${layer}…`,
+    // A comma, not the dot of the finished counts: tools that wait for "N nodes · M edges" must not take this for done.
+    loadingProgress: (layer: number, nodes: number, edges: number) =>
+        `Loading layer ${layer}: ${count(nodes, 'node', 'nodes')}, ${count(edges, 'edge', 'edges')} so far`,
+    arranging: 'Arranging nodes…',
+    counts: (nodes: number, edges: number) => `${count(nodes, 'node', 'nodes')} · ${count(edges, 'edge', 'edges')}`,
+    endOfTrace: ' · end of trace',
+    partial: ' · partial',
+    partialPreview: 'Partial preview',
+    previewLoading: (layer: number) => `Partial preview while layer ${layer} loads`,
+    partialTitle: (layer: number, limit: number, kind: 'nodes' | 'edges') =>
+        `Layer ${layer} stopped at the render limit of ${limit.toLocaleString()} ${kind}. Raise the limit under Limits or trace fewer edge types to load all of it.`,
+    removeLayer: 'Remove the outermost layer',
+    cancelLoading: (layer: number) => `Cancel loading layer ${layer} and return to ${layer - 1 === 1 ? '1 layer' : `${layer - 1} layers`}`,
+    /* Measured, not promised: a hub at the edge can bring far more than the last layer did (JSONBAgg layer 3: about 400 expected, over 9,000 loaded). */
+    expandTitle: (layer: number, frontier: number, estimate: number, limit: number) =>
+        `Load layer ${layer}: ${count(frontier, 'node', 'nodes')} to expand. Growing like the last layer it adds about ${estimate.toLocaleString()} nodes; `
+        + `a hub can add many more. Loading stops at the render limit of ${limit.toLocaleString()} nodes and marks the layer partial.`,
+    expandOverLimit: 'Likely past the render limit.',
+    expandPartial: 'This layer stopped at the render limit, so there is no complete edge to grow from. Raise the limit under Limits first.',
+    expandEnd: 'End of trace: no relationship leads further.',
+};
+
 /** Compact toolbar words, so the scoped toolbar keeps to one row at 1600 px. */
 export const galaxyToolbarText = {
     groups: (count: number) => `${count.toLocaleString()} groups`,

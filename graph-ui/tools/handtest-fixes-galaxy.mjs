@@ -297,8 +297,76 @@ async function checkK2(page) {
 }
 
 /* ------------------------------------------------------------------ */
+/* K8: die dritte Ebene haengt nicht, "−" bricht ab                      */
 
-const CHECKS = { K9: checkK9, K2: checkK2 };
+const scopeState = (page) => page.locator('.atlas-graph-scope-count').first().getAttribute('data-state', { timeout: 1000 }).catch(() => null);
+const rpcSince = (page, t0) => page.evaluate((from) => window.__probeRpc.filter((row) => row.t >= from), t0);
+const pageNow = (page) => page.evaluate(() => Math.round(performance.now()));
+const progressShown = (page) => page.locator('.atlas-graph-render-progress').first().innerText({ timeout: 500 }).catch(() => '');
+
+async function checkK8(page) {
+    await section(page, 'K8', 'Expand to layer 3 of JSONBAgg (both directions, all edge types) completes or warns quickly; "−" cancels within 1 s');
+    await open(page);
+    await select(page, ROOT);
+    await settled(page);
+    await expand(page);
+    await shot(page, 'K8', 'two-layers', `${ROOT} at 2 layers: ${await countText(page)}`);
+    const minus = page.getByRole('button', { name: 'Remove graph layer' });
+    const expandButton = page.getByRole('button', { name: 'Expand +1' });
+    const expandTitle = await expandButton.getAttribute('title');
+
+    // 1. Abbrechen waehrend die dritte Ebene laedt.
+    await expandButton.click();
+    await wait(400);
+    const during = { status: await countText(page), state: await scopeState(page), minusDisabled: await minus.isDisabled(), minusTitle: await minus.getAttribute('title'),
+        progress: await progressShown(page) };
+    await shot(page, 'K8', 'cancel-loading-400ms', `400 ms into layer 3: "${during.status}", "−" enabled with "${during.minusTitle}"`);
+    const c0 = Date.now();
+    await minus.click();
+    await page.waitForFunction(() => document.querySelector('.atlas-graph-scope-count')?.getAttribute('data-state') !== 'loading'
+        && [...document.querySelectorAll('.atlas-graph-exploration span')].some((el) => el.textContent?.trim() === '2 layers'), null, { timeout: 10000 }).catch(() => {});
+    const cancelMs = Date.now() - c0;
+    await shot(page, 'K8', 'cancel-0ms', `Right after "−": back on 2 layers in ${cancelMs} ms`);
+    await wait(250);
+    await shot(page, 'K8', 'cancel-250ms', '250 ms after "−"');
+    await wait(750);
+    const cancelled = { layers: await layerText(page), status: await countText(page), state: await scopeState(page), ms: cancelMs };
+    await shot(page, 'K8', 'cancel-1s', `1 s after "−": ${cancelled.layers}, ${cancelled.status}`);
+    await check('K8', '"−" cancels a running layer and returns to the previous one within 1 s', during.state === 'loading' && during.minusDisabled === false
+        && cancelMs <= 1000 && cancelled.layers === '2 layers' && /^90 nodes · 201 edges/.test(cancelled.status), { expandTitle, during, cancelled });
+
+    // 2. Die dritte Ebene ganz laden.
+    await wait(1500);
+    const t0 = await pageNow(page);
+    const w0 = Date.now();
+    await expandButton.click();
+    const frames = [];
+    for (const [label, at] of [['0ms', 0], ['250ms', 250], ['1s', 1000], ['3s', 3000]]) {
+        const elapsed = Date.now() - w0;
+        if (at > elapsed) await wait(at - elapsed);
+        frames.push({ at: label, status: await countText(page), state: await scopeState(page), progress: await progressShown(page) });
+        await shot(page, 'K8', `layer3-${label}`, `${label} after Expand: "${frames.at(-1).status}"${frames.at(-1).progress ? `, overlay "${frames.at(-1).progress}"` : ''}`);
+    }
+    await page.waitForFunction(() => ['complete', 'partial'].includes(document.querySelector('.atlas-graph-scope-count')?.getAttribute('data-state') ?? ''), null, { timeout: 180000 }).catch(() => {});
+    const doneMs = Date.now() - w0;
+    const calls = await rpcSince(page, t0);
+    const queries = calls.filter((row) => row.tool === 'query_graph');
+    await shot(page, 'K8', 'layer3-done', `Layer 3 finished after ${doneMs} ms with ${queries.length} query_graph calls: "${await countText(page)}"`);
+    await wait(2000);
+    const done = { ms: doneMs, status: await countText(page), state: await scopeState(page),
+        title: await page.locator('.atlas-graph-scope-count').first().getAttribute('title').catch(() => null),
+        overlayAfter2s: await progressShown(page), queryGraph: queries.length, withCursor: queries.filter((row) => row.cursor).length,
+        maxRows: [...new Set(queries.map((row) => row.maxRows))], layers: await layerText(page),
+        expandDisabled: await expandButton.isDisabled(), expandTitle: await expandButton.getAttribute('title') };
+    await shot(page, 'K8', 'layer3-done-2s', `2 s later: no "Updating view" overlay (${done.overlayAfter2s ? 'still shown' : 'gone'})`);
+    await check('K8', 'Layer 3 completes (or stops at the render limit with a partial note) within 30 s in few large requests, and the overlay goes away',
+        ['complete', 'partial'].includes(done.state ?? '') && doneMs <= 30000 && done.queryGraph <= 40 && done.overlayAfter2s === '' && done.layers === '3 layers',
+        { frames, done });
+}
+
+/* ------------------------------------------------------------------ */
+
+const CHECKS = { K9: checkK9, K2: checkK2, K8: checkK8 };
 
 await mkdir(OUT, { recursive: true });
 const context = await chromium.launchPersistentContext(PROFILE, {

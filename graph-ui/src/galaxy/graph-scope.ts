@@ -8,8 +8,23 @@ import type { GraphNeighborhoodTransaction } from './graph-neighborhood-cache';
 
 export type TraceDirection = 'both' | 'inbound' | 'outbound';
 export type GraphScope = { kind: 'node'; id: number; name: string; qualifiedName?: string } | { kind: 'symbol'; qualifiedName: string; name: string } | { kind: 'file' | 'folder'; path: string; name: string; range?: SourceFocusRange };
-export interface ScopedGraph { data: GraphData; roots: Set<number>; depth: number; exhausted: boolean; frontier?: number[]; levels?: Map<number, number>; traversalKey?: string }
-export interface GraphQueryClient { queryGraph(project: string, query: string, cursor?: string): Promise<QueryGraphResult> }
+/** A layer that stopped at the render limit (hand test K8): what was loaded, and which limit stopped it. */
+export interface ScopePartial { layer: number; nodes: number; edges: number; limit: 'nodes' | 'edges' }
+export interface ScopedGraph { data: GraphData; roots: Set<number>; depth: number; exhausted: boolean; frontier?: number[]; levels?: Map<number, number>; traversalKey?: string; partial?: ScopePartial }
+/** How large one query_graph page may be. */
+export interface QueryBudget { maxRows?: number; maxOutputTokens?: number }
+export interface GraphQueryClient { queryGraph(project: string, query: string, cursor?: string, budget?: QueryBudget): Promise<QueryGraphResult> }
+/** What a running load has gathered so far, for the toolbar instead of an endless "Loading". */
+export interface ScopeProgress { layer: number; nodes: number; edges: number; requests: number }
+/*
+ * Grosse Seiten, und das ist die eigentliche Antwort auf K8. Der Server rechnet
+ * eine Abfrage fuer JEDE Fortsetzungsseite vollstaendig neu und schickt davon
+ * nur ein Fenster (Vorgabe 200 Zeilen und rund 3.200 Tokens, also bei dieser
+ * Spaltenbreite etwa 30 Zeilen). Die dritte Ebene um JSONBAgg brauchte so ueber
+ * 500 Aufrufe nacheinander, je rund 0,6 s. Mit diesem Fenster ist eine Ebene
+ * eine Handvoll Aufrufe; die Ergebnisse selbst aendern sich nicht.
+ */
+export const SCOPE_PAGE_BUDGET: QueryBudget = { maxRows: 5000, maxOutputTokens: 600_000 };
 /** Undefined includes every relationship type; an explicit empty list includes none. */
 export function graphEdgeTypesKey(edgeTypes?: readonly string[]): string {
     return JSON.stringify(edgeTypes === undefined ? null : [...new Set(edgeTypes)].sort());
@@ -26,9 +41,11 @@ const nodeColumns = (alias: string, prefix: string) => [`id(${alias}) AS ${prefi
 /** The cursor binds a complete query result to one graph generation. Every
  * continuation is consumed; a daemon cap or missing cursor is never silently
  * accepted as the selected file's complete neighborhood. */
-export async function readGraphPages(client: GraphQueryClient, project: string, query: string, key: string, signal?: AbortSignal): Promise<Record<string, string>[]> {
+export async function readGraphPages(client: GraphQueryClient, project: string, query: string, key: string, signal?: AbortSignal,
+    onRequest?: () => void): Promise<Record<string, string>[]> {
     signal?.throwIfAborted();
-    let page = await client.queryGraph(project, query);
+    onRequest?.();
+    let page = await client.queryGraph(project, query, undefined, SCOPE_PAGE_BUDGET);
     const columns = page.columns, total = page.total, records: Record<string, string>[] = [];
     const cursors = new Set<string>(), identities = new Set<number>();
     for (;;) {
@@ -49,7 +66,8 @@ export async function readGraphPages(client: GraphQueryClient, project: string, 
         if (!page.rows.length || cursors.has(page.nextCursor)) throw new Error('Graph pagination did not advance.');
         if (page.nextOffset !== undefined && page.nextOffset !== records.length) throw new Error('Graph pagination skipped rows.');
         cursors.add(page.nextCursor); signal?.throwIfAborted();
-        page = await client.queryGraph(project, query, page.nextCursor);
+        onRequest?.();
+        page = await client.queryGraph(project, query, page.nextCursor, SCOPE_PAGE_BUDGET);
     }
 }
 
@@ -100,7 +118,11 @@ export function arrangeScopedGraph(nodes: readonly GraphNode[], edges: readonly 
 }
 
 export async function loadGraphScope(project: string, scope: GraphScope, depth: number, direction: TraceDirection,
-    layout: GraphData | undefined, options: { fetch?: typeof globalThis.fetch; signal?: AbortSignal; client?: GraphQueryClient; previous?: ScopedGraph; edgeTypes?: readonly string[]; cache?: GraphNeighborhoodTransaction } = {}): Promise<ScopedGraph> {
+    layout: GraphData | undefined, options: { fetch?: typeof globalThis.fetch; signal?: AbortSignal; client?: GraphQueryClient; previous?: ScopedGraph; edgeTypes?: readonly string[]; cache?: GraphNeighborhoodTransaction;
+        /** Called after every relationship request with what is loaded so far. */
+        onProgress?: (progress: ScopeProgress) => void;
+        /** The render limits: a layer that grows past them stops and is marked partial. */
+        limits?: { nodes: number; edges: number } } = {}): Promise<ScopedGraph> {
     options.signal?.throwIfAborted();
     const client = options.client ?? new RpcIntelligenceClient({ fetch: options.fetch, signal: options.signal });
     const edgeTypes = options.edgeTypes === undefined ? undefined : [...new Set(options.edgeTypes)].sort();
@@ -117,12 +139,15 @@ export async function loadGraphScope(project: string, scope: GraphScope, depth: 
         throw new Error('This node has no indexed qualified identity; its relationships cannot be retrieved reliably.');
     const predicate = scope.kind === 'node' ? `n.qualified_name = "${escapeLiteral(scope.qualifiedName ?? known.get(scope.id)?.qualified_name ?? '')}"` : scope.kind === 'symbol' ? `n.qualified_name = "${escapeLiteral(scope.qualifiedName)}"` : scope.kind === 'file' ? `n.file_path = "${escapeLiteral(scope.path)}"`
         : `n.file_path STARTS WITH "${escapeLiteral(scope.path.replace(/\/$/, '') + '/')}"`;
-    const previous = options.previous?.traversalKey === traversalKey && options.previous.depth <= depth ? options.previous : undefined;
+    // A partial layer misses part of its frontier, so it is never the base of the next one.
+    const previous = options.previous?.traversalKey === traversalKey && options.previous.depth <= depth && !options.previous.partial ? options.previous : undefined;
+    let requests = 0;
+    const counted = () => { requests += 1; };
     const cachedNode = scope.kind === 'node' ? options.cache?.node(scope.id) : undefined;
     let rootNodes = cachedNode && cachedNode.qualified_name === (scope.kind === 'node' ? scope.qualifiedName ?? known.get(scope.id)?.qualified_name : '')
         ? [cachedNode] : options.cache?.roots(predicate);
     if (!previous && !rootNodes) {
-        const rootRows = await readGraphPages(client, project, `MATCH (n) WHERE ${predicate} RETURN ${nodeColumns('n', '')}`, 'id', options.signal);
+        const rootRows = await readGraphPages(client, project, `MATCH (n) WHERE ${predicate} RETURN ${nodeColumns('n', '')}`, 'id', options.signal, counted);
         rootNodes = rootRows.map(row => readNode(row, '', known));
         options.cache?.rememberRoots(predicate, rootNodes);
     }
@@ -133,7 +158,11 @@ export async function loadGraphScope(project: string, scope: GraphScope, depth: 
     const levels = new Map<number, number>(previous?.levels ?? [...roots].map(identity => [identity, 0] as const));
     const edges = new Map<number, GraphEdge>(previous?.data.edges.filter(edge => edge.id !== undefined).map(edge => [edge.id!, edge]) ?? []);
     let frontier = edgeTypes?.length === 0 ? [] : previous?.frontier ?? [...roots], reachedDepth = previous?.depth ?? 0;
-    for (let hop = reachedDepth; hop < Math.max(depth, roots.size > 1 ? 1 : 0) && frontier.length; hop++) {
+    let partial: ScopePartial | undefined;
+    const overLimit = (layer: number): ScopePartial | undefined => !options.limits ? undefined
+        : nodes.size > options.limits.nodes ? { layer, nodes: nodes.size, edges: edges.size, limit: 'nodes' }
+            : edges.size > options.limits.edges ? { layer, nodes: nodes.size, edges: edges.size, limit: 'edges' } : undefined;
+    for (let hop = reachedDepth; hop < Math.max(depth, roots.size > 1 ? 1 : 0) && frontier.length && !partial; hop++) {
         const next = new Set<number>();
         const fileBoundary = hop === 0 && (scope.kind === 'folder' || (scope.kind === 'file' && !scope.range));
         const accept = (evidenceNodes: readonly GraphNode[], evidenceEdges: readonly GraphEdge[]) => {
@@ -149,6 +178,7 @@ export async function loadGraphScope(project: string, scope: GraphScope, depth: 
         };
         const legs = direction === 'both' ? ['outbound', 'inbound'] as const : [direction];
         for (const leg of legs) {
+            if (partial) break;
             const missing: number[] = [];
             for (const identity of frontier) {
                 const cached = options.cache?.neighborhood(identity, leg, edgeTypes);
@@ -156,7 +186,7 @@ export async function loadGraphScope(project: string, scope: GraphScope, depth: 
             }
             const useBoundary = fileBoundary && missing.length === frontier.length;
             const batchSize = useBoundary ? Math.max(1, missing.length) : BATCH_SIZE;
-            for (let at = 0; at < missing.length; at += batchSize) {
+            for (let at = 0; at < missing.length && !partial; at += batchSize) {
                 const batch = missing.slice(at, at + batchSize), batchIds = new Set(batch);
                 const names = batch.map(value => nodes.get(value)?.qualified_name);
                 if (!useBoundary && names.some(name => !name)) throw new Error('A selected graph node has no qualified identity; its dependencies cannot be loaded completely.');
@@ -168,7 +198,7 @@ export async function loadGraphScope(project: string, scope: GraphScope, depth: 
                 // Keep each predicate on the left seed, so early WHERE prunes before
                 // adjacency expansion. An OR spanning a and b materializes the repo.
                 const pattern = leg === 'inbound' ? `(b)<-${relationship}-(a)` : `(a)-${relationship}->(b)`;
-                const rows = await readGraphPages(client, project, `MATCH ${pattern} WHERE ${relation} RETURN id(r) AS edge_id, type(r) AS edge_type, r.line AS edge_line, ${nodeColumns('a', 'a_')}, ${nodeColumns('b', 'b_')}`, 'edge_id', options.signal);
+                const rows = await readGraphPages(client, project, `MATCH ${pattern} WHERE ${relation} RETURN id(r) AS edge_id, type(r) AS edge_type, r.line AS edge_line, ${nodeColumns('a', 'a_')}, ${nodeColumns('b', 'b_')}`, 'edge_id', options.signal, counted);
                 const evidenceNodes = new Map(batch.map(identity => [identity, nodes.get(identity)!]));
                 const evidenceEdges: GraphEdge[] = [];
                 for (const row of rows) {
@@ -185,6 +215,8 @@ export async function loadGraphScope(project: string, scope: GraphScope, depth: 
                 const verifiedNodes = [...evidenceNodes.values()];
                 options.cache?.rememberNeighborhood(batch, leg, edgeTypes, verifiedNodes, evidenceEdges);
                 accept(verifiedNodes, evidenceEdges);
+                options.onProgress?.({ layer: hop + 1, nodes: nodes.size, edges: edges.size, requests });
+                partial = overLimit(hop + 1);
             }
         }
         reachedDepth = hop + 1;
@@ -195,7 +227,21 @@ export async function loadGraphScope(project: string, scope: GraphScope, depth: 
         const initial = [...edges.values()].filter(edge => roots.has(edge.source) && roots.has(edge.target));
         return { data: arrangeScopedGraph([...nodes.values()].filter(node => roots.has(node.id)), initial, roots, levels), roots, depth: 0, exhausted: edgeTypes?.length === 0, frontier: edgeTypes?.length === 0 ? [] : [...roots], levels, traversalKey };
     }
-    return { data: arrangeScopedGraph([...nodes.values()], [...edges.values()], roots, levels), roots, depth: reachedDepth, exhausted: edgeTypes?.length === 0 || (depth > 0 && frontier.length === 0), frontier, levels, traversalKey };
+    return { data: arrangeScopedGraph([...nodes.values()], [...edges.values()], roots, levels), roots, depth: reachedDepth,
+        exhausted: !partial && (edgeTypes?.length === 0 || (depth > 0 && frontier.length === 0)), frontier, levels, traversalKey, ...(partial ? { partial } : {}) };
+}
+
+/** Eine Schaetzung der naechsten Ebene, bevor sie geladen wird (K8): so viele
+ * Knoten stehen an ihrem Rand, und so viele neue brachte jeder Knoten der
+ * letzten Ebene. Eine Schaetzung und keine Zusage; die Grenze beim Laden
+ * selbst haelt die Ebene trotzdem am Render-Limit an. */
+export function nextLayerEstimate(scope: ScopedGraph | undefined): { layer: number; frontier: number; perNode: number; estimate: number } | undefined {
+    if (!scope?.levels || scope.exhausted || scope.partial) return undefined;
+    const at = (level: number) => scope.data.nodes.filter(node => (scope.roots.has(node.id) ? 0 : scope.levels!.get(node.id)) === level).length;
+    const frontier = at(scope.depth);
+    if (frontier === 0) return undefined;
+    const perNode = scope.depth > 0 ? frontier / Math.max(1, at(scope.depth - 1)) : 1;
+    return { layer: scope.depth + 1, frontier, perNode, estimate: Math.round(frontier * perNode) };
 }
 
 /** Was die Galaxie zeigt, waehrend ein Scope angeordnet wird: das aktuelle

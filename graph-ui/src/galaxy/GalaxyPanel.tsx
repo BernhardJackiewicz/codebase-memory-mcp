@@ -139,13 +139,13 @@ import GalaxyNavigator from './GalaxyNavigator';
 import { TraceEdgeFilter } from './TraceEdgeFilter';
 import { PathPicker, PathSteps } from './ScopePathControls';
 import { callOrder, pathNodes, shortestScopePath, type ScopePathStep } from './scope-path';
-import { galaxyHistoryText, galaxyPathText, galaxyToolbarText } from './galaxy-strings';
+import { galaxyHistoryText, galaxyLayerText, galaxyPathText, galaxyToolbarText } from './galaxy-strings';
 import { emptyNavigationHistory, moveNavigation, peekNavigation, pushNavigation } from '../graph/navigation-history';
 import { galaxyHistoryOptions, historyEntryDetail, historyEntryLabel, scopeIdentity, type GalaxyHistoryEntry, type ScopeTrail } from './scope-history';
 import { useOrganicLayout } from './use-organic-layout';
 import RenderProgress from './RenderProgress';
 import { useGraphScope } from './use-graph-scope';
-import { limitGraphRender, scenePictureFor, scopedHierarchy } from './graph-scope';
+import { limitGraphRender, nextLayerEstimate, scenePictureFor, scopedHierarchy } from './graph-scope';
 import './graph-exploration.css';
 import { layoutNodeForSelection } from './selected-node';
 import { galaxyScopeEvidence, useSelectionEvidence, type SelectionEvidenceListener } from './selection-evidence';
@@ -769,7 +769,9 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     const changeTraceTypes = useCallback((types: string[] | undefined) => setTraceFilter({ project, types }), [project]);
     const scope = useGraphScope({ project, layout,
         filePath: props.workspaceExpanded ? undefined : props.focusFilePath,
-        range: props.focusSourceRange, fetch: props.fetch, edgeTypes: traceTypes });
+        range: props.focusSourceRange, fetch: props.fetch, edgeTypes: traceTypes,
+        // Handtest K8: eine Ebene ueber dem Render-Limit haelt dort an, statt minutenlang weiterzuladen.
+        ...(props.workspaceExpanded ? { limits: { nodes: nodeBudget, edges: edgeBudget } } : {}) });
     const organicHistory = useRef<{ key: string; depth: number; data: GraphData } | undefined>(undefined);
     const organicKey = JSON.stringify([project, scope.scope, scope.direction, traceTypes]);
     const organicOptions = useMemo(() => {
@@ -1985,6 +1987,16 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         </details>}
     </span> : null;
 
+    /* Was die Leiste ueber das Laden der Ebenen sagt (Handtest K8). */
+    const partial = scope.complete ? scope.result?.partial : undefined;
+    const scopeState = scope.validating ? 'checking' : scope.loading ? 'loading' : organicTask.loading ? 'arranging'
+        : partial ? 'partial' : scope.complete ? 'complete' : 'preview';
+    const estimate = scope.complete ? nextLayerEstimate(scope.result) : undefined;
+    const expandWarning = Boolean(estimate && props.workspaceExpanded && (data?.nodes.length ?? 0) + estimate.estimate > nodeBudget);
+    const expandTitle = partial ? galaxyLayerText.expandPartial : scope.result?.exhausted ? galaxyLayerText.expandEnd
+        : estimate ? `${expandWarning ? `${galaxyLayerText.expandOverLimit} ` : ''}${galaxyLayerText.expandTitle(estimate.layer, estimate.frontier, estimate.estimate, nodeBudget)}`
+            : undefined;
+
     /*
      * Die Vorgabe der Ansicht, mit der Wahl des Lesers darauf.
      *
@@ -2474,10 +2486,17 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                         <option value="both">Both directions</option><option value="inbound">Incoming</option><option value="outbound">Outgoing</option>
                     </select></label>}
                     {props.workspaceExpanded && <TraceEdgeFilter kinds={traceKinds} availableTypes={kinds.map(kind => kind.type)} selected={traceTypes} onChange={changeTraceTypes} />}
-                    <button type="button" disabled={scope.depth <= scope.minDepth || scope.loading}
+                    {/*
+                      * Handtest K8: waehrend eine Ebene laedt, ist "−" der Weg
+                      * hinaus. Es bricht das Laden ab und steht sofort wieder auf
+                      * der vorigen, schon vollstaendigen Ebene.
+                      */}
+                    <button type="button" disabled={scope.depth <= scope.minDepth}
+                        title={scope.loading ? galaxyLayerText.cancelLoading(scope.depth) : galaxyLayerText.removeLayer}
                         onClick={() => scope.setDepth(scope.depth - 1)} aria-label="Remove graph layer">−</button>
                     <span>{scope.depth} {scope.depth === 1 ? 'layer' : 'layers'}</span>
-                    <button type="button" disabled={scope.loading || scope.result?.exhausted}
+                    <button type="button" disabled={scope.loading || scope.result?.exhausted || Boolean(scope.result?.partial)}
+                        data-warning={expandWarning || undefined} title={expandTitle}
                         onClick={() => scope.setDepth(scope.depth + 1)}>Expand +1</button>
                     {props.workspaceExpanded && mode === 'galaxy' && <>
                         <PathPicker nodes={pathCandidates} onPick={node => { setTrail({ key: organicKey, kind: 'path', target: node.id, name: node.name }); setTrailStep(0); }} />
@@ -2486,9 +2505,13 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                             onClick={() => { if (trail?.key === organicKey && trail.kind === 'calls') clearTrail(); else { setTrail({ key: organicKey, kind: 'calls' }); setTrailStep(0); } }}>
                             {galaxyPathText.callOrder}</button>
                     </>}
-                    <span className="atlas-graph-scope-count" role="status">{scope.validating ? 'Checking index…' : scope.loading ? 'Loading relationships…' : organicTask.loading ? 'Arranging nodes…'
-                        : scope.complete ? `${data?.nodes.length ?? 0} ${data?.nodes.length === 1 ? 'node' : 'nodes'} · ${data?.edges.length ?? 0} ${data?.edges.length === 1 ? 'edge' : 'edges'}${scope.result?.exhausted ? ' · end of trace' : ''}`
-                            : 'Partial preview'}</span>
+                    <span className="atlas-graph-scope-count" role="status" data-state={scopeState}
+                        title={partial ? galaxyLayerText.partialTitle(partial.layer, partial.limit === 'nodes' ? nodeBudget : edgeBudget, partial.limit) : undefined}>
+                        {scope.validating ? galaxyLayerText.checking
+                            : scope.loading ? scope.progress ? galaxyLayerText.loadingProgress(scope.progress.layer, scope.progress.nodes, scope.progress.edges) : galaxyLayerText.loading(scope.depth)
+                                : organicTask.loading ? galaxyLayerText.arranging
+                                    : scope.complete ? `${galaxyLayerText.counts(data?.nodes.length ?? 0, data?.edges.length ?? 0)}${partial ? galaxyLayerText.partial : scope.result?.exhausted ? galaxyLayerText.endOfTrace : ''}`
+                                        : galaxyLayerText.partialPreview}</span>
                     {scope.error && <span className="atlas-graph-scope-warning" title={scope.error}>Some relationships could not be loaded. <button type="button" onClick={scope.retry}>Retry</button></span>}
                     {!props.workspaceExpanded && scope.complete && <small>All indexed direct dependencies included.</small>}
                     {mode === 'galaxy' && organic && organic.groups.length > 1 && <small className="atlas-graph-scope-groups" title={galaxyToolbarText.groupsTitle(organic.groups.length)}>{galaxyToolbarText.groups(organic.groups.length)}</small>}
@@ -2630,7 +2653,8 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
             )}
             <div className="atlas-galaxy-scene" data-testid="atlas-galaxy-scene" ref={scene}
                 aria-busy={layoutLoading || scope.loading || organicTask.loading || spacingBusy}>
-                <RenderProgress busy={visible && (layoutLoading || scope.loading || organicTask.loading || spacingBusy)} />
+                <RenderProgress busy={visible && (layoutLoading || scope.loading || organicTask.loading || spacingBusy)}
+                    {...(scope.scope && scope.loading ? { label: galaxyLayerText.previewLoading(scope.depth) } : {})} />
                 {trailView && <PathSteps heading={trailView.heading} note={trailView.note} steps={trailView.steps} active={trailActive}
                     nameOf={trailView.nameOf} lines={trailView.lines} onStep={setTrailStep} onClear={clearTrail} />}
                 {/*

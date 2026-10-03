@@ -114,7 +114,8 @@ it('does not report a file missing from a capped layout while its indexed scope 
         return source(url, init);
     });
     await act(async () => root.render(<GalaxyPanel project="sample" visible focusFilePath="src/a.ts" onOpenNode={vi.fn()} fetch={fetchImpl} />));
-    expect(host.textContent).toContain('Loading relationships');
+    // Hand test K8: the status names the layer that is loading instead of an endless "Loading relationships".
+    expect(host.textContent).toContain('Loading layer 1…');
     expect(host.querySelector('[data-testid="atlas-galaxy-note"]')).toBeNull();
     await act(async () => { release(); });
     expect(host.textContent).toContain('All indexed direct dependencies included.');
