@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { journeyChipForm, labelEdges, labelInset, labelRect, labelsCollide, placeSecondaryLabels, spotRect, type LabelBox } from './label-space';
+import { journeyChipForm, labelEdges, labelInset, labelRect, labelsCollide, placeSceneLabels, placeSecondaryLabels, spotRect, type LabelBox, type SceneChip, type SecondaryLabel } from './label-space';
 
 // The compact Overview and Endpoints label: padding 5px 7px and a 1px border (spatial-architecture.css).
 const compact: LabelBox = { width: 100, height: 24, edgeX: 8, edgeY: 6 };
@@ -48,5 +48,19 @@ describe('label space', () => {
         // handle · loaddata.py in the hand-test window: neighbouring call boxes 60 px apart.
         expect(journeyChipForm([{ x: 500, y: 100 }, { x: 500, y: 160 }, { x: 500, y: 220 }], full)).toBe('compact');
         expect(journeyChipForm([{ x: 500, y: 100 }, { x: 500, y: 180 }, { x: 200, y: 140 }], full)).toBe('full');
+    });
+    it('leaves folder names where they are while the pointer moves over the chips (Hotspots, Overview)', () => {
+        const chips: SceneChip[] = [{ id: 'create', x: 200, y: 100, width: 100, height: 24, measured: true }, { id: 'other', x: 600, y: 300, width: 100, height: 24, measured: true }];
+        // The folder name's own corner lies just below the chip, its next corner further away.
+        const folders: SecondaryLabel[] = [{ id: 'contrib', width: 60, height: 14, spots: [{ x: 160, y: 125, align: 'start' }, { x: 420, y: 200, align: 'start' }] }];
+        const options = { cull: true, width: 800, height: 500, inset: [4, 3] as [number, number] };
+        const resting = placeSceneLabels(chips, folders, options);
+        expect(resting.folders.get('contrib')).toBe(0);
+        // Hovering a chip makes it the priority chip, which is not a reason to move the names around it.
+        const hovered = placeSceneLabels(chips, folders, { ...options, priorityId: 'create' });
+        expect(hovered.folders).toEqual(resting.folders);
+        expect(hovered.visible.has('create')).toBe(true);
+        // A selected chip opens its extra rows; the name gives way to it.
+        expect(placeSceneLabels(chips, folders, { ...options, priorityId: 'create', selectedId: 'create' }).folders.get('contrib')).toBe(1);
     });
 });

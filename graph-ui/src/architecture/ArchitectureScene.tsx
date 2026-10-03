@@ -6,7 +6,7 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import type { SemanticEdge, SemanticGraph, SemanticNode, SemanticPlatform } from './semantic-graph';
 import { languageColor, measureSourceNode, scopeBrickHeights, sourceLanguage, sourceNodeSizePercent, type SourceCatalog, type SourceMeasure } from './source-metrics';
 import { gravityPercent, gravityStrength, hotspotsForNode, type HotspotCatalog, type HotspotGroup } from './hotspot-map';
-import { labelEdges, labelInset, labelRect, labelsCollide, placeSecondaryLabels, type LabelBox, type LabelRect, type SecondaryLabel } from './label-space';
+import { labelEdges, labelInset, placeSceneLabels, type LabelBox, type SceneChip, type SecondaryLabel } from './label-space';
 import { edgeColor, isDirectedEdge } from '../graph/edge-style';
 import { EdgePulseLayer } from '../graph/EdgePulseLayer';
 import './architecture-scene.css';
@@ -208,8 +208,8 @@ const folderPriority = (a: SemanticPlatform, b: SemanticPlatform) => Number(b.id
  * chip and no other name lies: the chips are placed first, then each folder
  * name takes a free corner of its platform or hides.
  */
-function SceneLabels({ model, priorityId, cull, onVisible, onFolders }: {
-    model: RenderGraph; priorityId?: string; cull: boolean;
+function SceneLabels({ model, priorityId, selectedId, cull, onVisible, onFolders }: {
+    model: RenderGraph; priorityId?: string; selectedId?: string; cull: boolean;
     onVisible: (ids: Set<string>) => void; onFolders: (spots: Map<string, number>) => void;
 }) {
     const { camera, size, gl, events, invalidate } = useThree();
@@ -237,26 +237,14 @@ function SceneLabels({ model, priorityId, cull, onVisible, onFolders }: {
         }
         // A measured label may overlap a neighbour by its padding, never by its text.
         const inset = labelInset(boxes.current.values());
-        const occupied: LabelRect[] = [];
-        // A folder name may not sit under any part of a chip: its whole box counts.
-        const chips: LabelRect[] = [];
-        const ids = new Set<string>();
         // Hotspot wells, then larger parts, claim their label space first.
-        const ordered = [...model.nodes].sort((a, b) => Number(b.id === priorityId) - Number(a.id === priorityId)
-            || (b.gravity ?? 0) - (a.gravity ?? 0) || b.count - a.count);
-        for (const node of ordered) {
+        const chips: SceneChip[] = [...model.nodes].sort((a, b) => (b.gravity ?? 0) - (a.gravity ?? 0) || b.count - a.count).map(node => {
             const point = new Vector3(...node.position).add(new Vector3(0, dimensions(node)[1] + 7, 0)).project(camera);
-            const x = (point.x + 1) * size.width / 2; const y = (1 - point.y) * size.height / 2;
             const box = boxes.current.get(node.id);
-            const width = box?.width ?? Math.min(178, Math.max(78, (node.shortLabel ?? node.label).length * 7 + (node.gravityPercent === undefined ? 26 : 68)));
-            const height = node.id === priorityId ? 96 : box?.height ?? 38;
-            const rect = labelRect(x, y, width, height, box ? inset : [-5, 0]);
-            if (cull && node.id !== priorityId && (rect.right < 0 || rect.left > size.width || rect.bottom < 0 || rect.top > size.height
-                || occupied.some(other => labelsCollide(rect, other)))) continue;
-            ids.add(node.id); occupied.push(rect); chips.push(labelRect(x, y, width, height, [0, 0]));
-        }
-        const key = [...ids].sort().join('|');
-        if (previous.current !== key) { previous.current = key; onVisible(ids); }
+            return { id: node.id, x: (point.x + 1) * size.width / 2, y: (1 - point.y) * size.height / 2,
+                width: box?.width ?? Math.min(178, Math.max(78, (node.shortLabel ?? node.label).length * 7 + (node.gravityPercent === undefined ? 26 : 68))),
+                height: box?.height ?? 38, measured: Boolean(box) };
+        });
         const names: SecondaryLabel[] = [...platforms].sort(folderPriority).map(platform => {
             const measured = folderBoxes.current.get(platform.id);
             const text = platform.path ? platform.path.split('/').at(-1) ?? '' : platform.label;
@@ -266,7 +254,9 @@ function SceneLabels({ model, priorityId, cull, onVisible, onFolders }: {
                     return { x: (point.x + 1) * size.width / 2, y: (1 - point.y) * size.height / 2, align };
                 }) };
         });
-        const spots = placeSecondaryLabels(names, chips, size.width, size.height);
+        const { visible: ids, folders: spots } = placeSceneLabels(chips, names, { priorityId, selectedId, cull, width: size.width, height: size.height, inset });
+        const key = [...ids].sort().join('|');
+        if (previous.current !== key) { previous.current = key; onVisible(ids); }
         const folderKey = [...spots].map(([id, spot]) => `${id}:${spot}`).join('|');
         if (previousFolders.current !== folderKey) { previousFolders.current = folderKey; onFolders(spots); }
         // Labels mount a moment after the scene; a few extra frames pick up their real size.
@@ -420,7 +410,7 @@ export function ArchitectureScene({ model: graphModel, selectedId, selectedEdgeI
                 touches={{ ONE: planar ? TOUCH.PAN : TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }}
                 minZoom={0.15} maxZoom={60} rotateSpeed={0.5} zoomSpeed={0.8} maxPolarAngle={SCENE_MAX_TILT} zoomToCursor />
             <FitArchitecture model={model} planar={planar} resetKey={resetKey} controls={controls} active={active} />
-            <SceneLabels model={model} priorityId={selectedId ?? hoveredId} cull={adaptiveLabels || model.view === 'hotspots'} onVisible={setVisibleHotspotLabels} onFolders={setFolderSpotsShown} />
+            <SceneLabels model={model} priorityId={selectedId ?? hoveredId} selectedId={selectedId} cull={adaptiveLabels || model.view === 'hotspots'} onVisible={setVisibleHotspotLabels} onFolders={setFolderSpotsShown} />
         </Canvas>
         <div className="architecture-scene-guide" aria-hidden="true"><span>{planar ? 'PLAN' : '3D MAP'}</span>{planar ? 'Drag to pan · Scroll to zoom' : 'Drag to orbit · Right-drag to pan · Scroll to zoom'}</div>
     </div>;

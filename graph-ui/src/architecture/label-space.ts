@@ -60,6 +60,45 @@ export function placeSecondaryLabels(labels: readonly SecondaryLabel[], occupied
     return result;
 }
 
+/** A map chip at its projected anchor; an unmeasured one carries an estimate and keeps a margin. */
+export interface SceneChip { id: string; x: number; y: number; width: number; height: number; measured: boolean }
+export interface SceneLabelOptions {
+    /** The chip that claims space first and is never culled: the selected one, else the one under the pointer. */
+    priorityId?: string;
+    /** The selected chip, which shows its extra rows. */
+    selectedId?: string;
+    cull: boolean; width: number; height: number;
+    /** labelInset of the measured chips. */
+    inset: [number, number];
+}
+
+/**
+ * Chips first, in the given order with the priority chip in front: with
+ * `cull` a chip that leaves the canvas or meets one placed before it hides.
+ * The priority chip reserves the height of a selected chip (96 px). Folder
+ * names then take the free corners (placeSecondaryLabels), placed around
+ * the chips as they lie without the pointer: hovering a chip must not make
+ * the names beside it jump to another corner and back.
+ */
+export function placeSceneLabels(chips: readonly SceneChip[], folders: readonly SecondaryLabel[], options: SceneLabelOptions): { visible: Set<string>; folders: Map<string, number> } {
+    const place = (priorityId: string | undefined) => {
+        const occupied: LabelRect[] = [], boxes: LabelRect[] = [], visible = new Set<string>();
+        const ordered = [...chips].sort((a, b) => Number(b.id === priorityId) - Number(a.id === priorityId));
+        for (const chip of ordered) {
+            const height = chip.id === priorityId ? 96 : chip.height;
+            const rect = labelRect(chip.x, chip.y, chip.width, height, chip.measured ? options.inset : [-5, 0]);
+            if (options.cull && chip.id !== priorityId && (rect.right < 0 || rect.left > options.width || rect.bottom < 0 || rect.top > options.height
+                || occupied.some(other => labelsCollide(rect, other)))) continue;
+            // A folder name may not sit under any part of a chip: its whole box counts.
+            visible.add(chip.id); occupied.push(rect); boxes.push(labelRect(chip.x, chip.y, chip.width, height, [0, 0]));
+        }
+        return { visible, boxes };
+    };
+    const chipsShown = place(options.priorityId);
+    const resting = options.priorityId === options.selectedId ? chipsShown : place(options.selectedId);
+    return { visible: chipsShown.visible, folders: placeSecondaryLabels(folders, resting.boxes, options.width, options.height) };
+}
+
 /**
  * Behavior call boxes never lose their name to a neighbour. When the full
  * chips (kind, name, file) would overlap at this zoom, every chip switches to
