@@ -14,6 +14,9 @@ export const galaxyPathText = {
     pathNoMatch: 'No matching node in the loaded scope.',
     pathMore: (count: number) => `${count.toLocaleString()} more, type to narrow`,
     callOrder: 'Call order',
+    /** The short labels of a narrow toolbar (review of K3). */
+    pathToNarrow: 'Path…',
+    callOrderNarrow: 'Calls',
     callOrderTitle: 'Step through the outgoing calls of the root in source line order',
     callOrderUnavailable: 'The root has no outgoing calls in the loaded scope',
     panel: 'Path steps',
@@ -117,5 +120,7 @@ export const galaxyToolbarText = {
     /** The root button's accessible name: its action, with the visible name in it. */
     openRootLabel: (name: string) => `Open the source of ${name}`,
     traceTitle: 'Trace direction: incoming, outgoing or both',
+    expand: 'Expand +1',
+    expandNarrow: '+1',
     outsideLimits: (nodes: number, edges: number) => `${nodes.toLocaleString()} nodes · ${edges.toLocaleString()} edges outside render limits`,
 };

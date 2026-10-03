@@ -141,6 +141,7 @@ import { PathPicker, PathSteps } from './ScopePathControls';
 import { callOrder, pathNodes, shortestScopePath, type ScopePathStep } from './scope-path';
 import { galaxyHierarchyText, galaxyHistoryText, galaxyLayerText, galaxyPathText, galaxyToolbarText } from './galaxy-strings';
 import { HierarchyEdgeLabels } from './HierarchyEdgeLabels';
+import { FitLabel, useToolbarFit } from './toolbar-fit';
 import { emptyNavigationHistory, moveNavigation, peekNavigation, pushNavigation } from '../graph/navigation-history';
 import { galaxyHistoryOptions, historyEntryDetail, historyEntryLabel, scopeIdentity, type GalaxyHistoryEntry, type ScopeTrail } from './scope-history';
 import { useOrganicLayout } from './use-organic-layout';
@@ -2036,6 +2037,10 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     } : undefined, [props.workspaceExpanded, scope.scope, scope.result, scope.complete, scope.direction, traceTypes]);
     const selectionContent = typeof props.selectionPanel === 'function' ? props.selectionPanel(selectionScope) : props.selectionPanel;
 
+    /* K3 und Review: die Leiste misst, ob sie voll, knapp oder umgebrochen passt (toolbar-fit.tsx). */
+    const explorationBar = useRef<HTMLDivElement>(null);
+    useToolbarFit(explorationBar, Boolean(props.workspaceExpanded && scope.scope));
+
     /* Was die Leiste sonst noch braucht (K3): Quelle der Wurzel, Gruppen und was ausserhalb der Limits liegt. */
     const openRoot = props.workspaceExpanded && scopedRoot?.file_path
         ? () => props.onOpenNode(layoutNodeForSelection(layout, scopedRoot) ?? scopedRoot) : undefined;
@@ -2557,7 +2562,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                     </span>
                 )}
             </header>
-            {(props.workspaceExpanded || scope.scope) && <div className="atlas-graph-exploration" aria-label="Graph scope"
+            {(props.workspaceExpanded || scope.scope) && <div className="atlas-graph-exploration" aria-label="Graph scope" ref={explorationBar}
                 data-scoped={props.workspaceExpanded && scope.scope ? 'true' : undefined}>
                 {historyControls}
                 {props.workspaceExpanded && <GalaxyNavigator embedded nodes={layout?.nodes ?? []} project={project} fetch={fetchImpl} onSelect={handleNodeClick} onSelectScope={next => { props.onClearSelection?.(); setBackgroundCleared(false); clearTrail(); scope.select(next); }} />}
@@ -2589,13 +2594,14 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                     <span>{scope.depth} {scope.depth === 1 ? 'layer' : 'layers'}</span>
                     <button type="button" disabled={scope.loading || scope.result?.exhausted || Boolean(scope.result?.partial)}
                         data-warning={expandWarning || undefined} title={expandTitle}
-                        onClick={() => scope.setDepth(scope.depth + 1)}>Expand +1</button>
+                        onClick={() => scope.setDepth(scope.depth + 1)} aria-label={galaxyToolbarText.expand}>
+                        <FitLabel wide={galaxyToolbarText.expand} narrow={galaxyToolbarText.expandNarrow} /></button>
                     {props.workspaceExpanded && (mode === 'galaxy' || scopedProjection) && <>
                         <PathPicker nodes={pathCandidates} onPick={node => { setTrail({ key: organicKey, kind: 'path', target: node.id, name: node.name }); setTrailStep(0); }} />
                         <button type="button" disabled={rootCalls.length === 0} aria-pressed={trail?.key === organicKey && trail.kind === 'calls'}
                             title={rootCalls.length ? galaxyPathText.callOrderTitle : galaxyPathText.callOrderUnavailable}
                             onClick={() => { if (trail?.key === organicKey && trail.kind === 'calls') clearTrail(); else { setTrail({ key: organicKey, kind: 'calls' }); setTrailStep(0); } }}>
-                            {galaxyPathText.callOrder}</button>
+                            <FitLabel wide={galaxyPathText.callOrder} narrow={galaxyPathText.callOrderNarrow} /></button>
                     </>}
                     <span className="atlas-graph-scope-count" role="status" data-state={scopeState}
                         title={partial ? galaxyLayerText.partialTitle(partial.layer, partial.limit === 'nodes' ? nodeBudget : edgeBudget, partial.limit)

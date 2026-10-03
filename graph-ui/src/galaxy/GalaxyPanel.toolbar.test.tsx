@@ -79,3 +79,28 @@ it('K2: the history group and the root button say what they are to assistive tec
     expect(name.getAttribute('aria-label')).toBe('Open the source of n2');
     expect(name.textContent).toBe('n2');
 });
+
+it('K3: the scoped toolbar measures its fit and carries a short label for each wide control', async () => {
+    const nodes = [1, 2, 3].map(id => scopeNode(id));
+    const edges = [{ id: 1, source: 1, target: 2, type: 'CALLS' }, { id: 2, source: 3, target: 1, type: 'CALLS' }];
+    await act(async () => root.render(<GalaxyPanel project="sample" visible workspaceExpanded onOpenNode={vi.fn()} fetch={scopeFetch({ nodes, edges }).fetch} />));
+    await settle(() => expect(seam().nodes).toBe(3));
+    await act(async () => { seam().clickNode('sample.n1'); });
+    await settle(() => expect(host.querySelector('.atlas-graph-scope-count')?.textContent).toBe('3 nodes · 2 edges'));
+    const bar = host.querySelector<HTMLElement>('.atlas-graph-exploration')!;
+    // jsdom lays nothing out, so everything fits.
+    expect(bar.dataset.fit).toBe('full');
+    const narrow = (element: Element | null | undefined) => element?.querySelector('.atlas-fit-narrow')?.getAttribute('data-label');
+    const expand = [...bar.querySelectorAll('button')].find(entry => entry.textContent === 'Expand +1')!;
+    expect(expand.getAttribute('aria-label')).toBe('Expand +1');
+    expect(narrow(expand)).toBe('+1');
+    expect(narrow(bar.querySelector('.atlas-graph-path-picker > summary'))).toBe('Path…');
+    expect(narrow(bar.querySelector('.atlas-trace-edge-filter > summary'))).toBe('Types · All');
+    expect(narrow([...bar.querySelectorAll('button')].find(entry => entry.textContent === 'Call order'))).toBe('Calls');
+    // The short label is drawn by CSS only: the text of each control stays what it was.
+    expect(bar.querySelector('.atlas-trace-edge-filter > summary')?.textContent).toBe('Edge types · All');
+    // Out of the scope the toolbar wraps as before and is not measured.
+    await act(async () => [...bar.querySelectorAll('button')].find(entry => entry.textContent === 'All graph')!.click());
+    await settle(() => expect(host.querySelector('.atlas-graph-scope-name')).toBeNull());
+    expect(host.querySelector<HTMLElement>('.atlas-graph-exploration')!.dataset.fit).toBeUndefined();
+});

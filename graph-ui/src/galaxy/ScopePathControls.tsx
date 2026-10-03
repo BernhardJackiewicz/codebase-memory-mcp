@@ -3,6 +3,7 @@ import type { KeyboardEvent } from 'react';
 import { galaxyPathText as text } from './galaxy-strings';
 import type { ScopePathStep } from './scope-path';
 import type { GraphNode } from './types';
+import { FitLabel } from './toolbar-fit';
 
 const PICKER_LIMIT = 40;
 
@@ -28,7 +29,7 @@ export function PathPicker({ nodes, onPick }: { nodes: readonly GraphNode[]; onP
             .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name) || a.id - b.id);
     }, [nodes, query]);
     return <details ref={details} className="atlas-graph-path-picker" onKeyDown={closeOnEscape}>
-        <summary title={text.pathToTitle}>{text.pathTo}</summary>
+        <summary title={text.pathToTitle}><FitLabel wide={text.pathTo} narrow={text.pathToNarrow} /></summary>
         <div className="atlas-graph-path-menu" role="group" aria-label={text.pathToTitle}>
             <input type="search" aria-label={text.pathSearch} placeholder={text.pathSearchPlaceholder}
                 value={query} onChange={event => setQuery(event.target.value)} />
