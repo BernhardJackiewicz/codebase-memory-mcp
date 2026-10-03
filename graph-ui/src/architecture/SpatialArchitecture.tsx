@@ -79,6 +79,8 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
         ? node.qualified_name === entryChoice.node.qualified_name && node.file_path === entryChoice.node.file_path
         : entryChoice?.generation === generation && node.id === entryChoice?.node.id && node.file_path === entryChoice.node.file_path) ?? entries[0];
     const routeSnapshot = routeReading?.key === routeKey ? routeReading.snapshot : undefined;
+    // Which routes are test code is decided by their registration, handler and caller evidence.
+    const routesChecking = view === 'routes' && !routeSnapshot && !(routeReading?.key === routeKey && routeReading.error);
     const knownFiles = useMemo(() => [...new Set([...overview.files, ...[...(coverage?.records.values() ?? [])].filter(record => record.kind === 'file').map(record => record.path)])], [overview.files, coverage]);
     const catalog = useMemo(() => collectSourceMetrics(graph, knownFiles), [graph, knownFiles]);
     const hotspotCatalog = useMemo(() => collectHotspots(overview.hotspots, graph), [overview.hotspots, graph]);
@@ -155,7 +157,7 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
             </select></label><label>Call depth <select aria-label="Call depth" value={depth} onChange={event => setDepth(Number(event.target.value))}>{[1, 2, 3, 4].map(value => <option key={value}>{value}</option>)}</select></label></>}
             {view === 'hotspots' && hotspotArea && <nav aria-label="Hotspot area"><button onClick={clearScope}>All hotspots</button><span>/ {hotspotArea}</span></nav>}
             {view === 'routes' && <button onClick={() => setRouteRevision(value => value + 1)}>Refresh connections</button>}
-            {view === 'routes' && <label className="spatial-gravity-toggle"><input type="checkbox" checked={includeTestRoutes} onChange={event => { setIncludeTestRoutes(event.target.checked); setSelection(undefined); }} />{text.includeTestRoutes(model.hiddenRoutes ?? 0)}</label>}
+            {view === 'routes' && <label className="spatial-gravity-toggle"><input type="checkbox" checked={includeTestRoutes} onChange={event => { setIncludeTestRoutes(event.target.checked); setSelection(undefined); }} />{routesChecking ? text.includeTestRoutesChecking : text.includeTestRoutes(model.hiddenRoutes ?? 0)}</label>}
             {filePath && (view === 'overview' || view === 'dependencies') && <button onClick={() => onNavigate(filePath, 1)}>Read this file</button>}
             {(view === 'overview' || view === 'dependencies') && <div className="spatial-relations" role="group" aria-label="Relationship types">
                 <button aria-pressed={!relations.length} onClick={() => setRelations([])}>All</button>{relationKinds.map(type => <button key={type} aria-pressed={relations.includes(type)} onClick={() => setRelations(current => current.includes(type) ? current.filter(item => item !== type) : [...current, type])}>{type.replaceAll('_', ' ').toLowerCase()}</button>)}

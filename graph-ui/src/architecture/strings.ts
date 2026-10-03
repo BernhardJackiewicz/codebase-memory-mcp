@@ -79,6 +79,8 @@ export const architectureText = {
     projectionEmpty: 'No component projection is available within this analysis budget.',
     behaviorLimited: 'The analysis returned no call evidence.',
     includeTestRoutes: (hidden: number) => hidden ? `Include test routes (${hidden.toLocaleString()} hidden)` : 'Include test routes',
+    /** Until the route evidence arrives a count would be a guess that jumps later. */
+    includeTestRoutesChecking: 'Include test routes (checking…)',
     showRoutes: (count: number) => `Show these ${count.toLocaleString()} routes →`,
     /** Routes › Service map: what the deployment inventory read found. */
     serviceMap: {

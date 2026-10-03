@@ -127,6 +127,18 @@ it('groups endpoints, hides test routes by default and narrows a group through t
     expect(scene()).toEqual(['/accounts · 2', '/fixture/', '/accounts_old/']);
     expect(toggle.textContent).toBe('Include test routes');
 });
+it('says the test routes are still being checked while route evidence loads, then counts them', async () => {
+    let finish!: (value: Awaited<ReturnType<typeof loadRouteGraph>>) => void;
+    vi.mocked(loadRouteGraph).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const route = (id: number, name: string, file_path: string): GraphNode => ({ id, label: 'Route', name, qualified_name: `sample.route.${id}`, file_path, x: 0, y: 0, z: 0, size: 1, color: '' });
+    const input: GraphData = { nodes: [node, route(2, '/accounts/login/', 'app/urls.py'), route(4, '/fixture/', 'tests/urls.py')], edges: [], total_nodes: 3 };
+    await act(async () => root.render(<SpatialArchitecture project="sample" graph={input} overview={overview} view="routes" filter="" active onNavigate={vi.fn()} onView={vi.fn()} />));
+    const toggle = () => [...host.querySelectorAll('label')].find(label => label.textContent?.startsWith('Include test routes'))!.textContent;
+    // Before the evidence arrives a count would be a guess that later jumps (1, then 155 in Django).
+    expect(toggle()).toBe('Include test routes (checking…)');
+    await act(async () => finish({ relationships: [], truncated: false, warnings: [] }));
+    expect(toggle()).toBe('Include test routes (1 hidden)');
+});
 it('does not load route evidence while the workspace is hidden', async () => {
     await act(async () => root.render(<SpatialArchitecture project="sample" graph={graph} overview={overview} view="routes" filter="" active={false} onNavigate={vi.fn()} onView={vi.fn()} />));
     expect(loadRouteGraph).not.toHaveBeenCalled();
