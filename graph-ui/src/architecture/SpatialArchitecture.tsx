@@ -51,7 +51,14 @@ const relationKinds = ['CALLS', 'IMPORTS', 'USAGE', 'INHERITS', 'IMPLEMENTS', 'D
 
 export default function SpatialArchitecture({ project, generation, graph, overview, view, filter, active, graphNote, onSelect, onClearSelection, onSelectionEvidence, selectionPanel, onNavigate, onView, onFilter, coverage, place: liftedPlace, onPlace }: Props) {
     const [place, changePlace] = useLiftedPlace<SpatialPlace>(liftedPlace, onPlace, () => ({ planar: false }));
-    const { areaPath, filePath, hotspotArea, planar } = place;
+    const { planar } = place;
+    // The place keeps the opened area or file and the hotspot area for Back and Forward (K27), but only the view
+    // that opened them shows them: Entry points and Endpoints draw the same map without an area, and neither the
+    // scene nor the selection evidence for the chat may name one there.
+    const opensScope = view === 'overview' || view === 'dependencies';
+    const areaPath = opensScope ? place.areaPath : undefined;
+    const filePath = opensScope ? place.filePath : undefined;
+    const hotspotArea = view === 'hotspots' ? place.hotspotArea : undefined;
     const [entryChoice, setEntryChoice] = useState<{ node: GraphNode; generation?: string }>();
     const [depth, setDepth] = useState(2);
     const [relations, setRelations] = useState<string[]>([]);
@@ -65,7 +72,7 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
     const [memberLimit, setMemberLimit] = useState(5);
     const [includeTestRoutes, setIncludeTestRoutes] = useState(false);
     // A reindex clears the hotspot area; a view that mounts again keeps the place it is handed.
-    useOnIdentityChange(`${project}:${generation ?? ''}`, () => { if (hotspotArea) changePlace({ hotspotArea: undefined }, true); });
+    useOnIdentityChange(`${project}:${generation ?? ''}`, () => { if (place.hotspotArea) changePlace({ hotspotArea: undefined }, true); });
     const routeKey = `${project}:${generation ?? ''}:${routeRevision}`;
     useEffect(() => {
         if (view !== 'routes' || !active) return;
@@ -102,7 +109,7 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
     const selectedEdge = selection?.scope === scope ? model.edges.find(edge => edge.id === selection.edge) : undefined;
     const selectedMeasure = selectedNode ? measureSourceNode(selectedNode, catalog) : undefined;
     // Inside an opened area or file the inspector speaks about that scope, not the repository.
-    const openedScope = (view === 'overview' || view === 'dependencies') && (filePath || areaPath) ? filePath
+    const openedScope = filePath || areaPath ? filePath
         ? { eyebrow: text.openedFile, title: filePath.split('/').at(-1) ?? filePath, path: filePath, measure: measureSourceNode({ id: `file:${filePath}`, kind: 'file', label: filePath, detail: '', position: [0, 0, 0], count: 0, members: [], filePath }, catalog) }
         : { eyebrow: text.openedArea, title: areaPath!, path: areaPath!, measure: catalog.areas.get(areaPath!) } : undefined;
     const selectedHotspots = selectedNode ? hotspotsForNode(selectedNode, hotspotCatalog) : undefined;

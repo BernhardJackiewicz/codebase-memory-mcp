@@ -248,27 +248,19 @@ describe('system architecture workspace', () => {
         expect(container.querySelector('[data-node="g:store"]')).toBeNull();
         expect(container.querySelector('[data-node="g:context"]')).toBeNull();
     });
-    it('returns to immediate calls, and its Back is the shared Architecture Back (K27)', async () => {
+    it('returns to immediate calls, and leaves Back to the Architecture workspace (K27)', async () => {
         const loader = vi.fn<SystemArchitectureLoader>().mockImplementation(request => Promise.resolve(response(request.targetNodeId === 3 ? corridorFixture() : overviewFixture())));
-        const onBack = vi.fn();
-        await render(loader, { view: 'behavior', back: { target: 'Behavior · start → save', onBack } });
+        await render(loader, { view: 'behavior' });
         await choose('Behavior entry point', '1'); await choose('Behavior destination', '3');
         await clickText('Immediate calls');
         expect(container.querySelector<HTMLSelectElement>('[aria-label="Behavior destination"]')?.value).toBe('');
         expect(container.querySelectorAll('[data-node]')).toHaveLength(2);
         expect(container.textContent).toContain('DIRECT CALLS · UNORDERED');
-        const back = [...container.querySelectorAll<HTMLButtonElement>('.behavior-navigation button')].find(item => item.textContent === '← Back')!;
-        expect(back.title).toBe('Back to Behavior · start → save (Alt+Left)');
-        await act(async () => back.click());
-        expect(onBack).toHaveBeenCalledOnce();
-        await render(loader, { view: 'structure', back: { target: 'Overview', onBack } });
-        const structureBack = [...container.querySelectorAll<HTMLButtonElement>('.system-scope-actions button')].find(item => item.textContent === '← Back')!;
-        expect(structureBack.title).toBe('Back to Overview (Alt+Left)');
-        await act(async () => structureBack.click());
-        expect(onBack).toHaveBeenCalledTimes(2);
-        // Without a shared history (a view on its own) there is no second, local Back.
-        await render(loader, { view: 'structure', back: undefined });
+        // The old "← Back" buttons are absorbed into the one Back beside the Architecture subtabs.
         expect([...container.querySelectorAll('button')].some(item => item.textContent === '← Back')).toBe(false);
+        await render(loader, { view: 'structure' });
+        expect([...container.querySelectorAll('button')].some(item => item.textContent === '← Back')).toBe(false);
+        expect([...container.querySelectorAll('.system-scope-actions button')].map(item => item.textContent)).toEqual(['Whole system']);
     });
     it('filters whole paths without drawing disconnected remnants and restores the path without refetching', async () => {
         const loader = vi.fn<SystemArchitectureLoader>().mockImplementation(request => Promise.resolve(response(request.targetNodeId === 3 ? corridorFixture() : overviewFixture())));

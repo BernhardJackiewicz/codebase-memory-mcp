@@ -69,24 +69,25 @@ export function pushNavigation<T>(history: NavigationHistory<T>, entry: T, optio
  * ihn sofort wieder ein, und Zurueck kaeme nie darueber hinaus.
  *
  * Der Vorwaertszweig bleibt. Der ersetzte Ort verlaesst die Liste der letzten
- * Orte, wenn er dort vorn steht. Gleicht der neue Eintrag dem davor, fallen
- * beide zusammen, wie bei `pushNavigation`. Ohne aktuellen Eintrag ist es ein
- * gewoehnlicher erster Schritt.
+ * Orte, wenn er dort vorn steht. Gleicht der neue Eintrag dem davor oder dem
+ * danach, fallen sie zusammen, wie bei `pushNavigation`: sonst stuenden zwei
+ * gleiche Schritte nebeneinander, und Vor oder Zurueck fuehrte an denselben
+ * Ort. Ohne aktuellen Eintrag ist es ein gewoehnlicher erster Schritt.
  */
 export function replaceNavigation<T>(history: NavigationHistory<T>, entry: T, options: NavigationHistoryOptions<T>): NavigationHistory<T> {
     const current = history.entries[history.index];
     if (current === undefined) return pushNavigation(history, entry, options);
-    if (options.key(current) === options.key(entry)) return history;
+    const key = options.key(entry);
+    if (options.key(current) === key) return history;
     const replaced = options.recentKey?.(current);
     const front = history.recent[0];
     const recent = replaced !== undefined && front !== undefined && options.recentKey?.(front) === replaced ? history.recent.slice(1) : history.recent;
+    const same = (other: T | undefined): other is T => other !== undefined && options.key(other) === key;
+    const before = history.entries.slice(0, history.index);
+    const after = history.entries.slice(history.index + (same(history.entries[history.index + 1]) ? 2 : 1));
     const previous = history.entries[history.index - 1];
-    if (previous !== undefined && options.key(previous) === options.key(entry)) {
-        const entries = [...history.entries.slice(0, history.index), ...history.entries.slice(history.index + 1)];
-        return { entries, index: history.index - 1, recent: visit(recent, previous, options) };
-    }
-    const entries = [...history.entries.slice(0, history.index), entry, ...history.entries.slice(history.index + 1)];
-    return { entries, index: history.index, recent: visit(recent, entry, options) };
+    if (same(previous)) return { entries: [...before, ...after], index: history.index - 1, recent: visit(recent, previous, options) };
+    return { entries: [...before, entry, ...after], index: history.index, recent: visit(recent, entry, options) };
 }
 
 /**

@@ -9,7 +9,7 @@ import { architectureHistoryText as historyText, architectureText as text } from
 import { peekNavigation, type NavigationHistory } from '../graph/navigation-history';
 import {
     architectureEntryDetail, architectureEntryLabel, architectureEntryName, architectureHistoryOptions, initialArchitecturePlace,
-    type ArchitectureHistoryEntry, type PlaceChange, type RoutesPerspective, type SharedBack, type SpatialPlace, type SystemPlace,
+    type ArchitectureHistoryEntry, type PlaceChange, type RoutesPerspective, type SpatialPlace, type SystemPlace,
 } from './architecture-history';
 import { useArchitectureHistory } from './use-architecture-history';
 import './architecture.css';
@@ -161,11 +161,12 @@ function ArchitectureWorkspace({ projectName, overview, loading = false, error, 
     const storage = useMemo(browserStorage, []);
     /*
      * The place is the whole history entry (K27): subtab, opened area or file,
-     * Plan or 3D, route perspective and filter, System structure focus and
-     * groups, Behavior start. The views below read their part of it and report
-     * changes back, so Back and Forward restore every part at once. A filter is
-     * a search for this visit: one saved by an earlier session would silently
-     * hide routes, so only the subtab is read back.
+     * route perspective and filter, System structure focus and groups, Behavior
+     * start, destination and position, and Plan or 3D of each scene. The views
+     * below read their part of it and report changes back, so Back and Forward
+     * restore every part at once; the one Back for all of them sits beside the
+     * subtabs. A filter is a search for this visit: one saved by an earlier
+     * session would silently hide routes, so only the subtab is read back.
      */
     const navigation = useArchitectureHistory(() => initialArchitecturePlace(readArchitectureConfig(storage, projectName).view), {
         active, escapeTaken, onRestore: (from, to) => { if (from.view !== to.view) onSelectionEvidence?.(undefined); },
@@ -180,7 +181,6 @@ function ArchitectureWorkspace({ projectName, overview, loading = false, error, 
     const changePerspective = useCallback((routes: RoutesPerspective) => navigate(current => ({ ...current, routes })), [navigate]);
     // An opened route group ("Show these N routes") is a step at once; typing waits for a pause.
     const openRouteGroup = useCallback((filter: string) => navigate(current => ({ ...current, filter })), [navigate]);
-    const sharedBack: SharedBack = { target: navigation.back ? architectureEntryLabel(navigation.back) : undefined, onBack: () => navigation.go(-1) };
     // A cached summary from another project must never appear here.
     const data = overview?.projectName && overview.projectName !== projectName ? undefined : overview;
     const ready = Boolean(data && !loading && !error && projectName);
@@ -207,7 +207,7 @@ function ArchitectureWorkspace({ projectName, overview, loading = false, error, 
         {systemView && projectName ? <Suspense fallback={<div role="status"><Empty>Preparing system analysis…</Empty></div>}><SystemArchitecture
             project={projectName} generation={graphGeneration} view={systemView} filter={filter} active={active}
             graph={graph} onSelect={onSelect} onClearSelection={onClearSelection} onSelectionEvidence={onSelectionEvidence} onNavigate={onNavigate} loader={systemArchitectureLoader}
-            place={place.system} onPlace={changeSystem} back={sharedBack} /></Suspense> : null}
+            place={place.system} onPlace={changeSystem} /></Suspense> : null}
         {!systemView && (!projectName ? <Empty>{text.chooseProject}</Empty> : loading ? <div role="status"><Empty>{text.loading}</Empty></div>
             : error ? <div role="alert" className="atlas-arch-empty" data-error="true"><p>{text.loadFailed}</p><p className="atlas-arch-error-detail">{error}</p>
                 {onRefresh && <button className="atlas-arch-action" onClick={onRefresh}>{text.retry}</button>}</div>

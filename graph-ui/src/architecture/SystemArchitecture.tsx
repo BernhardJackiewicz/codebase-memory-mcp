@@ -8,8 +8,7 @@ import { connectionLoad } from '../graph/connection-load';
 import { AtlasApi } from '../app/atlas-api';
 import type { FlowSummary } from '../traces/trace-schemas';
 import BehaviorJourney from './BehaviorJourney';
-import type { BehaviorPlace, PlaceChange, SharedBack, SystemPlace } from './architecture-history';
-import { architectureHistoryText as historyText } from './strings';
+import type { BehaviorPlace, JourneyPlace, PlaceChange, SystemPlace } from './architecture-history';
 import { useLiftedPlace, useOnIdentityChange } from './lifted-place';
 import './system-architecture.css';
 
@@ -21,11 +20,9 @@ export interface SystemArchitectureProps {
     onNavigate: (path: string, line?: number, name?: string) => void;
     loader?: SystemArchitectureLoader;
     flowsLoader?: FlowsLoader;
-    /** Focus, expanded groups and the Behavior start, lifted to the workspace for Back and Forward (K27). */
+    /** Focus, expanded groups, the Behavior start and position, and both cameras, lifted to the workspace for Back and Forward (K27). */
     place?: SystemPlace;
     onPlace?: PlaceChange<SystemPlace>;
-    /** The shared Architecture Back; without it the view offers no Back of its own. */
-    back?: SharedBack;
 }
 /** Ranked call-graph flows (route handlers, call-graph roots) from /api/flows. */
 export type FlowsLoader = (project: string) => Promise<FlowSummary[]>;
@@ -73,7 +70,7 @@ const connectionAllowed = (type: string, view: ConnectionView) => view === 'all'
     || (view === 'calls' ? ['CALLS', 'IMPORTS', 'HTTP_CALLS', 'ASYNC_CALLS'] : ['INHERITS', 'IMPLEMENTS']).includes(type);
 
 /** Poll only while this view is active. A new request key hides stale results before its effect runs. */
-export default function SystemArchitecture({ project, generation, view, filter, active, graph, onSelect, onClearSelection, onSelectionEvidence, onNavigate, loader = loadSystemArchitecture, flowsLoader = loadFlows, place: liftedPlace, onPlace, back }: SystemArchitectureProps) {
+export default function SystemArchitecture({ project, generation, view, filter, active, graph, onSelect, onClearSelection, onSelectionEvidence, onNavigate, loader = loadSystemArchitecture, flowsLoader = loadFlows, place: liftedPlace, onPlace }: SystemArchitectureProps) {
     const [place, changePlace] = useLiftedPlace<SystemPlace>(liftedPlace, onPlace, () => ({ expanded: [] }));
     const entryChoice = place.behavior;
     /** A start the page picks itself (the suggestion, a reset) completes the current step instead of adding one. */
@@ -93,7 +90,7 @@ export default function SystemArchitecture({ project, generation, view, filter, 
     const [selection, setSelection] = useState<{ node?: string; edge?: string; dependencyIndex?: number }>();
     const [listLimit, setListLimit] = useState(20);
     const [resetKey, setResetKey] = useState(0);
-    const [planar, setPlanar] = useState(false);
+    const planar = place.structurePlanar ?? false;
     const [stepIndex, setStepIndex] = useState(0);
     const [showConnectionLoad, setShowConnectionLoad] = useState(true);
     const [flows, setFlows] = useState<{ project: string; generation?: string; entries: SystemSymbol[] }>();
@@ -309,10 +306,20 @@ export default function SystemArchitecture({ project, generation, view, filter, 
         limitations: { analysis: data?.limits, warnings: data?.warnings, omittedNodes: model.omittedNodes, omittedEdges: model.omittedEdges,
             interpretation: 'Groups are inferred from indexed interactions and source organization. They do not establish deployment boundaries or runtime behavior. Witnesses may be samples.' },
     } : undefined, active && view === 'structure');
+    /*
+     * Where the journey stands belongs to the start it was walked from, so a new start begins at the top and Back
+     * returns to the operation it showed. Plan or 3D belongs to Behavior as a whole and stays across starts.
+     */
+    const currentChoice = entryChoice?.project === project && entryChoice.generation === generation ? entryChoice : undefined;
+    const journeyPlace: JourneyPlace = { ...currentChoice?.position, planar: place.behaviorPlanar ?? false };
+    const changeJourney: PlaceChange<JourneyPlace> = ({ planar: behaviorPlanar, ...position }, automatic) => changePlace({
+        ...(behaviorPlanar === undefined ? {} : { behaviorPlanar }),
+        ...(Object.keys(position).length ? { behavior: { ...(currentChoice ?? { project, generation }), position: { ...currentChoice?.position, ...position } } } : {}),
+    }, automatic);
     const behaviorPage = view === 'behavior' ? <BehaviorJourney project={project} generation={projectionGeneration} data={queryData}
         entries={entries} targets={targets} entryId={requestedEntry} targetId={requestedTarget} active={active} pending={queryPending}
         error={error} filter={filter} onRefresh={() => setRevision(value => value + 1)} onNavigate={onNavigate} onSelectSymbol={selectSymbol} onClearSelection={onClearSelection} onSelectionEvidence={onSelectionEvidence}
-        from={requestedEntry !== undefined ? entryChoice?.from : undefined} back={back}
+        from={requestedEntry !== undefined ? entryChoice?.from : undefined} place={journeyPlace} onPlace={changeJourney}
         onShownStart={name => { if (name !== place.shown) changePlace({ shown: name }, true); }}
         onRequest={(entry, targetId, detail) => {
             const analysisGeneration = projectionGeneration ?? sourceGeneration;
@@ -327,8 +334,7 @@ export default function SystemArchitecture({ project, generation, view, filter, 
             <p>{view === 'structure' ? 'Inspect the parts and the code that connects them.' : 'Follow a question through the same system map.'}</p>
             <button className="atlas-arch-action system-refresh" onClick={() => { setRevision(value => value + 1); setResetKey(value => value + 1); }}>Refresh analysis</button>
         </div><div className="system-controls">
-            <div className="system-scope-actions">{back && <button disabled={!back.target} title={back.target ? historyText.backTo(back.target) : historyText.noBack} onClick={back.onBack}>{historyText.inViewBack}</button>}
-                <button disabled={!focusId} onClick={clearSelection}>Whole system</button></div>
+            <div className="system-scope-actions"><button disabled={!focusId} onClick={clearSelection}>Whole system</button></div>
             {view === 'structure' && <label>Connections <select aria-label="Connection view" value={connectionView} onChange={event => { setConnectionView(event.target.value as ConnectionView); setCyclesOnly(false); }}>
                 <option value="calls">Calls &amp; imports</option><option value="types">Type relationships</option><option value="all">All relationships</option>
             </select></label>}
@@ -360,7 +366,7 @@ export default function SystemArchitecture({ project, generation, view, filter, 
                     <div className="system-display-controls">
                         <span className="system-layout-hint" title="Directory ancestry determines placement. Connections still come from the indexed graph. Representatives provide location hints when no directory group is reported.">{data.overview || view === 'structure' ? 'Grouped by source location' : 'Ordered by call paths'}</span>
                         <label title="Ring area follows log(1 + visible links), relative to the busiest item in this view. Each directed relationship type counts once; this is visual load, not runtime activity."><input type="checkbox" checked={showConnectionLoad} onChange={event => setShowConnectionLoad(event.target.checked)} />Connection load</label>
-                        <div className="system-view-switch" role="group" aria-label="System camera"><button aria-pressed={!planar} onClick={() => setPlanar(false)}>3D</button><button aria-pressed={planar} onClick={() => setPlanar(true)}>Plan</button></div>
+                        <div className="system-view-switch" role="group" aria-label="System camera"><button aria-pressed={!planar} onClick={() => changePlace({ structurePlanar: false })}>3D</button><button aria-pressed={planar} onClick={() => changePlace({ structurePlanar: true })}>Plan</button></div>
                     </div>
                     <div className="system-workspace"><div className="system-map">
                         {/* The reason for an empty projection outranks any filter that would also find nothing. */}

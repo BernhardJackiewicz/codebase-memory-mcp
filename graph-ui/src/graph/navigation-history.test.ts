@@ -85,6 +85,23 @@ describe('bounded back and forward history', () => {
         expect(keys(replaceNavigation(emptyNavigationHistory<Entry>(), { root: 'A', depth: 1 }, options))).toEqual(['A@1']);
     });
 
+    it('merges a replaced step with the step after it too, so Forward never leads to the same place (K27)', () => {
+        // After Back, the page resets the place it shows (a reindex), and the reset equals the step ahead.
+        let history = push(emptyNavigationHistory<Entry>(), { root: 'A', depth: 1 }, { root: 'B', depth: 2 }, { root: 'B', depth: 1 });
+        history = moveNavigation(history, -1, options);
+        history = replaceNavigation(history, { root: 'B', depth: 1 }, options);
+        expect(keys(history)).toEqual(['A@1', 'B@1']);
+        expect(history.index).toBe(1);
+        expect(peekNavigation(history, 1)).toBeUndefined();
+        // Equal to the steps on both sides: all three become one.
+        let between = push(emptyNavigationHistory<Entry>(), { root: 'A', depth: 1 }, { root: 'B', depth: 1 }, { root: 'A', depth: 1 }, { root: 'C', depth: 1 });
+        between = moveNavigation(moveNavigation(between, -1, options), -1, options);
+        between = replaceNavigation(between, { root: 'A', depth: 1 }, options);
+        expect(keys(between)).toEqual(['A@1', 'C@1']);
+        expect(between.index).toBe(0);
+        for (let at = 1; at < between.entries.length; at++) expect(options.key(between.entries[at]!)).not.toBe(options.key(between.entries[at - 1]!));
+    });
+
     it('refreshes the current step with newer details of the same place, without a step or reordering (K27)', () => {
         interface Named extends Entry { name?: string }
         const named: NavigationHistoryOptions<Named> = options;

@@ -87,6 +87,24 @@ describe('the Architecture history entry (K27)', () => {
         expect(architectureEntryDetail(start)).toBe('');
     });
 
+    it('holds Plan or 3D in System structure and Behavior, and where a call chain stands (K27)', () => {
+        const structure = at({ view: 'structure' });
+        // Plan or 3D is a step in every view that draws a scene, each with its own camera as before.
+        expect(key({ ...structure, system: { expanded: [], structurePlanar: true } })).not.toBe(key(structure));
+        expect(key({ ...structure, system: { expanded: [], behaviorPlanar: true } })).toBe(key(structure));
+        const reach = behavior(1, 'main', { targetId: 3, targetName: 'save' });
+        expect(key({ ...reach, system: { ...reach.system, behaviorPlanar: true } })).not.toBe(key(reach));
+        expect(key({ ...reach, system: { ...reach.system, structurePlanar: true } })).toBe(key(reach));
+        // Another indexed path to the destination is a step; the operation on it and the page of direct calls are not.
+        const second = { ...reach, system: { ...reach.system, behavior: { ...reach.system.behavior!, position: { path: 1 } } } };
+        expect(key(second)).not.toBe(key(reach));
+        expect(key({ ...reach, system: { ...reach.system, behavior: { ...reach.system.behavior!, position: { path: 0, step: 2, page: 1 } } } })).toBe(key(reach));
+        expect(recentKey(second)).toBe(recentKey(reach));
+        expect(architectureEntryLabel({ ...structure, system: { expanded: [], structurePlanar: true } })).toBe('System structure · Plan');
+        expect(architectureEntryLabel({ ...second, system: { ...second.system, behaviorPlanar: true } })).toBe('Behavior · main → save · Path 2 · Plan');
+        expect(architectureEntryLabel({ ...reach, system: { ...reach.system, behavior: { ...reach.system.behavior!, position: { step: 2 } } } })).toBe('Behavior · main → save');
+    });
+
     it('keeps one recent place per subtab location, whatever its Plan or expanded groups', () => {
         expect(recentKey(at({ spatial: { planar: true } }))).toBe(recentKey(start));
         expect(recentKey(at({ spatial: { planar: false, areaPath: 'django' } }))).not.toBe(recentKey(start));

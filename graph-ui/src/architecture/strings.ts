@@ -116,8 +116,6 @@ export const architectureHistoryText = {
     forwardTo: (label: string) => `Forward to ${label} (Alt+Right)`,
     noBack: 'Nothing to go back to yet',
     noForward: 'Nothing to go forward to',
-    /** System structure and Behavior keep their own Back button; it takes the same step as the one above. */
-    inViewBack: '← Back',
     recent: 'Recent',
     recentGlyph: '▾',
     recentTitle: 'Jump straight to a recently visited place in Architecture, as it was last seen',
@@ -126,5 +124,7 @@ export const architectureHistoryText = {
     plan: 'Plan',
     groupsOpen: (count: number) => (count === 1 ? '1 group open' : `${count} groups open`),
     reach: (start: string, target: string) => `${start} → ${target}`,
+    /** Another indexed path to a Behavior destination, named as its button: "Path 2". */
+    path: (number: number) => `Path ${number}`,
     followedFrom: (name: string) => `followed from ${name}`,
 };

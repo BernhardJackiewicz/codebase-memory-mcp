@@ -110,14 +110,30 @@ has opened.
 | `routes` | The Routes perspective: Service map or Endpoints. |
 | `filter` | The Routes filter. An opened route group ("Show these N routes") is that filter. |
 | `system.focus`, `system.expanded` | The System structure focus and the expanded groups. |
+| `system.structurePlanar`, `system.behaviorPlanar` | Plan or 3D in System structure and in Behavior. Each keeps its own camera, as before K27. |
 | `system.behavior` | The Behavior start, the destination ("Reach") and, after a followed call (double-click, "Follow calls from here"), the start the hops began from. |
+| `system.behavior.position` | Where the journey stands: the indexed path to the destination ("Path 2"), the operation on that call chain, and the page of direct calls. |
 | `system.shown` | The start Behavior shows when none was requested (the server picks one, or the first entry point), so a tooltip can name it. |
 
-The entry holds identities and names, never projections, scenes or cameras.
-Its key covers only what the current subtab shows: a field another subtab holds
-does not split a step, and the names are there for the tooltips only. The
-Behavior start is the numeric identity of one analysis snapshot and stays
-guarded by its generation, as before.
+The entry holds identities, names and a few small numbers, never projections,
+scenes or cameras. Its key covers only what the current subtab shows: a field
+another subtab holds does not split a step, and the names are there for the
+tooltips only. The Behavior start is the numeric identity of one analysis
+snapshot and stays guarded by its generation, as before.
+
+What another subtab holds stays out of that subtab entirely, not only out of
+the key. The map reads the opened area or file only in Overview and the hotspot
+area only in Hotspots, so Entry points and Endpoints neither draw nor report an
+area opened in Overview, and the chat context there names nothing that is not
+on screen. Back to Overview opens the area again.
+
+Every view that draws a scene makes Plan or 3D a step: the shared map, System
+structure and Behavior. Another path to a destination is a step too. Walking
+the call chain (Previous, Next, the slider, a click on an operation) and paging
+through direct calls are no steps, because Previous and Next already do that;
+the entry keeps where the journey stood, so Back and Forward return to the same
+operation. A new start, destination or followed call begins at the top of its
+journey.
 
 ### Rules
 
@@ -129,21 +145,25 @@ keys, and a fresh history per project (the workspace remounts per project).
 Architecture adds:
 
 1. **One Back.** Back, Forward and Recent sit beside the subtabs and serve the
-   whole workspace. The "← Back" buttons in System structure and Behavior stay
-   where users know them and take the same step, with the same tooltip; there
-   is no second, local meaning of Back. "Whole system" stays as a way to the
-   top, and the Overview location trail stays; both are ordinary steps.
+   whole workspace. The "← Back" buttons System structure and Behavior had in
+   their own toolbars are absorbed into it: there is one Back control with one
+   meaning, and a step in System structure or Behavior is one Back away like
+   any other. "Whole system" stays as a way to the top, and the Overview
+   location trail stays; both are ordinary steps.
 2. **Separate from Galaxy.** Galaxy and Architecture each keep their own
    history, and Alt+Left and Alt+Right act only in the active workspace.
 3. **Typing is one step.** Typing in the Routes filter becomes a step once it
-   pauses (600 ms), not one step per key. A navigation while typing first
-   records what the field showed. Back or Forward while typing drops the text
-   that is not a step yet.
+   pauses (600 ms), not one step per key. A navigation, Back, Forward or a
+   Recent jump while typing first records what the field showed, so typed text
+   is never lost: Back leaves it for the place before the typing and Forward
+   returns to it. Forward while typing finds no forward branch, because the
+   text is a new navigation; it records the text and stays.
 4. **The page's own choices are no steps.** What the page sets by itself (the
    suggested Behavior start such as `main`, a reset after reindexing) replaces
    the current step (`replaceNavigation`). As a step of its own, Back would land
    on an empty Behavior, the page would pick `main` again, and Back would never
-   get past it.
+   get past it. A replaced step that equals the step before or after it merges
+   with that step, so Back and Forward never lead to the same place twice.
 5. **Followed calls.** A followed call is a new start that remembers where the
    hops began. Empty background returns there, as it did before, and that is a
    step too.
@@ -169,15 +189,16 @@ Architecture adds:
   `SpatialArchitecture`, `RoutesArchitecture`, `SystemArchitecture` and
   `BehaviorJourney` read their part of the place and report changes back
   (`lifted-place.ts`). Rendered on their own, as in their unit tests, they keep
-  that part as their own state and offer no Back.
+  that part as their own state; none of them has a Back of its own.
 - Tests: `architecture-history.test.ts` (entry, key, labels),
   `ArchitecturePanel.history.test.tsx` (the wiring) and the browser run
   `graph-ui/tools/handtest-fixes-k27.mjs` on django-demo and cbm.
 
 ### Not in scope
 
-- Not steps: the Plan or 3D switch in System structure and Behavior, the Entry
-  points start and call depth, selections, the path and step within a call
-  chain, paging, the relationship filters and the camera.
+- Neither steps nor kept in the entry: the Entry points start and call depth,
+  selections, the relationship filters, the System structure checkboxes, and
+  the camera position (zoom, pan, "Fit"). Plan or 3D is a step, the camera
+  position is not.
 - No persistence across reloads. As before, only the subtab is remembered per
   project.

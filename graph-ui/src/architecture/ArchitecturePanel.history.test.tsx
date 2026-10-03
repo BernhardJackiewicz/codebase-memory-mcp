@@ -22,9 +22,9 @@ vi.mock('./ContainerMap', () => ({ default: ({ filter }: { filter: string }) => 
 vi.mock('./route-graph-source', () => ({ loadRouteGraph: vi.fn(async () => ({ relationships: [], truncated: false, warnings: [] })) }));
 vi.mock('./BehaviorSourceEvidence', () => ({ default: () => <div /> }));
 vi.mock('../app/atlas-api', () => ({ AtlasApi: class { flows() { return Promise.resolve([]); } } }));
-vi.mock('./SystemArchitectureScene', () => ({ default: ({ model, onSelectNode, onExpandNode, onClearSelection }: {
-    model: SystemSceneModel; onSelectNode: (id: string) => void; onExpandNode?: (id: string) => void; onClearSelection?: () => void;
-}) => <div data-testid="system-scene" data-focus={model.focusId ?? ''}><button onClick={onClearSelection}>System background</button>
+vi.mock('./SystemArchitectureScene', () => ({ default: ({ model, onSelectNode, onExpandNode, onClearSelection, planar }: {
+    model: SystemSceneModel; onSelectNode: (id: string) => void; onExpandNode?: (id: string) => void; onClearSelection?: () => void; planar?: boolean;
+}) => <div data-testid="system-scene" data-focus={model.focusId ?? ''} data-planar={String(Boolean(planar))}><button onClick={onClearSelection}>System background</button>
     {model.nodes.map(node => <button key={node.id} data-system-node={node.id} onClick={() => onSelectNode(node.id)} onDoubleClick={() => onExpandNode?.(node.id)}>{node.label}</button>)}</div> }));
 
 const graphNode = (id: number, name: string, file_path: string, label = 'Function'): GraphNode =>
@@ -53,6 +53,13 @@ function projection(): SystemProjection {
             groups: components.map(item => ({ id: `g:${item.id}`, label: item.label, component_count: 1, member_count: 4, file_count: 1, component_ids: [item.id], representatives: item.representatives })),
             connections: dependencies.map(edge => ({ ...edge, source: `g:${edge.source}`, target: `g:${edge.target}` })), totals: { groups: 3, components: 3 }, limits: {} },
     };
+}
+/** main reaches save on two indexed paths: through handle, and directly. */
+function twoPaths(): SystemProjection {
+    const data = projection();
+    const [main, , save] = data.paths[0]!.nodes;
+    data.paths = [...data.paths, { entrypoint_id: 1, nodes: [main!, save!], edges: [{ id: 13, source_id: 1, target_id: 3, type: 'CALLS' }] }];
+    return data;
 }
 
 let container: HTMLDivElement;
@@ -119,6 +126,14 @@ const filter = () => container.querySelector<HTMLInputElement>('input[type="sear
 const focus = () => container.querySelector('[data-testid="system-scene"]')?.getAttribute('data-focus');
 const heading = () => container.querySelector('.behavior-heading h2')?.textContent;
 const sceneLabels = () => [...container.querySelectorAll('[data-testid="scene"] [data-node]')].map(item => item.textContent);
+/** The "← Back" System structure and Behavior had in their own toolbars before K27. */
+const inViewBack = () => buttons().find(button => button.textContent === '← Back');
+const systemCamera = () => container.querySelector('[aria-label="System camera"] button[aria-pressed="true"]')?.textContent;
+const behaviorCamera = () => container.querySelector('[aria-label="Behavior camera"] button[aria-pressed="true"]')?.textContent;
+const chainPosition = () => container.querySelector('[aria-label="Walk the call chain"] span')?.textContent;
+const pathButtons = () => [...container.querySelectorAll<HTMLButtonElement>('[aria-label="Indexed paths"] button')];
+const chosenPath = () => pathButtons().findIndex(button => button.getAttribute('aria-pressed') === 'true') + 1;
+const lastEvidence = (listener: ReturnType<typeof vi.fn>) => listener.mock.lastCall?.[0] as { label: string; text: string } | undefined;
 const key = (init: KeyboardEventInit, target: EventTarget = window) => {
     const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
     act(() => { target.dispatchEvent(event); });
@@ -204,9 +219,9 @@ describe('Architecture back and forward (K27)', () => {
         await render();
         await press(container.querySelector<HTMLButtonElement>('[data-view="structure"]'));
         expect(focus()).toBe('');
-        const oldBack = () => byText('← Back', container.querySelector('.system-scope-actions')!);
-        expect(oldBack()?.disabled).toBe(false);
-        expect(oldBack()?.title).toBe('Back to Overview (Alt+Left)');
+        // The old "← Back" is absorbed into the shared Back beside the subtabs: one Back control, one meaning.
+        expect(inViewBack()).toBeUndefined();
+        expect(back()?.title).toBe('Back to Overview (Alt+Left)');
         await doubleClick('[data-system-node="g:api"]');
         expect(focus()).toBe('g:api');
         expect(container.querySelector('[data-system-node="member:g:api:api"]')).not.toBeNull();
@@ -214,15 +229,16 @@ describe('Architecture back and forward (K27)', () => {
         await press(container.querySelector<HTMLButtonElement>('[data-system-node="g:service"]'));
         await clickText('Focus here');
         expect(focus()).toBe('g:service');
-        expect(oldBack()?.title).toBe('Back to System structure · api · 1 group open (Alt+Left)');
+        expect(back()?.title).toBe('Back to System structure · api · 1 group open (Alt+Left)');
+        expect(inViewBack()).toBeUndefined();
 
-        await press(oldBack());
+        await goBack();
         expect(focus()).toBe('g:api');
         await goBack();
         expect(focus()).toBe('');
         expect(container.querySelector('[data-system-node="member:g:api:api"]')).toBeNull();
-        // One meaning of Back: the old button now also leaves System structure.
-        await press(oldBack());
+        // One meaning of Back: the same Back also leaves System structure.
+        await goBack();
         expect(view()).toBe('overview');
         await goForward(); await goForward();
         expect([view(), focus()]).toEqual(['structure', 'g:api']);
@@ -246,11 +262,11 @@ describe('Architecture back and forward (K27)', () => {
         expect(back()?.title).toBe('Back to Behavior · main (Alt+Left)');
         await doubleClick('[data-system-node="journey-choice:3"]');
         expect(heading()).toBe('What can save call?');
-        const oldBack = () => byText('← Back', container.querySelector('.behavior-navigation')!);
-        expect(oldBack()?.title).toBe('Back to Behavior · handle (Alt+Left)');
+        expect(inViewBack()).toBeUndefined();
+        expect(back()?.title).toBe('Back to Behavior · handle (Alt+Left)');
         expect(forward()?.disabled).toBe(true);
 
-        await press(oldBack());
+        await goBack();
         expect(heading()).toBe('What can handle call?');
         expect(forward()?.title).toBe('Forward to Behavior · save · followed from handle (Alt+Right)');
         await goBack();
@@ -287,6 +303,121 @@ describe('Architecture back and forward (K27)', () => {
         await goBack();
         expect(view()).toBe('overview');
         expect(forward()?.title).toBe('Forward to Behavior · main (Alt+Right)');
+    });
+
+    it('makes Plan or 3D in System structure a step that Back restores', async () => {
+        await render();
+        await press(container.querySelector<HTMLButtonElement>('[data-view="structure"]'));
+        expect(systemCamera()).toBe('3D');
+        expect(container.querySelector('[data-testid="system-scene"]')?.getAttribute('data-planar')).toBe('false');
+        await clickText('Plan', container.querySelector('[aria-label="System camera"]')!);
+        expect(container.querySelector('[data-testid="system-scene"]')?.getAttribute('data-planar')).toBe('true');
+        expect(back()?.title).toBe('Back to System structure (Alt+Left)');
+        await press(container.querySelector<HTMLButtonElement>('[data-view="overview"]'));
+        expect(back()?.title).toBe('Back to System structure · Plan (Alt+Left)');
+
+        await goBack();
+        expect([view(), systemCamera()]).toEqual(['structure', 'Plan']);
+        expect(container.querySelector('[data-testid="system-scene"]')?.getAttribute('data-planar')).toBe('true');
+        await goBack();
+        expect([view(), systemCamera()]).toEqual(['structure', '3D']);
+        await goForward(); await goForward();
+        expect(view()).toBe('overview');
+        // Behavior keeps a camera of its own, as before.
+        await goBack();
+        await press(container.querySelector<HTMLButtonElement>('[data-view="behavior"]'));
+        expect(behaviorCamera()).toBe('3D');
+    });
+
+    it('keeps the Behavior path, the operation on it and Plan or 3D in the entry, and only a path or camera change is a step', async () => {
+        loader.mockImplementation(async () => ({ status: 'ready', generation: 'g1', result: twoPaths() }));
+        await render();
+        await press(container.querySelector<HTMLButtonElement>('[data-view="behavior"]'));
+        expect(heading()).toBe('What can main call?');
+        await choose('Behavior destination', '3');
+        expect(heading()).toBe('main → save');
+        expect([chosenPath(), chainPosition()]).toEqual([1, '1 / 3']);
+        await clickText('Next →');
+        expect(chainPosition()).toBe('2 / 3');
+        // Walking the chain is no step of its own: Previous and Next do that; the entry keeps where it stands.
+        expect(back()?.title).toBe('Back to Behavior · main (Alt+Left)');
+        await press(pathButtons()[1]);
+        expect([chosenPath(), chainPosition()]).toEqual([2, '1 / 2']);
+        expect(back()?.title).toBe('Back to Behavior · main → save (Alt+Left)');
+        await clickText('Plan', container.querySelector('[aria-label="Behavior camera"]')!);
+        expect(back()?.title).toBe('Back to Behavior · main → save · Path 2 (Alt+Left)');
+        await press(container.querySelector<HTMLButtonElement>('[data-view="overview"]'));
+        expect(back()?.title).toBe('Back to Behavior · main → save · Path 2 · Plan (Alt+Left)');
+
+        await goBack();
+        expect([view(), behaviorCamera(), chosenPath(), chainPosition()]).toEqual(['behavior', 'Plan', 2, '1 / 2']);
+        await goBack();
+        expect([behaviorCamera(), chosenPath()]).toEqual(['3D', 2]);
+        await goBack();
+        expect([heading(), chosenPath(), chainPosition()]).toEqual(['main → save', 1, '2 / 3']);
+        await goBack();
+        expect([heading(), container.querySelector('[aria-label="Walk the call chain"]')]).toEqual(['What can main call?', null]);
+        await goForward();
+        expect([chosenPath(), chainPosition()]).toEqual([1, '2 / 3']);
+        await goForward(); await goForward();
+        expect([behaviorCamera(), chosenPath(), chainPosition()]).toEqual(['Plan', 2, '1 / 2']);
+        // System structure keeps a camera of its own, as before.
+        await press(container.querySelector<HTMLButtonElement>('[data-view="structure"]'));
+        expect(systemCamera()).toBe('3D');
+    });
+
+    it('records typing that has not paused yet as a step when Back, Forward or Recent leaves it', async () => {
+        await render();
+        await press(container.querySelector<HTMLButtonElement>('[data-view="routes"]'));
+        await type('/adm');
+        await goBack();
+        expect([view(), filter()]).toEqual(['routes', '']);
+        expect(forward()?.title).toBe('Forward to Routes · Service map · /adm (Alt+Right)');
+        await goForward();
+        expect([view(), filter()]).toEqual(['routes', '/adm']);
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 900)); });
+        expect(history()?.getAttribute('data-position')).toBe('3/3');
+        // A recent place while typing: the text stays a step before the jump.
+        await type('/home');
+        const recent = container.querySelector<HTMLDetailsElement>('details.atlas-arch-recent')!;
+        const overviewPlace = [...recent.querySelectorAll<HTMLButtonElement>('[aria-label="Recently visited places"] li button')]
+            .find(item => item.querySelector('strong')?.textContent === 'Overview');
+        await press(overviewPlace);
+        expect(view()).toBe('overview');
+        expect(back()?.title).toBe('Back to Routes · Service map · /home (Alt+Left)');
+        await goBack();
+        expect([view(), filter()]).toEqual(['routes', '/home']);
+        // Forward while typing: the text is a new step and drops the forward branch, as after the pause.
+        await goBack();
+        expect(filter()).toBe('/adm');
+        await type('/admin');
+        await goForward();
+        expect(filter()).toBe('/admin');
+        expect(forward()?.disabled).toBe(true);
+        expect(back()?.title).toBe('Back to Routes · Service map · /adm (Alt+Left)');
+    });
+
+    it('reports an opened area only to the subtab that shows it, never to Routes or Hotspots', async () => {
+        const onSelectionEvidence = vi.fn();
+        await render({ onSelectionEvidence });
+        await openArea('django');
+        expect(lastEvidence(onSelectionEvidence)?.label).toBe('django');
+        await press(container.querySelector<HTMLButtonElement>('[data-view="routes"]'));
+        await clickText('Endpoints', container.querySelector('[aria-label="Routes perspective"]')!);
+        expect(sceneLabels()).toContain('/edit · 2');
+        // Nothing is selected on the Endpoints map, so the chat context names nothing from Overview.
+        expect(lastEvidence(onSelectionEvidence)).toBeUndefined();
+        await press(container.querySelector<HTMLButtonElement>('[data-view="hotspots"]'));
+        expect(lastEvidence(onSelectionEvidence)).toBeUndefined();
+        await press(container.querySelector<HTMLButtonElement>('[data-view="overview"]'));
+        expect(lastEvidence(onSelectionEvidence)?.label).toBe('django');
+        await press(container.querySelector<HTMLButtonElement>('[data-view="routes"]'));
+        await goBack();
+        expect([view(), trail()]).toEqual(['overview', ['sample', 'django']]);
+        expect(lastEvidence(onSelectionEvidence)?.label).toBe('django');
+        await goBack(); await goBack();
+        expect([view(), perspective()]).toEqual(['routes', 'Endpoints']);
+        expect(lastEvidence(onSelectionEvidence)).toBeUndefined();
     });
 
     it('drops the forward branch on a new navigation after Back and keeps at most 25 steps', async () => {

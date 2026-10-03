@@ -6,8 +6,9 @@
  * Three refinements Architecture needs and Galaxy does not:
  *
  *  - Typing in the Routes filter becomes one step once it pauses
- *    (`FILTER_STEP_MS`), not one step per key. A navigation while typing first
- *    records what the field showed.
+ *    (`FILTER_STEP_MS`), not one step per key. A navigation, Back, Forward or
+ *    a recent jump while typing first records what the field showed, so no
+ *    typed text is lost.
  *  - A change the page makes itself (the suggested Behavior start, a reset
  *    after reindexing) replaces the current step instead of adding one, so Back
  *    never lands on a state the page would immediately fill in again.
@@ -118,14 +119,34 @@ export function useArchitectureHistory(initial: () => ArchitectureHistoryEntry, 
         automaticStep.current = undefined;
         setPlace(entry);
     }, [clearDraft]);
+    /** Typing that has not paused yet, as the step it is about to become; undefined while nothing is typed. */
+    const typedStep = useCallback((): ArchitectureHistoryEntry | undefined =>
+        (typed.current === undefined ? undefined : { ...latest.current, filter: typed.current }), []);
+    /** The history with that typing as its newest step, the way the pause would record it. */
+    const withTyping = useCallback((): NavigationHistory<ArchitectureHistoryEntry> => {
+        const entry = typedStep();
+        return entry === undefined ? history : pushNavigation(history, entry, options);
+    }, [history, typedStep]);
     const go = useCallback((step: -1 | 1) => {
-        const entry = peekNavigation(history, step);
-        if (entry === undefined) return;
+        const typedEntry = typedStep();
+        const base = withTyping();
+        const entry = peekNavigation(base, step);
+        if (entry === undefined) {
+            // Forward while typing: the text is a new step and drops the forward branch, as after the pause.
+            if (typedEntry === undefined) return;
+            clearDraft();
+            setHistory(base);
+            setPlace(typedEntry);
+            return;
+        }
         restoringKey.current = options.key(entry);
-        setHistory((current) => moveNavigation(current, step, options));
+        setHistory(moveNavigation(base, step, options));
         apply(entry);
-    }, [history, apply]);
-    const jump = useCallback((entry: ArchitectureHistoryEntry) => apply(entry), [apply]);
+    }, [typedStep, withTyping, apply, clearDraft]);
+    const jump = useCallback((entry: ArchitectureHistoryEntry) => {
+        setHistory(withTyping());
+        apply(entry);
+    }, [withTyping, apply]);
 
     useEffect(() => {
         if (!active || escapeTaken) return;
@@ -134,13 +155,13 @@ export function useArchitectureHistory(initial: () => ArchitectureHistoryEntry, 
             if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
             if (isTypingTarget(event.target instanceof Element ? event.target : null)) return;
             const step = event.key === 'ArrowLeft' ? -1 : 1;
-            if (peekNavigation(history, step) === undefined) return;
+            if (peekNavigation(withTyping(), step) === undefined) return;
             event.preventDefault();
             go(step);
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [active, escapeTaken, history, go]);
+    }, [active, escapeTaken, withTyping, go]);
 
     return { place, filter: draft ?? place.filter, history, back: peekNavigation(history, -1), forward: peekNavigation(history, 1), navigate, type, go, jump };
 }
