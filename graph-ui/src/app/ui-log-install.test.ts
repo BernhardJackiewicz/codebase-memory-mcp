@@ -77,6 +77,26 @@ describe('installUiLog', () => {
         expect(all[0]?.detail).toContain('build v');
     });
 
+    it('posts a line under the address it was written on, also after a project switch in the page (K24)', async () => {
+        window.history.replaceState(null, '', '/?project=django-demo&workspace=galaxy');
+        const posts: UiLogPayload[] = [];
+        const quiet = { debug: () => {}, log: () => {}, info: () => {}, warn: () => {}, error: () => {} } as unknown as Console;
+        try {
+            handle = installUiLog({ console: quiet, session: 'switch', transport: { send: async (payload) => { posts.push(payload); return true; } } });
+            // The project switch changes the address with pushState and keeps the page (app/project-windows.tsx).
+            window.history.pushState(null, '', '/?project=cbm&workspace=galaxy');
+            quiet.warn('after the switch');
+            await handle.buffer.flush();
+            await handle.buffer.flush();
+            expect(posts.map((post) => [post.page, post.entries.map((entry) => [entry.message, entry.project])])).toEqual([
+                ['/?project=django-demo&workspace=galaxy', [['session switch started on /?project=django-demo&workspace=galaxy', 'django-demo']]],
+                ['/?project=cbm&workspace=galaxy', [['after the switch', 'cbm']]],
+            ]);
+        } finally {
+            window.history.replaceState(null, '', '/');
+        }
+    });
+
     it('lets the console print as before and records what it printed', async () => {
         const { buffer, posts, printed, fakeConsole } = install();
         const failure = new Error('twin failed');
