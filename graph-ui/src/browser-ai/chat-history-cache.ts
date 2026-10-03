@@ -87,6 +87,10 @@ function isPreparedEvidence(value: unknown): value is PreparedExplanationContext
                     Number.isSafeInteger((item.location as Record<string, unknown>)[key]) && Number((item.location as Record<string, unknown>)[key]) >= 1))));
 }
 
+function isContext(value: unknown): boolean {
+    return isObject(value) && ['id', 'label', 'text'].every(key => typeof value[key] === 'string');
+}
+
 function isTurn(value: unknown): boolean {
     return isObject(value) && ['id', 'prompt', 'modelId', 'answer'].every(key => typeof value[key] === 'string')
         && ['counting', 'generating', 'complete', 'stopped', 'error'].includes(String(value.status))
@@ -94,8 +98,8 @@ function isTurn(value: unknown): boolean {
         && (value.evidence === undefined || isPreparedEvidence(value.evidence))
         && (value.attachment === undefined || isAttachment(value.attachment))
         && (value.readerContext === undefined || isReaderContext(value.readerContext))
-        && (value.context === undefined || (Array.isArray(value.context) && value.context.every(item =>
-            isObject(item) && ['id', 'label', 'text'].every(key => typeof item[key] === 'string'))))
+        && (value.context === undefined || (Array.isArray(value.context) && value.context.every(isContext)))
+        && (value.listedFrom === undefined || isContext(value.listedFrom))
         && Array.isArray(value.request) && value.request.every(message => isObject(message)
             && ['system', 'user', 'assistant'].includes(String(message.role)) && typeof message.content === 'string');
 }

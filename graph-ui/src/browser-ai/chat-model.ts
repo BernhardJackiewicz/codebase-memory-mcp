@@ -48,6 +48,9 @@ export interface BrowserChatTurn {
     answeredFrom?: 'graph' | 'suggestion' | 'local';
     /** The listed question a suggestion offers, with the graph evidence it lists from. */
     suggestion?: { question: string; context: BrowserChatContext };
+    /** The graph evidence a listed answer was listed from: asking the model about it reads
+     * the same selection's source (K14). */
+    listedFrom?: BrowserChatContext;
     /** Earlier turns left out of this request to fit the input limit. */
     historyOmitted?: number;
     /** What the question was about; undefined for a question without context. */

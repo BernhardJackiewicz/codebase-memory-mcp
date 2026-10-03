@@ -1343,6 +1343,52 @@ describe('grounded automatic explanations (K14, K7)', () => {
         expect(listed.textContent).toContain('class JSONBAgg(OrderableAggMixin, Aggregate):');
     });
 
+    it('reads the source for a listed answer and asks the model with it when automatic explanations are off', async () => {
+        const { props, runtime } = fixture();
+        const readSource = vi.fn(async () => snippet);
+        await render({ ...props, proactiveSelection: jsonbAggEvidence(), readSource }); await click('Download & load');
+        const last = () => [...container.querySelectorAll('.cbm-chat-turn')].at(-1)!;
+        await type('Who calls JSONBAgg?'); await click('Send ↑');
+        expect(runtime.chat).not.toHaveBeenCalled();
+        expect(readSource).toHaveBeenCalledExactlyOnceWith('django-demo.JSONBAgg', { maxLines: 40 });
+        const disclosure = last().querySelector('.cbm-chat-source-content')!;
+        expect(disclosure.textContent).not.toContain('Source unavailable');
+        expect(disclosure.textContent).toContain('class JSONBAgg(OrderableAggMixin, Aggregate):');
+        await click('Ask the model');
+        const prompt = runtime.chat.mock.calls[0][0].map(message => message.content).join('\n');
+        expect(prompt).toContain('function = "JSONB_AGG"');
+        expect(prompt).not.toContain('Source unavailable');
+        expect(readSource).toHaveBeenCalledOnce();
+    });
+
+    it('reads the source again for a suggestion asked of the model after the first read failed', async () => {
+        const { props, runtime } = fixture();
+        const readSource = vi.fn(async () => snippet).mockRejectedValueOnce(new Error('offline'));
+        await render({ ...props, proactiveSelection: jsonbAggEvidence(), readSource }); await click('Download & load');
+        const last = () => [...container.querySelectorAll('.cbm-chat-turn')].at(-1)!;
+        await type('jsonbagg calls'); await click('Send ↑');
+        expect(last().querySelector('.cbm-chat-answer-text')?.textContent).toContain('Did you mean: what JSONBAgg calls?');
+        expect(readSource).toHaveBeenCalledOnce();
+        await click('Ask the model');
+        expect(readSource).toHaveBeenCalledTimes(2);
+        const prompt = runtime.chat.mock.calls[0][0].map(message => message.content).join('\n');
+        expect(prompt).toContain('function = "JSONB_AGG"');
+        expect(prompt).not.toContain('Source unavailable');
+    });
+
+    it('keeps the source of a suggestion that is turned into the list', async () => {
+        const { props, runtime } = fixture();
+        const readSource = vi.fn(async () => snippet);
+        await render({ ...props, proactiveSelection: jsonbAggEvidence(), readSource }); await click('Download & load');
+        const last = () => [...container.querySelectorAll('.cbm-chat-turn')].at(-1)!;
+        await type('jsonbagg calls'); await click('Send ↑');
+        await click('Show the list');
+        expect(last().querySelector('.cbm-chat-source-content')?.textContent).toContain('class JSONBAgg(OrderableAggMixin, Aggregate):');
+        await click('Ask the model');
+        expect(runtime.chat.mock.calls[0][0].map(message => message.content).join('\n')).toContain('function = "JSONB_AGG"');
+        expect(readSource).toHaveBeenCalledOnce();
+    });
+
     it('shows only the listed facts when the model names what the evidence lacks', async () => {
         vi.useFakeTimers(); const { props, runtime } = fixture();
         const readSource = vi.fn(async () => snippet);

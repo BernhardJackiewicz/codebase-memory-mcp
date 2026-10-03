@@ -108,11 +108,14 @@ function AnswerNotes({ shortened, packet, model, historyOmitted, unsupported = [
     </>;
 }
 
-/** `codeOnly` where the listed facts already stand above it, in the explanation card. */
+/** `codeOnly` where the listed facts already stand above it, in the explanation card. The
+ * source does not push the first graph facts out: a listed answer shows both (K14). */
 function PacketSource({ packet, citation, codeOnly = false }: { packet: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; codeOnly?: boolean }): JSX.Element {
+    const code = packet.evidence.filter(item => item.source === 'code').slice(0, 3);
+    const facts = codeOnly ? [] : packet.evidence.filter(item => item.source !== 'code').slice(0, 3);
     return <>
         {packet.limitations.map((limit, index) => <p className="cbm-chat-evidence-note" key={index}>{limit}</p>)}
-        {citation ? <pre>{citation.quote}</pre> : packet.evidence.filter(item => !codeOnly || item.source === 'code').slice(0, 3).map(item => <div key={item.id}>
+        {citation ? <pre>{citation.quote}</pre> : [...code, ...facts].map(item => <div key={item.id}>
             {item.location && <small>{item.location.path}:{item.location.startLine}-{item.location.endLine}</small>}<pre>{item.text}</pre>
         </div>)}
     </>;
@@ -321,6 +324,16 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const target = sourceTargetOf(context);
         return carriedSource(context) ?? (target ? readSources.current.get(target.qualifiedName) : undefined);
     };
+    /** A listed answer or suggestion stands on the selection's source as an explanation does:
+     * read once, also when no automatic explanation read it first (K14). */
+    const listSource = (id: string, context: BrowserChatContext): void => {
+        if (knownSource(context) || !sourceTargetOf(context)) return;
+        const budget = chatEvidence;
+        void sourceFor(context).then(symbol => {
+            if (symbol) setTurns(previous => previous.map(item => item.id === id && (item.answeredFrom === 'graph' || item.answeredFrom === 'suggestion')
+                ? { ...item, evidence: prepareExplanationContext(undefined, context, budget, symbol) } : item));
+        });
+    };
     const remember = (entry: Explanation): void => {
         const cache = explanations.current;
         cache.delete(entry.key); cache.set(entry.key, entry);
@@ -494,7 +507,10 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         let packet = retry?.evidence;
         // A listed answer or a suggestion asked again goes to the model: the same question and evidence in a fresh request.
         const ask = retry?.answeredFrom === 'graph' || retry?.answeredFrom === 'suggestion';
+        // The graph evidence it was listed from, read again with its source (K14).
+        const askFrom = ask ? retry.listedFrom ?? retry.suggestion?.context : undefined;
         const currentGraph = !retry && !reader && proactiveSelection ? [{ ...proactiveSelection }] : [];
+        const packetGraph = askFrom ? [askFrom] : currentGraph;
         const consume = (): void => {
             setDraft(previous => previous === prompt ? '' : previous);
             setSelectedContext(previous => previous.filter(item => !extra.some(sent => sent.id === item.id && sent.text === item.text)));
@@ -515,19 +531,21 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         // without the model: a small model drops and repeats names in long lists.
         const listed = !retry && !source ? relationshipAnswer(prompt, [...currentGraph, ...extra]) : undefined;
         if (listed) {
-            setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, context: extra, topic,
+            const id = `local-turn-${crypto.randomUUID()}`;
+            setTurns(previous => [...previous, { id, prompt, context: extra, topic, listedFrom: listed.context,
                 evidence: prepareExplanationContext(undefined, listed.context, chatEvidence, knownSource(listed.context)), modelId: model.id, request: [],
                 answer: listed.markdown, status: 'complete', answeredFrom: 'graph' }]);
-            consume();
+            consume(); listSource(id, listed.context);
             return;
         }
         // Sounds like callers or callees but is not certain: offer the list, do not guess with the model.
         const suggested = !retry && !source ? relationshipSuggestion(prompt, [...currentGraph, ...extra]) : undefined;
         if (suggested) {
-            setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, context: extra, topic,
+            const id = `local-turn-${crypto.randomUUID()}`;
+            setTurns(previous => [...previous, { id, prompt, context: extra, topic,
                 evidence: prepareExplanationContext(undefined, suggested.context, chatEvidence, knownSource(suggested.context)), modelId: model.id, request: [],
                 answer: suggested.markdown, status: 'complete', answeredFrom: 'suggestion', suggestion: { question: suggested.question, context: suggested.context } }]);
-            consume();
+            consume(); listSource(id, suggested.context);
             return;
         }
         // Answers about another file or selection stay out, and so do those from before the
@@ -538,12 +556,12 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const queued = { cancelled: false }; manualRequest.current = queued;
         const waitingEpoch = epoch.current;
         // The selected symbol's source grounds a question as it grounds the explanation (K14).
-        const symbol = !retry && !reader && currentGraph.length ? await sourceFor(currentGraph[0]) : undefined;
+        const symbol = (!retry || askFrom) && !reader && packetGraph.length ? await sourceFor(packetGraph[0]) : undefined;
         if (queued.cancelled || manualRequest.current !== queued || epoch.current !== waitingEpoch || runtime.current !== currentRuntime) {
             if (manualRequest.current === queued) manualRequest.current = undefined;
             return;
         }
-        if (!retry && ((reader?.source?.text.length ?? 0) > 5000 || currentGraph.length)) packet = prepareExplanationContext(reader, currentGraph, chatEvidence, symbol);
+        if ((!retry || askFrom) && ((reader?.source?.text.length ?? 0) > 5000 || packetGraph.length)) packet = prepareExplanationContext(reader, packetGraph, chatEvidence, symbol);
         let request = retry && !ask ? retry.request.map(message => ({ ...message })) : makeRequest();
         if (automaticRun) {
             automaticRun.cancelled = true; lastAttempt.current = undefined;
@@ -569,8 +587,8 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 request = makeRequest(); count = await currentRuntime.countTokens(request);
                 if (epoch.current !== ticket || stopRequested.current) return;
             }
-            for (let budget = packet ? Math.floor(chatEvidence * .6) : chatEvidence; !retry && count > limit && (reader?.source || currentGraph.length) && budget >= 300; budget = Math.floor(budget * .6)) {
-                packet = prepareExplanationContext(reader, currentGraph, budget, symbol);
+            for (let budget = packet ? Math.floor(chatEvidence * .6) : chatEvidence; (!retry || askFrom) && count > limit && (reader?.source || packetGraph.length) && budget >= 300; budget = Math.floor(budget * .6)) {
+                packet = prepareExplanationContext(reader, packetGraph, budget, symbol);
                 request = makeRequest(); count = await currentRuntime.countTokens(request);
                 if (epoch.current !== ticket || stopRequested.current) return;
             }
@@ -613,8 +631,9 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     const showSuggestedList = (turn: ChatTurn): void => {
         const listed = turn.suggestion && relationshipAnswer(turn.suggestion.question, [turn.suggestion.context]);
         if (!listed) return;
-        setTurns(previous => previous.map(item => item.id === turn.id ? { ...item, answer: listed.markdown, answeredFrom: 'graph', suggestion: undefined,
+        setTurns(previous => previous.map(item => item.id === turn.id ? { ...item, answer: listed.markdown, answeredFrom: 'graph', suggestion: undefined, listedFrom: listed.context,
             evidence: prepareExplanationContext(undefined, listed.context, chatEvidence, knownSource(listed.context)) } : item));
+        listSource(turn.id, listed.context);
     };
     const deleteCache = async (): Promise<void> => {
         if (pending.current) return;
