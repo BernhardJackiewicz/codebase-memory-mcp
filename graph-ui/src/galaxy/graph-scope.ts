@@ -1,4 +1,3 @@
-import { hierarchyBlockPositions } from './hierarchy-blocks';
 import { RpcIntelligenceClient } from '../provider/rpc-client';
 import { escapeLiteral } from '../provider/cypher';
 import type { QueryGraphResult } from '../provider/rpc-schemas';
@@ -263,29 +262,133 @@ export function limitGraphRender(data: GraphData, nodeLimit: number, edgeLimit: 
     return { ...data, nodes, edges };
 }
 
-/** The same evidence in successive hop blocks. Small hops keep one column;
- * large hops wrap into compact grids so fitting thousands of neighbors does
- * not turn the entire scene into a single vertical line.
+/** Hierarchy constants for a Galaxy scope (hand test K5). Labels are NodeLabels sprites at font 12. */
+export const SCOPED_HIERARCHY_LEVEL_GAP = 160;
+export const SCOPED_HIERARCHY_ROW_GAP = 32;
+/** Texture width of a hierarchy name in a scope: about forty characters before an ellipsis. */
+export const SCOPED_HIERARCHY_LABEL_MAX_TEXT_WIDTH = 1600;
+/** Up to this many nodes every name is drawn, and columns stay single columns; above it they wrap into grids. */
+export const SCOPED_HIERARCHY_LABEL_BUDGET = 60;
+const SCOPED_HIERARCHY_WRAP_AT = 12;
+const LABEL_UNITS_PER_CHAR = 7.1, LABEL_UNITS_PADDING = 12, LABEL_GUTTER = 40;
+const LABEL_MAX_CHARS = Math.floor((SCOPED_HIERARCHY_LABEL_MAX_TEXT_WIDTH - 64) / 38);
+
+/** The world width of a name in the scoped hierarchy, as NodeLabels draws it (about 38 texture pixels per character at 64 px). */
+export function hierarchyLabelWidth(name: string): number {
+    return Math.min(name.length, LABEL_MAX_CHARS) * LABEL_UNITS_PER_CHAR + LABEL_UNITS_PADDING;
+}
+
+/*
+ * Der Ausschnitt als Hierarchie (Handtest K5).
  *
- * Hops come from the discovered levels. Only arranged rings encode them in z;
- * a preview built from the overall layout keeps its global coordinates. */
+ * Bis hierher stand alles einer Ebene in EINER Spalte rechts der Wurzel,
+ * Eingehendes und Ausgehendes aller Arten gemischt und alphabetisch, und der
+ * Hinweis behauptete "one column per call depth". Jetzt:
+ *
+ *  - Eingehendes links, die Wurzel in der Mitte, Ausgehendes rechts. Ein
+ *    Knoten der ersten Ebene steht dort, wohin seine Kante zur Wurzel zeigt;
+ *    jeder tiefere Knoten auf der Seite seines Elternknotens, also des
+ *    Nachbarn eine Ebene naeher an der Wurzel, ueber den er gefunden wurde.
+ *  - In einer Spalte stehen die Knoten nach ihrem Elternknoten, dann CALLS vor
+ *    den anderen Arten, CALLS nach Aufrufzeile (`edge.line`), dann nach Name.
+ *  - Die Spalten stehen so weit auseinander, wie ihre Namen breit sind: kein
+ *    Name wird gekuerzt, solange Platz ist.
+ *
+ * Die Ebene kommt aus den gefundenen `levels`; nur eine Ringanordnung legt sie
+ * in z ab, eine Vorschau aus dem ganzen Layout behaelt globale Koordinaten.
+ * Sehr grosse Ebenen (ohne Namen) brechen weiter in kompakte Raster um.
+ */
 export function scopedHierarchy(scope: ScopedGraph, name: string): import('./hierarchy-layout').HierarchyProjection {
+    const levelOf = (node: GraphNode) => scope.roots.has(node.id) ? 0 : scope.levels?.get(node.id) ?? Math.max(0, Math.round(-node.z / 18));
+    const level = new Map(scope.data.nodes.map(node => [node.id, levelOf(node)] as const));
+    const incident = new Map<number, GraphEdge[]>();
+    for (const edge of scope.data.edges) {
+        for (const end of [edge.source, edge.target]) { const list = incident.get(end) ?? []; list.push(edge); incident.set(end, list); }
+    }
+    const typeRank = (edge: GraphEdge | undefined) => edge?.type === 'CALLS' ? 0 : 1;
+    const side = new Map<number, -1 | 0 | 1>(), parent = new Map<number, { id: number; edge: GraphEdge }>();
+    const ordered = [...scope.data.nodes].sort((a, b) => level.get(a.id)! - level.get(b.id)! || a.id - b.id);
+    for (const node of ordered) {
+        const hop = level.get(node.id)!;
+        if (hop === 0) { side.set(node.id, 0); continue; }
+        // The neighbour one layer closer to the root decides the side; a consistently directed edge wins, then CALLS.
+        const candidates = (incident.get(node.id) ?? []).flatMap(edge => {
+            const other = edge.source === node.id ? edge.target : edge.source;
+            const otherSide = side.get(other);
+            if (other === node.id || otherSide === undefined || level.get(other) !== hop - 1) return [];
+            const towards = otherSide !== 0 ? otherSide : edge.source === other ? 1 : -1;
+            const consistent = towards === 1 ? edge.source === other : edge.target === other;
+            return [{ other, edge, towards: towards as -1 | 1, consistent }];
+        }).sort((a, b) => Number(b.consistent) - Number(a.consistent) || typeRank(a.edge) - typeRank(b.edge)
+            || (a.edge.line ?? Number.MAX_SAFE_INTEGER) - (b.edge.line ?? Number.MAX_SAFE_INTEGER) || a.other - b.other);
+        const chosen = candidates[0];
+        side.set(node.id, chosen?.towards ?? 1);
+        if (chosen) parent.set(node.id, { id: chosen.other, edge: chosen.edge });
+    }
     const columns = new Map<number, GraphNode[]>();
     for (const node of scope.data.nodes) {
-        const hop = scope.roots.has(node.id) ? 0 : scope.levels?.get(node.id) ?? Math.max(0, Math.round(-node.z / 18));
-        const entries = columns.get(hop) ?? []; entries.push(node); columns.set(hop, entries);
+        const column = side.get(node.id)! * level.get(node.id)!;
+        const entries = columns.get(column) ?? []; entries.push(node); columns.set(column, entries);
     }
-    const nodes: GraphNode[] = [], remap = new Map<number, number>();
+    const labelled = scope.data.nodes.length <= SCOPED_HIERARCHY_LABEL_BUDGET;
+    const row = new Map<number, number>();
+    const byText = (a: GraphNode, b: GraphNode) => (a.file_path ?? '').localeCompare(b.file_path ?? '') || a.name.localeCompare(b.name) || a.id - b.id;
+    const keys = [...columns.keys()].sort((a, b) => Math.abs(a) - Math.abs(b) || a - b);
+    for (const key of keys) {
+        const entries = columns.get(key)!;
+        entries.sort((a, b) => {
+            const pa = parent.get(a.id), pb = parent.get(b.id);
+            return (row.get(pa?.id ?? -1) ?? -1) - (row.get(pb?.id ?? -1) ?? -1) || typeRank(pa?.edge) - typeRank(pb?.edge)
+                || (pa?.edge.type ?? '').localeCompare(pb?.edge.type ?? '')
+                // Calls in source order; one line with two calls keeps the order of the call list (by identity).
+                || (pa?.edge.type === 'CALLS' ? (pa.edge.line ?? Number.MAX_SAFE_INTEGER) - (pb?.edge.line ?? Number.MAX_SAFE_INTEGER) || a.id - b.id : 0)
+                || byText(a, b);
+        });
+        entries.forEach((node, index) => row.set(node.id, index));
+    }
+    // Column blocks: width from wrapping and from the widest name in them.
+    const block = new Map(keys.map(key => {
+        const entries = columns.get(key)!;
+        const cols = !labelled && entries.length > SCOPED_HIERARCHY_WRAP_AT ? Math.ceil(Math.sqrt(entries.length)) : 1;
+        const label = labelled ? Math.max(...entries.map(node => hierarchyLabelWidth(node.name))) : 0;
+        const gapX = labelled ? label + LABEL_GUTTER : SCOPED_HIERARCHY_ROW_GAP * 1.25;
+        return [key, { entries, cols, rows: Math.ceil(entries.length / cols), gapX, width: (cols - 1) * gapX, label }] as const;
+    }));
+    const left = new Map<number, number>();
+    const centre = block.get(0);
+    if (centre) left.set(0, -centre.width / 2);
+    for (const direction of [1, -1] as const) {
+        let previous = centre ? 0 : undefined;
+        for (const key of keys.filter(value => Math.sign(value) === direction).sort((a, b) => Math.abs(a) - Math.abs(b))) {
+            const current = block.get(key)!, before = previous === undefined ? undefined : block.get(previous)!;
+            const gap = Math.max(SCOPED_HIERARCHY_LEVEL_GAP, before ? (before.label + current.label) / 2 + LABEL_GUTTER : 0);
+            if (direction === 1) {
+                const edge = before ? left.get(previous!)! + before.width : 0;
+                left.set(key, edge + gap);
+            } else {
+                const edge = before ? left.get(previous!)! : 0;
+                left.set(key, edge - gap - current.width);
+            }
+            previous = key;
+        }
+    }
+    const nodes: GraphNode[] = [], remap = new Map<number, number>(), sourceIds: number[] = [];
     const placements: import('./hierarchy-layout').HierarchyPlacement[] = [];
-    const blocks = [...columns].map(([level, entries]) => ({ level,
-        entries: entries.sort((a, b) => (a.file_path ?? '').localeCompare(b.file_path ?? '') || a.name.localeCompare(b.name)) }));
-    for (const { node, level: hop, x, y } of hierarchyBlockPositions(blocks, { levelGap: 160, rowGap: 32 })) {
-        const id = nodes.length;
-        remap.set(node.id, id); nodes.push({ ...node, id, x, y, z: 0 });
-        placements.push({ id, key: node.qualified_name ?? `node:${node.id}`, name: node.name, hop, x, y });
+    for (const key of keys) {
+        const { entries, cols, rows, gapX } = block.get(key)!;
+        // Outgoing blocks grow away from the root to the right, incoming ones to the left.
+        const start = left.get(key)!, width = (cols - 1) * gapX;
+        entries.forEach((node, index) => {
+            const column = index % cols;
+            const x = key < 0 ? start + width - column * gapX : start + column * gapX;
+            const y = ((rows - 1) / 2 - Math.floor(index / cols)) * SCOPED_HIERARCHY_ROW_GAP;
+            const id = nodes.length;
+            remap.set(node.id, id); sourceIds.push(node.id); nodes.push({ ...node, id, x, y, z: 0 });
+            placements.push({ id, key: node.qualified_name ?? `node:${node.id}`, name: node.name, hop: level.get(node.id)!, side: side.get(node.id)!, x, y });
+        });
     }
     return { data: { nodes, edges: scope.data.edges.map(edge => ({ ...edge, source: remap.get(edge.source)!, target: remap.get(edge.target)! })), total_nodes: nodes.length },
         rootId: scope.roots.size === 1 ? remap.get([...scope.roots][0]!) ?? -1 : -1, rootKey: name, rootName: name,
-        symbols: nodes.length, depth: columns.size, truncated: false, cap: nodes.length, walkDepth: scope.depth,
-        missing: 0, placements };
+        symbols: nodes.length, depth: new Set(level.values()).size, truncated: false, cap: nodes.length, walkDepth: scope.depth,
+        missing: 0, placements, sourceIds };
 }

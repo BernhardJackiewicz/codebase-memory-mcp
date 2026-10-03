@@ -649,7 +649,11 @@ export interface FitMeasurement {
 
 declare global {
     // eslint-disable-next-line no-var
-    var __atlasGalaxyFit: { measure: () => FitMeasurement } | undefined;
+    var __atlasGalaxyFit: {
+        measure: () => FitMeasurement;
+        /** Weltpunkte in Pixel der Zeichenflaeche, mit genau der Kamera, die zeichnet (Beweislauf K5). */
+        project: (points: readonly { x: number; y: number; z: number }[]) => { x: number; y: number }[];
+    } | undefined;
 }
 
 /**
@@ -740,7 +744,15 @@ function FitProbe({ nodes }: { nodes: GraphNode[] }): null {
                 worst: seen.slice(0, 5),
             };
         };
-        globalThis.__atlasGalaxyFit = { measure };
+        const project = (points: readonly { x: number; y: number; z: number }[]) => {
+            camera.updateMatrixWorld();
+            const point = new THREE.Vector3();
+            return points.map((entry) => {
+                point.set(entry.x, entry.y, entry.z).project(camera);
+                return { x: ((point.x + 1) / 2) * size.width, y: ((1 - point.y) / 2) * size.height };
+            });
+        };
+        globalThis.__atlasGalaxyFit = { measure, project };
         return () => {
             globalThis.__atlasGalaxyFit = undefined;
         };

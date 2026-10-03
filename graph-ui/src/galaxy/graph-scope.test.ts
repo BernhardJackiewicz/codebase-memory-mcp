@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { arrangeScopedGraph, graphEdgeTypesKey, limitGraphRender, loadGraphScope, nextLayerEstimate, readGraphPages, scenePictureFor, scopedHierarchy, type GraphQueryClient } from './graph-scope';
+import { arrangeScopedGraph, graphEdgeTypesKey, hierarchyLabelWidth, limitGraphRender, loadGraphScope, nextLayerEstimate, readGraphPages, scenePictureFor, scopedHierarchy, type GraphQueryClient } from './graph-scope';
 import type { QueryGraphResult } from '../provider/rpc-schemas';
 import type { GraphData, GraphNode } from './types';
 
@@ -227,6 +227,53 @@ it('retains simple columns for small hierarchy levels', () => {
     const nodes = [{ ...node(1), z: 0 }, { ...node(2), z: -18 }, { ...node(3), z: -18 }];
     const result = scopedHierarchy({ data: { nodes, edges: [], total_nodes: 3 }, roots: new Set([1]), depth: 1, exhausted: false }, 'small');
     expect(result.data.nodes.map(node => [node.x, node.y])).toEqual([[0, 0], [160, 16], [160, -16]]);
+});
+
+describe('hand test K5: the scoped hierarchy reads incoming left, root in the middle, outgoing right', () => {
+    const at = (result: ReturnType<typeof scopedHierarchy>, name: string) => result.placements.find(placement => placement.name === name)!;
+    const scoped = (nodes: GraphNode[], edges: { id?: number; source: number; target: number; type: string; line?: number }[], levels: [number, number][]) =>
+        scopedHierarchy({ data: { nodes, edges, total_nodes: nodes.length }, roots: new Set([1]), depth: Math.max(...levels.map(([, hop]) => hop)), exhausted: false,
+            levels: new Map(levels) }, 'root');
+
+    it('puts callers and tests left of the root, its bases right, and keeps the root at the centre', () => {
+        // JSONBAgg: tests call and test it, its module defines it, it inherits two bases.
+        const nodes = [node(1), node(10), node(11), node(30), node(40), node(41)];
+        const result = scoped(nodes, [{ source: 10, target: 1, type: 'CALLS', line: 5 }, { source: 10, target: 1, type: 'TESTS' },
+            { source: 11, target: 1, type: 'CALLS', line: 9 }, { source: 30, target: 1, type: 'DEFINES' },
+            { source: 1, target: 40, type: 'INHERITS' }, { source: 1, target: 41, type: 'INHERITS' }],
+        [[1, 0], [10, 1], [11, 1], [30, 1], [40, 1], [41, 1]]);
+        expect([at(result, 'n1').x, at(result, 'n1').y]).toEqual([0, 0]);
+        for (const name of ['n10', 'n11', 'n30']) expect(at(result, name).x).toBeLessThan(0);
+        for (const name of ['n40', 'n41']) expect(at(result, name).x).toBeGreaterThan(0);
+        expect(result.placements.find(placement => placement.name === 'n10')?.side).toBe(-1);
+        // Every node maps back to its scope identity, for paths drawn in this picture.
+        expect(result.sourceIds?.[at(result, 'n40').id]).toBe(40);
+    });
+
+    it('orders outgoing calls by their call-site line, top to bottom, before other relationship types', () => {
+        const nodes = [node(1), node(2), node(3), node(4), node(5)];
+        const result = scoped(nodes, [{ source: 1, target: 2, type: 'CALLS', line: 30 }, { source: 1, target: 3, type: 'CALLS', line: 12 },
+            { source: 1, target: 4, type: 'CALLS', line: 20 }, { source: 1, target: 5, type: 'IMPORTS' }], [[1, 0], [2, 1], [3, 1], [4, 1], [5, 1]]);
+        const top = [...result.placements].filter(placement => placement.hop === 1).sort((a, b) => b.y - a.y).map(placement => placement.name);
+        expect(top).toEqual(['n3', 'n4', 'n2', 'n5']);
+    });
+
+    it('keeps a second layer on the side of its parent, next to it', () => {
+        const nodes = [node(1), node(2), node(3), node(4), node(5)];
+        // 1 calls 2, 2 calls 3, 4 calls 2 (reached from 2), 5 calls 1.
+        const result = scoped(nodes, [{ source: 1, target: 2, type: 'CALLS' }, { source: 2, target: 3, type: 'CALLS' },
+            { source: 4, target: 2, type: 'CALLS' }, { source: 5, target: 1, type: 'CALLS' }], [[1, 0], [2, 1], [5, 1], [3, 2], [4, 2]]);
+        expect(at(result, 'n3').x).toBeGreaterThan(at(result, 'n2').x);
+        expect(at(result, 'n4').x).toBe(at(result, 'n3').x);
+        expect(at(result, 'n5').x).toBeLessThan(0);
+    });
+
+    it('spaces columns by the names they carry, so long names keep their full width', () => {
+        const long = { ...node(2), name: 'test_jsonb_agg_jsonfield_order_by' };
+        const result = scoped([node(1), long], [{ source: 2, target: 1, type: 'CALLS' }], [[1, 0], [2, 1]]);
+        expect(Math.abs(at(result, long.name).x)).toBeGreaterThanOrEqual((hierarchyLabelWidth(long.name) + hierarchyLabelWidth('n1')) / 2);
+        expect(hierarchyLabelWidth(long.name)).toBeGreaterThan(200);
+    });
 });
 
 it('keeps the whole graph on screen while the first scope picture is still empty', () => {

@@ -139,13 +139,14 @@ import GalaxyNavigator from './GalaxyNavigator';
 import { TraceEdgeFilter } from './TraceEdgeFilter';
 import { PathPicker, PathSteps } from './ScopePathControls';
 import { callOrder, pathNodes, shortestScopePath, type ScopePathStep } from './scope-path';
-import { galaxyHistoryText, galaxyLayerText, galaxyPathText, galaxyToolbarText } from './galaxy-strings';
+import { galaxyHierarchyText, galaxyHistoryText, galaxyLayerText, galaxyPathText, galaxyToolbarText } from './galaxy-strings';
+import { HierarchyEdgeLabels } from './HierarchyEdgeLabels';
 import { emptyNavigationHistory, moveNavigation, peekNavigation, pushNavigation } from '../graph/navigation-history';
 import { galaxyHistoryOptions, historyEntryDetail, historyEntryLabel, scopeIdentity, type GalaxyHistoryEntry, type ScopeTrail } from './scope-history';
 import { useOrganicLayout } from './use-organic-layout';
 import RenderProgress from './RenderProgress';
 import { useGraphScope } from './use-graph-scope';
-import { limitGraphRender, nextLayerEstimate, scenePictureFor, scopedHierarchy } from './graph-scope';
+import { SCOPED_HIERARCHY_LABEL_MAX_TEXT_WIDTH, limitGraphRender, nextLayerEstimate, scenePictureFor, scopedHierarchy } from './graph-scope';
 import './graph-exploration.css';
 import { layoutNodeForSelection } from './selected-node';
 import { galaxyScopeEvidence, useSelectionEvidence, type SelectionEvidenceListener } from './selection-evidence';
@@ -1229,7 +1230,8 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     const rootCalls = useMemo(() => (data && trailRoot !== undefined ? callOrder(data.edges, trailRoot) : []), [data, trailRoot]);
     const pathCandidates = useMemo(() => data?.nodes.filter(node => !scope.result?.roots.has(node.id)) ?? [], [data, scope.result]);
     const trailView = useMemo(() => {
-        if (!props.workspaceExpanded || mode !== 'galaxy' || trail?.key !== organicKey || !data || !scope.result) return undefined;
+        // Handtest K5: Pfad und Aufrufreihe auch in der Hierarchie eines Ausschnitts.
+        if (!props.workspaceExpanded || (mode !== 'galaxy' && !scopedProjection) || trail?.key !== organicKey || !data || !scope.result) return undefined;
         const names = new Map(data.nodes.map(node => [node.id, node.name]));
         const nameOf = (id: number) => names.get(id) ?? `#${id}`;
         if (trail.kind === 'calls') {
@@ -1245,6 +1247,25 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     const trailActive = trailView ? Math.min(trailStep, Math.max(0, trailView.steps.length - 1)) : 0;
     const trailIds = useMemo(() => trailView?.steps.length && scope.result ? pathNodes(trailView.steps, scope.result.roots) : undefined,
         [trailView, scope.result]);
+    /*
+     * Die Hierarchie zeichnet mit eigenen IDs (K5). Der Pfad rechnet im Scope und
+     * wird fuer ihr Bild umgeschrieben, damit Linien, Ring und Abdunkeln an den
+     * Knoten liegen, die dort zu sehen sind.
+     */
+    const hierarchyIds = useMemo(() => mode === 'hierarchy' && scopedProjection?.sourceIds
+        ? new Map(scopedProjection.sourceIds.map((source, id) => [source, id])) : undefined, [mode, scopedProjection]);
+    const sceneTrailIds = useMemo(() => !trailIds || !hierarchyIds ? trailIds
+        : new Set([...trailIds].flatMap(id => hierarchyIds.get(id) ?? [])), [trailIds, hierarchyIds]);
+    const scenePathSteps = useMemo(() => {
+        if (!trailView) return undefined;
+        if (!hierarchyIds) return trailView.steps;
+        return trailView.steps.flatMap(step => {
+            const from = hierarchyIds.get(step.from), to = hierarchyIds.get(step.to);
+            const source = hierarchyIds.get(step.edge.source), target = hierarchyIds.get(step.edge.target);
+            return from === undefined || to === undefined || source === undefined || target === undefined ? []
+                : [{ edge: { ...step.edge, source, target }, from, to }];
+        });
+    }, [trailView, hierarchyIds]);
     const clearTrail = useCallback(() => { setTrail(undefined); setTrailStep(0); }, []);
     /*
      * Escape gibt den Pfad frei, aber erst nach allen, die vorgehen: liegt eine
@@ -1274,9 +1295,9 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     // Graphen und nicht alle, die die Tabelle kennt.
     const legend = useMemo(
         () => (mode === 'hierarchy'
-            ? hierarchyLegendEntries(picture, readerHierarchyActive)
+            ? hierarchyLegendEntries(picture, readerHierarchyActive, Boolean(scopedProjection))
             : galaxyLegendEntries(picture)),
-        [mode, picture, readerHierarchyActive],
+        [mode, picture, readerHierarchyActive, scopedProjection],
     );
 
     // Der Inhalt hat sich geaendert (aufgeklappt, Ansicht gewechselt, eine Art
@@ -2229,7 +2250,8 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
             legendOpen,
             legendEntries: legend.length,
             bloom: display.bloom,
-            labelBoxes: labelBoxes.current,
+            // Live: the scene publishes new name boxes from its frame loop, without a render of this panel.
+            get labelBoxes() { return labelBoxes.current; },
             mode,
             open: visible,
             hierarchyAvailable: projection !== undefined,
@@ -2311,9 +2333,13 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
      * GraphScene.tsx), und sie muss zwischen einem Ring und einer Ebene aus
      * Koerpern nicht unterscheiden: was hier steht, ist ein Kind ihres Baums.
      */
-    const overlay: ReactNode = (pulseRing === undefined && !liveOn) ? undefined : (
+    /* K5: die Kantenarten an den Linien der Hierarchie eines Ausschnitts, solange kein Pfad seine eigenen zeigt. */
+    const hierarchyEdgeLabels = mode === 'hierarchy' && scopedProjection && !sceneTrailIds && sceneShown
+        ? <HierarchyEdgeLabels nodes={sceneShown.nodes} edges={sceneShown.edges} nameBoxes={labelBoxes} /> : undefined;
+    const overlay: ReactNode = (pulseRing === undefined && !liveOn && hierarchyEdgeLabels === undefined) ? undefined : (
         <>
             {pulseRing}
+            {hierarchyEdgeLabels}
             {liveOn && agentLayerOn && agentsView !== undefined && (
                 <AgentLayer
                     actors={agentsView.actors}
@@ -2392,6 +2418,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                                                     : candidate === 'galaxy'
                                                         ? 'galaxy: the whole project, laid out by the server'
                                                         : readerHierarchyActive ? 'hierarchy: incoming relationships, file definitions, and outgoing relationships'
+                                                        : scopedProjection ? galaxyHierarchyText.hint(scope.direction)
                                                         : 'hierarchy: what the chosen symbol reaches, one column per call depth'
                                     }
                                 >
@@ -2534,7 +2561,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                     <button type="button" disabled={scope.loading || scope.result?.exhausted || Boolean(scope.result?.partial)}
                         data-warning={expandWarning || undefined} title={expandTitle}
                         onClick={() => scope.setDepth(scope.depth + 1)}>Expand +1</button>
-                    {props.workspaceExpanded && mode === 'galaxy' && <>
+                    {props.workspaceExpanded && (mode === 'galaxy' || scopedProjection) && <>
                         <PathPicker nodes={pathCandidates} onPick={node => { setTrail({ key: organicKey, kind: 'path', target: node.id, name: node.name }); setTrailStep(0); }} />
                         <button type="button" disabled={rootCalls.length === 0} aria-pressed={trail?.key === organicKey && trail.kind === 'calls'}
                             title={rootCalls.length ? galaxyPathText.callOrderTitle : galaxyPathText.callOrderUnavailable}
@@ -2728,8 +2755,8 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                         rootIds={mode === 'galaxy' && sceneScoped ? scope.result?.roots : undefined}
                         data={sceneShown}
                         display={display}
-                        highlightedIds={trailIds ?? (scope.scope && scope.depth > 1 ? null : highlighted)}
-                        path={trailIds && trailView ? { steps: trailView.steps, active: trailActive, labels: trailView.labels } : undefined}
+                        highlightedIds={sceneTrailIds ?? (scope.scope && scope.depth > 1 && mode === 'galaxy' ? null : highlighted)}
+                        path={sceneTrailIds && trailView && scenePathSteps ? { steps: scenePathSteps, active: trailActive, labels: trailView.labels } : undefined}
                         emphasizeIncidentEdges={mode === 'galaxy' && Boolean(props.focusFilePath)}
                         cameraTarget={cameraTarget}
                         /*
@@ -2743,7 +2770,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                             mode === 'hierarchy' ? HIERARCHY_LABEL_FONT_SIZE : undefined
                         }
                         labelMaxTextWidth={
-                            mode === 'hierarchy' ? HIERARCHY_LABEL_MAX_TEXT_WIDTH : undefined
+                            mode === 'hierarchy' ? scopedProjection ? SCOPED_HIERARCHY_LABEL_MAX_TEXT_WIDTH : HIERARCHY_LABEL_MAX_TEXT_WIDTH : undefined
                         }
                         onLabelLayout={onLabelLayout}
                         /*

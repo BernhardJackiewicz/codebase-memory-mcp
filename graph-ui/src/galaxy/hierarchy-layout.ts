@@ -184,6 +184,8 @@ export interface HierarchyPlacement {
     name: string;
     /** Hops von der Wurzel. Die Wurzel selbst ist null. */
     hop: number;
+    /** Im Ausschnitt (K5): links eingehend (-1), Mitte Wurzel (0), rechts ausgehend (+1). */
+    side?: -1 | 0 | 1;
     /** Die `id` des erzeugten Szene-Knotens. */
     id: number;
     x: number;
@@ -214,6 +216,8 @@ export interface HierarchyProjection {
     missing: number;
     /** Je Knoten: wo er sitzt und warum. Der Beweislauf liest daran die Spalten. */
     placements: HierarchyPlacement[];
+    /** Im Ausschnitt (K5): je Szene-ID die ID im Scope, damit Pfade auch in diesem Bild liegen. */
+    sourceIds?: number[];
 }
 
 /** Die Knoten, die eine Projektion aus dem Server-Layout uebernehmen darf. */

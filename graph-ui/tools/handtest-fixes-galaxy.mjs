@@ -557,8 +557,91 @@ async function checkK6(page) {
 }
 
 /* ------------------------------------------------------------------ */
+/* K5: Hierarchie links eingehend, rechts ausgehend                     */
 
-const CHECKS = { K9: checkK9, K2: checkK2, K8: checkK8, K3: checkK3, K13: checkK13, K6: checkK6 };
+async function hierarchyLayout(page) {
+    return page.evaluate(() => {
+        const galaxy = globalThis.__atlasGalaxy, fit = globalThis.__atlasGalaxyFit;
+        const canvas = document.querySelector('.atlas-galaxy canvas')?.getBoundingClientRect();
+        const boxes = galaxy?.labelBoxes ?? [];
+        // Namen: Weltkaesten der Szene, mit derselben Kamera in Pixel gerechnet.
+        const names = boxes.map((box) => {
+            // Stand vor K5: ohne `project` gibt es keine Namen-Messung.
+            const [a, b] = typeof fit?.project === 'function'
+                ? fit.project([{ x: box.x - box.width / 2, y: box.y + box.height / 2, z: 0 }, { x: box.x + box.width / 2, y: box.y - box.height / 2, z: 0 }]) : [];
+            return a && b && canvas ? { text: box.name, left: canvas.left + Math.min(a.x, b.x), right: canvas.left + Math.max(a.x, b.x), top: canvas.top + Math.min(a.y, b.y), bottom: canvas.top + Math.max(a.y, b.y), worldWidth: box.width } : null;
+        }).filter(Boolean);
+        const labels = [...document.querySelectorAll('[data-testid="atlas-hierarchy-edge-label"], .atlas-galaxy-path-label')].map((el) => {
+            const r = el.getBoundingClientRect(); return { text: el.textContent?.trim() ?? '', left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+        }).filter((r) => r.right > r.left);
+        const hit = (a, b) => !(a.right <= b.left + 1 || b.right <= a.left + 1 || a.bottom <= b.top + 1 || b.bottom <= a.top + 1);
+        const overlaps = [];
+        for (const label of labels) for (const name of names) if (hit(label, name)) overlaps.push(`${label.text} x ${name.text}`);
+        for (let i = 0; i < names.length; i += 1) for (let j = i + 1; j < names.length; j += 1) if (hit(names[i], names[j])) overlaps.push(`${names[i].text} x ${names[j].text}`);
+        // Abgeschnitten heisst: der Kasten hat die Breitengrenze der Textur erreicht (1600 px bei Schrift 12, rund 312 Einheiten).
+        const truncated = names.filter((name) => name.worldWidth >= 305).map((name) => name.text);
+        const placements = galaxy?.hierarchy?.placements ?? [];
+        const chip = document.querySelector('[data-testid="atlas-graph-mode-chip"][data-mode="hierarchy"]');
+        const hint = chip?.closest('[data-hint]')?.getAttribute('data-hint') ?? chip?.getAttribute('data-hint') ?? '';
+        return { mode: galaxy?.mode, placements: placements.map((p) => ({ name: p.name, x: Math.round(p.x), y: Math.round(p.y), hop: p.hop })),
+            edgeLabels: labels.map((label) => label.text), names: names.length, overlaps, truncated, hint };
+    });
+}
+
+async function checkK5(page) {
+    await section(page, 'K5', 'Hierarchy of a scope: incoming left, root centred, outgoing right, typed edges, full names, call order by line, path and call order');
+    const truth = await relationCounts(ROOT);
+    await open(page);
+    await select(page, ROOT);
+    await settled(page);
+    await page.locator('[data-testid="atlas-graph-mode-chip"][data-mode="hierarchy"]').click();
+    await wait(2500);
+    const view = await hierarchyLayout(page);
+    await shot(page, 'K5', 'hierarchy-root', `${ROOT} at 1 layer in hierarchy: ${view.edgeLabels.length} edge labels, ${view.overlaps.length} overlaps`);
+    const root = view.placements.find((p) => p.name === ROOT);
+    const left = view.placements.filter((p) => p.x < 0), right = view.placements.filter((p) => p.x > 0);
+    const incoming = Object.values(truth.incoming).reduce((sum, n) => sum + n, 0);
+    await check('K5', 'Incoming on the left, root at the centre, outgoing on the right, typed edge labels, full names, no overlaps, honest hint',
+        root?.x === 0 && left.length > 0 && right.length === 2 && left.length + right.length + 1 === view.placements.length
+        && view.edgeLabels.some((text) => /CALLS · TESTS/.test(text)) && view.edgeLabels.some((text) => /DEFINES/.test(text)) && view.edgeLabels.some((text) => /INHERITS/.test(text))
+        && view.overlaps.length === 0 && view.truncated.length === 0 && /incoming relationships on the left/.test(view.hint),
+        { truth: { incomingEdges: incoming, ...truth }, left: left.map((p) => p.name), right: right.map((p) => p.name), edgeLabels: view.edgeLabels,
+            overlaps: view.overlaps, truncated: view.truncated, hint: view.hint });
+
+    // Pfad in der Hierarchie, zu einem Test links.
+    await pickPath(page, 'test_jsonb_agg_charfield_order_by');
+    await wait(2500);
+    const pathView = await hierarchyLayout(page);
+    const pathHeading = await page.locator('[data-testid="atlas-galaxy-path-panel"] strong').first().innerText().catch(() => '');
+    await shot(page, 'K5', 'hierarchy-path', `${pathHeading} in hierarchy: highlighted path, ${pathView.overlaps.length} overlaps`);
+    await check('K5', 'Path to works in the hierarchy and highlights its nodes', /Path to test_jsonb_agg_charfield_order_by · 1 hop/.test(pathHeading)
+        && pathView.mode === 'hierarchy' && pathView.edgeLabels.includes('CALLS'), { pathHeading, edgeLabels: pathView.edgeLabels, overlaps: pathView.overlaps });
+    await page.keyboard.press('Escape');
+    await wait(500);
+
+    // Aufrufreihe: Spalte rechts nach Aufrufzeile.
+    await select(page, 'call_command');
+    await settled(page);
+    await page.locator('[data-testid="atlas-graph-mode-chip"][data-mode="hierarchy"]').click();
+    await wait(2500);
+    const callView = await hierarchyLayout(page);
+    await page.getByRole('button', { name: 'Call order' }).click();
+    await wait(1500);
+    const panelText = await page.locator('[data-testid="atlas-galaxy-path-panel"]').innerText().catch(() => '');
+    const callees = [...panelText.matchAll(/line (\d+)\s+call_command --CALLS--> (\S+)/g)].map((m) => ({ line: Number(m[1]), name: m[2] }));
+    const firstSeen = [...new Map(callees.map((entry) => [entry.name, entry])).values()].map((entry) => entry.name);
+    const rightColumn = callView.placements.filter((p) => p.x > 0 && p.hop === 1).sort((a, b) => b.y - a.y).map((p) => p.name);
+    const columnOrder = rightColumn.filter((name) => firstSeen.includes(name));
+    await shot(page, 'K5', 'hierarchy-call-order', `Call order of call_command in hierarchy: ${callees.length} calls, right column top to bottom ${columnOrder.slice(0, 5).join(', ')}...`);
+    await check('K5', 'The outgoing column of call_command reads in call-site line order, and Call order works in hierarchy', callees.length > 1
+        && JSON.stringify(columnOrder) === JSON.stringify(firstSeen) && callView.overlaps.length === 0,
+    { callees, columnOrder, firstSeen, overlaps: callView.overlaps, truncated: callView.truncated });
+    await page.keyboard.press('Escape');
+}
+
+/* ------------------------------------------------------------------ */
+
+const CHECKS = { K9: checkK9, K2: checkK2, K8: checkK8, K3: checkK3, K13: checkK13, K6: checkK6, K5: checkK5 };
 
 await mkdir(OUT, { recursive: true });
 const context = await chromium.launchPersistentContext(PROFILE, {

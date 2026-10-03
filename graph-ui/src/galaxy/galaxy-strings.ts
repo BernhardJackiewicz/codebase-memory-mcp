@@ -57,6 +57,15 @@ export const galaxyHistoryText = {
     pathTo: (name: string) => `path to ${name}`,
 };
 
+/** The hierarchy of a Galaxy scope (hand test K5): what the columns mean, per trace direction. */
+export const galaxyHierarchyText = {
+    hint: (direction: 'both' | 'inbound' | 'outbound') => direction === 'inbound'
+        ? 'hierarchy: what reaches the root, one column per layer to the left; edge types at the lines'
+        : direction === 'outbound'
+            ? 'hierarchy: what the root reaches, one column per layer to the right; edge types at the lines'
+            : 'hierarchy: incoming relationships on the left, the root in the middle, outgoing on the right; one column per layer, edge types at the lines',
+};
+
 const count = (value: number, one: string, many: string) => `${value.toLocaleString()} ${value === 1 ? one : many}`;
 
 /** Loading, cancelling and the render limit of a scope layer (hand test K8). */
