@@ -424,8 +424,65 @@ async function checkK3(page) {
 }
 
 /* ------------------------------------------------------------------ */
+/* K13: Selection details aus dem geladenen Ausschnitt                  */
 
-const CHECKS = { K9: checkK9, K2: checkK2, K8: checkK8, K3: checkK3 };
+const typeList = (counts) => Object.entries(counts).sort(([a, x], [b, y]) => y - x || a.localeCompare(b)).map(([type, n]) => `${type} ${n}`).join(' · ');
+
+async function checkK13(page) {
+    await section(page, 'K13', 'Selection details lists the relationships of the loaded scope; "Next lines" at the end of a file says so');
+    const truth = await relationCounts(ROOT);
+    const total = (counts) => Object.values(counts).reduce((sum, n) => sum + n, 0);
+    await open(page);
+    await select(page, ROOT);
+    await settled(page);
+    const details = page.locator('.atlas-galaxy-selection-details').first();
+    await details.locator('> summary').click();
+    await wait(700);
+    const summaries = await details.locator('summary').allInnerTexts();
+    const source = await details.locator('.selection-context-source').innerText().catch(() => '');
+    await shot(page, 'K13', 'details-root', `Selection details for ${ROOT}: ${summaries.filter((text) => /relationships/.test(text)).join(' | ')}`);
+    await details.screenshot({ path: join(OUT, 'K13', 'details-root-panel.png') }).catch(() => {});
+    const wantIn = `Incoming relationships · ${total(truth.incoming)} (${typeList(truth.incoming)})`;
+    const wantOut = `Outgoing relationships · ${total(truth.outgoing)} (${typeList(truth.outgoing)})`;
+    await check('K13', `Selection details of ${ROOT} match the index: incoming and outgoing by type, from the loaded scope`,
+        summaries.includes(wantIn) && summaries.includes(wantOut) && /loaded Galaxy scope/.test(source), { truth, wantIn, wantOut, summaries, source });
+
+    // Eine Auswahl hinter dem Deckel des Schnappschusses (tests/ liegt hinter 20.000 Knoten).
+    const child = await qualifiedName('test_jsonb_agg_jsonfield_order_by');
+    const childTruth = await relationCounts('test_jsonb_agg_jsonfield_order_by');
+    await page.evaluate((qn) => globalThis.__atlasGalaxy?.clickNode(qn), child);
+    await settled(page);
+    await wait(800);
+    const childText = await details.innerText().catch(() => '');
+    const childSummaries = await details.locator('summary').allInnerTexts();
+    await shot(page, 'K13', 'details-test-behind-cap', `Selection details for a test behind the snapshot cap: ${childSummaries.filter((text) => /relationships/.test(text)).join(' | ')}`);
+    const childOut = `Outgoing relationships · ${total(childTruth.outgoing)} (${typeList(childTruth.outgoing)})`;
+    await check('K13', 'A selected test outside the capped snapshot still shows its relationships from the scope', childSummaries.includes(childOut)
+        && !/absent from this bounded index snapshot/.test(childText), { childTruth, childOut, childSummaries });
+
+    // "Read source evidence": general.py endet in Zeile 65 (dazu die leere Zeile 66).
+    await page.getByRole('button', { name: 'Back', exact: true }).click().catch(() => {});
+    await settled(page);
+    await wait(800);
+    await details.getByRole('button', { name: 'Read source evidence' }).click();
+    await page.waitForSelector('nav[aria-label="Source pages"]', { timeout: 20000 }).catch(() => {});
+    await wait(500);
+    const pager = page.locator('nav[aria-label="Source pages"]').first();
+    const pagerText = await pager.innerText().catch(() => '');
+    const next = pager.getByRole('button', { name: 'Next lines' });
+    const nextState = { disabled: await next.isDisabled().catch(() => null), title: await next.getAttribute('title').catch(() => null) };
+    const lines = await page.locator('.source-evidence-lines code > span').count();
+    await page.locator('.source-evidence-lines').evaluate((el) => { el.scrollTop = el.scrollHeight; }).catch(() => {});
+    await wait(300);
+    await shot(page, 'K13', 'source-evidence-end', `Source evidence for general.py scrolled to the end: "${pagerText.replace(/\s+/g, ' ')}"`);
+    await check('K13', '"Next lines" is disabled at the real end of general.py and says so', /end of file/.test(pagerText) && nextState.disabled === true
+        && /end of this file/.test(nextState.title ?? ''), { pagerText, nextState, renderedLines: lines });
+    await page.keyboard.press('Escape');
+}
+
+/* ------------------------------------------------------------------ */
+
+const CHECKS = { K9: checkK9, K2: checkK2, K8: checkK8, K3: checkK3, K13: checkK13 };
 
 await mkdir(OUT, { recursive: true });
 const context = await chromium.launchPersistentContext(PROFILE, {

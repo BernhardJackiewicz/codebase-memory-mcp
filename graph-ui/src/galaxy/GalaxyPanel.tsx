@@ -190,6 +190,7 @@ import { readerFocusFrame, readerGraphFocus, type SourceFocusRange } from './rea
 import { projectReaderHierarchy } from './reader-hierarchy';
 import Hint from '../ui/tooltip/Hint';
 import type { GraphData, GraphNode } from './types';
+import type { SelectionScope } from '../why/SelectionContext';
 import {
     AgentLayer,
     agentAngles,
@@ -741,7 +742,12 @@ export interface GalaxyPanelProps {
     fullscreenToggle?: number;
     /** Der Speicher fuer die Lage des Instruments. Ersetzbar fuer Tests. */
     agentStore?: Storage | undefined;
-    selectionPanel?: import('react').ReactNode;
+    /**
+     * "Selection details". As a function it receives the loaded scope (hand
+     * test K13): the relationships of the selection then come from what this
+     * panel loaded, not from the capped repository snapshot.
+     */
+    selectionPanel?: ReactNode | ((scope: SelectionScope | undefined) => ReactNode);
 }
 
 /** Wie lange die Zeitangaben im Instrument stehen, bis sie neu gerechnet werden. */
@@ -1987,6 +1993,13 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         </details>}
     </span> : null;
 
+    /* Der geladene Ausschnitt fuer "Selection details" (K13). */
+    const selectionScope = useMemo<SelectionScope | undefined>(() => props.workspaceExpanded && scope.scope && scope.result ? {
+        graph: scope.result.data, complete: scope.complete, direction: scope.direction, depth: scope.result.depth,
+        ...(traceTypes ? { edgeTypes: traceTypes } : {}), ...(scope.result.partial ? { partial: scope.result.partial } : {}),
+    } : undefined, [props.workspaceExpanded, scope.scope, scope.result, scope.complete, scope.direction, traceTypes]);
+    const selectionContent = typeof props.selectionPanel === 'function' ? props.selectionPanel(selectionScope) : props.selectionPanel;
+
     /* Was die Leiste sonst noch braucht (K3): Quelle der Wurzel, Gruppen und was ausserhalb der Limits liegt. */
     const openRoot = props.workspaceExpanded && scopedRoot?.file_path
         ? () => props.onOpenNode(layoutNodeForSelection(layout, scopedRoot) ?? scopedRoot) : undefined;
@@ -2885,9 +2898,9 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                     </div>
                 )}
             </div>
-            {props.selectionPanel && <details className="galaxy-selection-evidence atlas-galaxy-selection-details" aria-label="Selection evidence">
+            {selectionContent && <details className="galaxy-selection-evidence atlas-galaxy-selection-details" aria-label="Selection evidence">
                 <summary>Selection details</summary>
-                <div className="atlas-galaxy-selection-details-body">{props.selectionPanel}</div>
+                <div className="atlas-galaxy-selection-details-body">{selectionContent}</div>
             </details>}
             {note.length > 0 && !scope.loading && (
                 <p className="atlas-galaxy-note" data-testid="atlas-galaxy-note">

@@ -179,3 +179,16 @@ it('focuses close, lets Escape close the modeless drawer, then restores its orig
     await ui.unmount();
     expect(document.activeElement).toBe(opener); opener.remove();
 });
+
+it('says "end of file" when the last page reaches the end of the Module, so a disabled Next is not a mystery (hand test K13)', async () => {
+    // django/contrib/postgres/aggregates/general.py: 65 lines plus the empty EOF line, read from line 42.
+    const last = { start_line: 42, end_line: 66, source: Array.from({ length: 25 }, (_, i) => `line ${42 + i}`).join('\n'),
+        source_truncated: false, source_clipped: false, next_start_line: undefined, original_end_line: undefined };
+    const ui = await mount(vi.fn(async () => page(42, last)));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    const pager = ui.container.querySelector('nav[aria-label="Source pages"]')!;
+    expect(pager.textContent).toContain('Lines 42 to 66 · end of file');
+    const next = [...pager.querySelectorAll('button')].find(button => button.textContent === 'Next lines')!;
+    expect(next.disabled).toBe(true);
+    expect(next.title).toBe('Line 66 is the end of this file.');
+});
