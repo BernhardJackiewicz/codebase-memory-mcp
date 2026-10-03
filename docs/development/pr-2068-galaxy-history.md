@@ -47,7 +47,15 @@ the scope that was open before.
    (`escapeTaken`). The page prevents the browser default for these keys.
 7. **Escape.** Escape first clears an open path, then leaves the scope ("All
    graph"), which is itself a history entry.
-8. **Per project.** A project switch starts a fresh history.
+8. **Per project.** A project switch starts a fresh history. A project that
+   arrives after the first render (from the address bar) keeps "All graph" as
+   the first entry.
+9. **Cancel is Back.** The minus button while a layer loads (K8) moves the
+   cursor back to the previous depth instead of pushing it again, so Forward
+   retries the cancelled layer.
+10. **Empty canvas.** A click on empty canvas inside a scope clears only the
+    path highlight (K9). That is a step of its own, so Back brings the path
+    back.
 
 ## Where it lives
 
