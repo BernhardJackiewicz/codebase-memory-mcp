@@ -1,5 +1,5 @@
 import type { DaemonLogRecord, ProcessCpuUnit, ProcessMemoryKind } from '../projects/projects-model';
-import { repeatCount } from '../app/ui-log';
+import { countedDetail, repeatCount } from '../app/ui-log';
 
 export function cpuText(value: number | null | undefined, unit: ProcessCpuUnit | undefined): string {
     if (value == null || !Number.isFinite(value) || value < 0) return 'Unavailable';
@@ -47,20 +47,26 @@ export function filterLogs(lines: readonly string[], query: string, level: LogLe
 
 export interface LogRow { record: DaemonLogRecord; count: number; first: string }
 
-/** The text that makes two records the same message: a frontend line names its session and its own message. */
+/**
+ * The fields that make two records the same message, the ones the frontend
+ * buffer compares (app/ui-log.ts): a repeat count carries them too, so it joins
+ * the row of the entry it counts. The detail is compared by its start, which a
+ * field cut on the longer count line leaves intact.
+ */
 function repeatIdentity(record: DaemonLogRecord): { key: string; session: string; repeat?: number } {
     try {
         const line: unknown = JSON.parse(record.message);
         if (typeof line === 'object' && line !== null && typeof (line as Record<string, unknown>)['message'] === 'string') {
             const entry = line as Record<string, unknown>;
+            const text = (name: string) => typeof entry[name] === 'string' ? entry[name] as string : '';
             const detail = typeof entry['detail'] === 'string' ? entry['detail'] : undefined;
             const repeat = repeatCount(detail);
-            const own = repeat === undefined && detail ? `\u0000${detail}` : '';
-            return { key: `${record.level}\u0000${record.source}\u0000${record.project ?? ''}\u0000${String(entry['message'])}${own}`,
-                session: typeof entry['session'] === 'string' ? entry['session'] : '', repeat };
+            return { key: JSON.stringify([record.level, record.source, record.project ?? '', text('message'), (countedDetail(detail) ?? '').slice(0, 2048),
+                text('stack').slice(0, 2048), text('url'), entry['line'] ?? null, entry['col'] ?? null]),
+            session: text('session'), repeat };
         }
     } catch { /* A daemon line is plain text. */ }
-    return { key: `${record.level}\u0000${record.source}\u0000${record.project ?? ''}\u0000${record.message}`, session: '' };
+    return { key: JSON.stringify([record.level, record.source, record.project ?? '', record.message]), session: '' };
 }
 
 /**

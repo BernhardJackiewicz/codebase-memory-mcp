@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { readProcesses } from '../projects/projects-model';
 import { collapseRepeats, cpuText, filterLogs, logLevel, memoryLabel, memoryText } from './system-model';
-import { repeatDetail } from '../app/ui-log';
+import { repeatDetail, UiLogBuffer } from '../app/ui-log';
+import type { UiLogPayload } from '../app/ui-log';
 
 describe('System measurements', () => {
     it('keeps missing readings distinct from measured zero', () => {
@@ -65,5 +66,19 @@ describe('System log levels', () => {
         ]);
         expect(rows.map((row) => [row.record.id, row.count])).toEqual([[3, 1], [6, 1], [9, 123]]);
         expect(rows[2]?.first).toBe('2026-10-03T16:05:01Z');
+    });
+
+    it('keeps a repeated request failure with a response body on one row with its count, and its body', async () => {
+        // What the buffer actually posts for twelve identical failures, stored the way the daemon stores them.
+        const posted: UiLogPayload[] = [];
+        const buffer = new UiLogBuffer({ page: '/?project=cbm', session: 'rpc12', schedule: () => 0, cancel: () => undefined, bufferMax: 200, batchMax: 200,
+            transport: { send: async (payload) => { posted.push(payload); return true; } } });
+        for (let i = 0; i < 12; i++) buffer.record('error', 'rpc', '/rpc query_graph: HTTP 500', { project: 'cbm', detail: 'HTTP 500 body text' });
+        buffer.record('error', 'rpc', '/rpc query_graph: HTTP 500', { project: 'cbm', detail: 'another body' });
+        await buffer.flush(true);
+        const records = posted.flatMap((post) => post.entries.map((entry) => ({ ...entry, session: post.session, page: post.page })))
+            .map((line, index) => ({ id: index + 1, ts: line.ts, level: line.level, source: line.source, project: line.project, message: JSON.stringify(line) }));
+        const rows = collapseRepeats(records);
+        expect(rows.map((row) => [JSON.parse(row.record.message).detail.split('\n').at(-1), row.count])).toEqual([['another body', 1], ['HTTP 500 body text', 12]]);
     });
 });

@@ -190,6 +190,26 @@ describe('UiLogBuffer', () => {
         expect(buffer.stats().sent).toBe(5);
     });
 
+    it('counts only truly identical entries: the same message from another place or with another detail is sent in full', async () => {
+        const posts: UiLogPayload[] = [];
+        const buffer = new UiLogBuffer({ page: '/', session: 'places', schedule: () => 0, cancel: () => undefined, bufferMax: 200, batchMax: 200,
+            transport: { send: async (payload) => { posts.push(payload); return true; } } });
+        const typeError = "Uncaught TypeError: Cannot read properties of undefined (reading 'x')";
+        buffer.record('error', 'window', typeError, { project: 'cbm', url: 'a.js', line: 10, col: 3, stack: 'at A (a.js:10)' });
+        buffer.record('error', 'window', typeError, { project: 'cbm', url: 'b.js', line: 99, col: 7, stack: 'at B (b.js:99)' });
+        buffer.record('error', 'rpc', '/rpc query_graph: HTTP 500', { project: 'cbm', detail: 'body one' });
+        buffer.record('error', 'rpc', '/rpc query_graph: HTTP 500', { project: 'cbm', detail: 'body two' });
+        for (let i = 0; i < 11; i++) buffer.record('error', 'window', typeError, { project: 'cbm', url: 'b.js', line: 99, col: 7, stack: 'at B (b.js:99)' });
+        await buffer.flush(true);
+        const sent = posts.flatMap((post) => post.entries);
+        // Both places and both response bodies reach the log in full; the twelve from b.js:99 become one entry and its count.
+        expect(sent.map((entry) => [entry.source, entry.url ?? entry.detail?.split('\n').at(-1), entry.line, repeatCount(entry.detail)])).toEqual([
+            ['window', 'a.js', 10, undefined], ['window', 'b.js', 99, undefined], ['rpc', 'body one', undefined, undefined],
+            ['rpc', 'body two', undefined, undefined], ['window', 'b.js', 99, 10], ['window', 'b.js', 99, 12]]);
+        // A count names the place it counts, so System › Logs can put it beside its first entry.
+        expect(sent.at(-1)).toMatchObject({ url: 'b.js', line: 99, col: 7, stack: 'at B (b.js:99)' });
+    });
+
     it('does not throw when the transport does', async () => {
         const throwing: UiLogTransport = {
             send: async () => {

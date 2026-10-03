@@ -31,12 +31,14 @@
  *    characters, the same cap the server applies; a cut is marked so nobody
  *    reads a truncated stack as a complete one.
  *  - **Once per session, then counted.** An entry identical to an earlier
- *    one of this session (level, source, project and message) is counted,
- *    not queued. A deprecation warning that a library prints on every scene
- *    mount (THREE.Clock from @react-three/fiber) would otherwise push the
- *    real messages out of System › Logs. The count goes out as one more
- *    entry with the same text at 10, 100, 1000 repeats and when the page is
- *    left (`final`), so the journal holds a handful of lines, not hundreds.
+ *    one of this session (level, source, project, message, detail, stack and
+ *    place) is counted, not queued. A deprecation warning that a library
+ *    prints on every scene mount (THREE.Clock from @react-three/fiber) would
+ *    otherwise push the real messages out of System › Logs. The count goes
+ *    out as one more entry with the same fields at 10, 100, 1000 repeats and
+ *    when the page is left (`final`), so the journal holds a handful of
+ *    lines, not hundreds. The same message from another place or with
+ *    another response body is another entry and is recorded in full.
  *
  * Time and timers are injectable so a test runs in one tick.
  */
@@ -120,16 +122,25 @@ export interface UiLogOptions {
 /**
  * The detail of a repeat count. The server keeps only the known fields of an
  * entry, so the count travels in `detail`, in words a reader understands and
- * in a form System › Logs reads back (repeatCount).
+ * in a form System › Logs reads back (repeatCount). The detail of the counted
+ * entry follows on the next line, so the count stays beside its own entry.
  */
-export function repeatDetail(count: number): string {
-    return `${count} identical entries in this session; only the first is recorded in full`;
+export function repeatDetail(count: number, detail?: string): string {
+    const words = `${count} identical entries in this session; only the first is recorded in full`;
+    return detail ? capField(`${words}\n${detail}`) : words;
 }
 
 /** The count of a repeat entry, undefined for an ordinary one. */
 export function repeatCount(detail: string | undefined): number | undefined {
     const match = /^(\d+) identical entries in this session\b/.exec(detail ?? '');
     return match ? Number(match[1]) : undefined;
+}
+
+/** The detail of the entry a repeat count stands for; an ordinary detail as it is. */
+export function countedDetail(detail: string | undefined): string | undefined {
+    if (repeatCount(detail) === undefined) return detail;
+    const newline = detail!.indexOf('\n');
+    return newline < 0 ? undefined : detail!.slice(newline + 1);
 }
 
 /** Cut a text field at the shared cap and say so. */
@@ -211,7 +222,9 @@ export class UiLogBuffer {
         if (typeof extra.col === 'number' && Number.isFinite(extra.col)) {
             entry.col = extra.col;
         }
-        const key = [entry.level, entry.source, entry.project ?? '', entry.message].join('\u0000');
+        // Only a truly identical entry is counted: the same text from another place stays its own entry.
+        const key = JSON.stringify([entry.level, entry.source, entry.project ?? '', entry.message, entry.detail ?? '',
+            entry.stack ?? '', entry.url ?? '', entry.line ?? null, entry.col ?? null]);
         const repeat = this.repeats.get(key);
         if (repeat !== undefined) {
             this.seq -= 1;
@@ -229,13 +242,10 @@ export class UiLogBuffer {
         this.arm(this.flushMs);
     }
 
-    /** Queue the running count of a repeated entry, with the text of its first occurrence. */
+    /** Queue the running count of a repeated entry, with every field of its first occurrence. */
     private report(repeat: Repeat): void {
-        const { level, source, message, project } = repeat.entry;
-        const entry: UiLogEntry = { ts: this.now().toISOString(), seq: ++this.seq, level, source, message, detail: repeatDetail(repeat.count) };
-        if (project !== undefined) {
-            entry.project = project;
-        }
+        const { ts: _ts, seq: _seq, detail, ...first } = repeat.entry;
+        const entry: UiLogEntry = { ...first, ts: this.now().toISOString(), seq: ++this.seq, detail: repeatDetail(repeat.count, detail) };
         repeat.reported = repeat.count;
         this.push(entry);
     }
