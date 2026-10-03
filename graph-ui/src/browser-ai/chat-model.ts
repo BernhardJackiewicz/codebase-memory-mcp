@@ -1,7 +1,7 @@
 import type { BrowserChatMessage } from './browser-ai-runtime';
 import type { ChatTopic } from './chat-context';
 import { fileKind } from './file-kind';
-import { readerFacts } from './workflow-facts';
+import { readerFacts } from './file-facts';
 import { workflowWords } from './strings';
 
 /** An immutable snapshot, not a live reference to the reader selection. */

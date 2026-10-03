@@ -16,7 +16,7 @@ import ChatMarkdown from './ChatMarkdown';
 import AgentSettingsDialog from './AgentSettingsDialog';
 import { useChatHistory } from './use-chat-history';
 import { chatTopic, followedTopic, missingContextAnswer, topicHistory } from './chat-context';
-import { readerFacts } from './workflow-facts';
+import { isDataFile, readerFacts } from './file-facts';
 import './browser-chat.css';
 
 export type { BrowserChatAttachment, BrowserChatContext, BrowserChatReaderContext, BrowserChatSource } from './chat-model';
@@ -51,7 +51,9 @@ export interface BrowserChatDockProps {
 type Phase = 'off' | 'preparing' | 'ready' | 'counting' | 'generating' | 'removing';
 type ChatTurn = BrowserChatTurn & { evidence?: PreparedExplanationContext };
 /** `grounded`: the facts are listed in the card, so the prompt's name budget is not the reader's limit. */
-type Explanation = { key: string; label: string; answer: string; status: string; error?: string; packet?: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; mode?: 'interpretation'; shortened?: boolean; limit?: TokenLimits; evidence?: string; grounded?: boolean };
+type Explanation = { key: string; label: string; answer: string; status: string; error?: string; packet?: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; mode?: 'interpretation'; shortened?: boolean; limit?: TokenLimits; evidence?: string; grounded?: boolean;
+    /** The facts of a configuration or text file, which the model was not asked about (K12). */
+    askable?: boolean };
 /** Finished explanations per selection, so returning to one does not run the model again. */
 const EXPLANATION_CACHE_SIZE = 32;
 const initialModel = BROWSER_MODELS.find(model => model.availability === 'available')!;
@@ -163,6 +165,8 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     const [questionQueued, setQuestionQueued] = useState(false);
     const [newExplanation, setNewExplanation] = useState(false);
     const lastAttempt = useRef<string | undefined>(undefined);
+    /** Files whose card the reader asked the model to write about ("Ask the model", K12). */
+    const modelAsked = useRef(new Set<string>());
     const selected = useMemo(() => explanationInput(selectionScope, readerContext, proactiveSelection), [selectionScope, readerContext, proactiveSelection]);
     const selectionRef = useRef(selected); selectionRef.current = selected;
     const settingsSeen = useRef(settingsRequest);
@@ -362,6 +366,16 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     const explain = async (snapshot: ExplanationInput): Promise<void> => {
         const currentRuntime = runtime.current;
         if (!historyReady || !currentRuntime || pending.current || manualRequest.current || selectionRef.current?.key !== snapshot.key) return;
+        // A configuration or text file is explained by what is read from it. The model writes
+        // about it only when asked, here or in the chat (K12).
+        if (snapshot.reader?.source && isDataFile(snapshot.reader.source.path) && !modelAsked.current.has(snapshot.key)) {
+            lastAttempt.current = snapshot.key;
+            const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: groundedExplanation(readerFacts(snapshot.reader), undefined, false, 'file'), status: 'complete',
+                packet: prepareExplanationContext(snapshot.reader, snapshot.graph, 3200), grounded: true, askable: true };
+            remember(complete); setExplanation(complete);
+            if (!followExplanation.current) setNewExplanation(true);
+            return;
+        }
         pending.current = true; stopRequested.current = false; setStopping(false);
         const ticket = ++epoch.current;
         let settle!: () => void;
@@ -781,8 +795,9 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                     {explanation.status !== 'generating' && <AnswerNotes shortened={limitNote(explanation.shortened, explanation.limit, true)} packet={explanation.grounded ? undefined : explanation.packet} model={model.displayName} />}
                     {explanation.error && <p className="cbm-chat-turn-error" role="alert">{explanation.error}</p>}
                     {explanation.status !== 'generating' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready' || !!selected.waiting} onClick={() => {
+                        if (explanation.askable) modelAsked.current.add(selected.key);
                         lastAttempt.current = undefined; explanations.current.delete(selected.key); setRetryExplanation(value => value + 1);
-                    }}>Explain again</button>}
+                    }}>{explanation.askable ? relationshipWords.en.askModel : 'Explain again'}</button>}
                 </> : <p>{selected.waiting === 'loading' ? browserChatText.waitingForScope : selected.waiting === 'partial' ? browserChatText.partialScope
                     : manualRequest.current ? 'This selection will be explained after your answer.' : 'Preparing explanation…'}</p>}
             </section>}

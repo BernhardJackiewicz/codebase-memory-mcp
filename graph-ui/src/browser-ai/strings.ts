@@ -235,3 +235,25 @@ export const workflowWords = {
         `${id} (${[name ? `"${name}"` : '', runsOn ? `runs on ${runsOn}` : '', counted(steps, 'step', 'steps')].filter(Boolean).join(', ')})`,
     uses: (items: readonly string[]) => `Actions used: ${items.join(', ')}.`,
 };
+
+const listed = (items: readonly string[], total: number) => `${items.join(', ')}${total > items.length ? `, +${(total - items.length).toLocaleString('en-US')} more` : ''}`;
+/** A configuration or text file as facts read from its text: for the prompt and the explanation card (K12). */
+export const fileWords = {
+    kind: (kind: string, lines?: number) => `File kind: ${kind}${lines === undefined ? '' : `; ${counted(lines, 'line', 'lines')}`}.`,
+    selected: (start: number, end: number) => start === end ? `Selected line ${start} of the file.` : `Selected lines ${start}-${end} of the file.`,
+    topKeys: (total: number, items: readonly string[]) => `Top-level keys (${total.toLocaleString('en-US')}): ${listed(items, total)}.`,
+    keys: (total: number, items: readonly string[]) => `Keys (${total.toLocaleString('en-US')}): ${listed(items, total)}.`,
+    /** What a key holds: "(2 keys: `web`, `db`)", "(list of 2)", "(text)". */
+    children: (total: number, items: readonly string[]) => total ? `${counted(total, 'key', 'keys')}: ${listed(items, total)}` : 'no keys',
+    keyCount: (total: number) => counted(total, 'key', 'keys'),
+    list: (total: number) => `list of ${total.toLocaleString('en-US')}`,
+    value: { text: 'text', number: 'number', boolean: 'true or false', empty: 'null' },
+    items: (total: number) => `A list of ${counted(total, 'item', 'items')}.`,
+    invalidJson: 'The text is not valid JSON, so no keys are counted.',
+    tables: (total: number, items: readonly string[]) => `Tables (${total.toLocaleString('en-US')}): ${listed(items, total)}.`,
+    sections: (total: number, items: readonly string[]) => `Sections (${total.toLocaleString('en-US')}): ${listed(items, total)}.`,
+    title: (title: string) => `Title: ${title}.`,
+    codeBlocks: (total: number) => `${counted(total, 'code block', 'code blocks')}.`,
+    patterns: (total: number, items: readonly string[]) => `${counted(total, 'pattern', 'patterns')}: ${listed(items, total)}.`,
+    root: (name: string) => `Root element: ${name}.`,
+};

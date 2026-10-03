@@ -132,9 +132,11 @@ describe('browser chat context', () => {
             project: 'django-demo', path: '.github/workflows/new_contributor_pr.yml', text } };
         const [system] = buildChatMessages([], 'Wie viele Jobs gibt es?', undefined, [], workflow);
         expect(system.content).toContain('Facts read from the file (counted, not guessed):\n- Workflow name: `New contributor message`.\n- Trigger: `pull_request_target` (types: opened).\n- 1 job: `build`');
-        // A marked part of the file is not the whole workflow: nothing is counted from it.
+        // A marked part of the file is not the whole workflow: its jobs are not counted, the part is named as a part.
         const marked = { ...workflow, source: { ...workflow.source, kind: 'selection' as const } };
-        expect(buildChatMessages([], 'Wie viele Jobs gibt es?', undefined, [], marked)[0].content).not.toContain('Facts read from the file');
+        const part = buildChatMessages([], 'Wie viele Jobs gibt es?', undefined, [], marked)[0].content;
+        expect(part).toContain('- Selected lines 3-5 of the file.');
+        expect(part).not.toContain('1 job');
     });
 });
 

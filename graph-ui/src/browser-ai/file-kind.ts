@@ -9,7 +9,13 @@ const KINDS: Readonly<Record<string, string>> = {
     mjs: 'JavaScript source file', jsx: 'JavaScript source file', c: 'C source file', h: 'C header file', cc: 'C++ source file', cpp: 'C++ source file',
     hpp: 'C++ header file', go: 'Go source file', rs: 'Rust source file', java: 'Java source file', rb: 'Ruby source file', sh: 'shell script',
     html: 'HTML document', css: 'CSS stylesheet', sql: 'SQL script', xml: 'XML data, not program code',
+    conf: 'configuration file, not program code', env: 'environment settings, not program code', properties: 'Java properties, not program code',
+    editorconfig: 'EditorConfig settings, not program code', gitignore: 'ignore patterns, not program code', dockerignore: 'ignore patterns, not program code',
+    gitattributes: 'Git attribute patterns, not program code',
 };
+
+/** Configuration, data and text files: what they say is read from them, not guessed by a model (K12). */
+export const isDataFile = (path: string): boolean => /not program code/.test(fileKind(path) ?? '');
 
 /** A GitHub Actions workflow, by where GitHub reads it from. */
 export const isGithubWorkflow = (path: string): boolean => /(?:^|\/)\.github\/workflows\/[^/]+\.ya?ml$/i.test(path);
