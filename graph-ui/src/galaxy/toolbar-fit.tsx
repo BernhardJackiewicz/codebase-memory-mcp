@@ -8,7 +8,8 @@
  * also genau das Menue, auf das der Hinweis einer abgeschnittenen Ebene
  * verweist. Jetzt wird gemessen, in drei Stufen:
  *
- *  - `full`: alle Beschriftungen ausgeschrieben.
+ *  - `full`: alle Beschriftungen ausgeschrieben ("← Back", "Forward →"), und
+ *    der Name der Wurzel steht dabei ganz (`toolbarSqueezes`).
  *  - `compact`: knappe Beschriftungen ("+1" statt "Expand +1", "All",
  *    "Path…", "Types · All", "Calls"); so passt sie bei offenem Chat und
  *    1.494 px, auch mit der Liste der letzten Wurzeln.
@@ -48,9 +49,28 @@ export function toolbarOverflows(bar: HTMLElement): boolean {
     return false;
 }
 
-/** Setzt die Leiste auf die erste Stufe, die passt, und gibt sie zurueck. */
+/*
+ * Ob ein Element, das in voller Stufe ganz zu lesen sein soll
+ * (`data-fit-whole`, der Name der Wurzel), schmaler steht, als sein Text und
+ * seine Hoechstbreite es wollen (Handtest K2, im Browser gesehen: mit "← Back"
+ * und "Forward →" in Worten schrumpfte die Wurzel bei offenem Chat auf
+ * "JS…", und nichts ragte hinaus). Gerechnet in der Innenbreite (`clientWidth`).
+ */
+export function toolbarSqueezes(bar: HTMLElement): boolean {
+    for (const element of bar.querySelectorAll<HTMLElement>('[data-fit-whole]')) {
+        const style = getComputedStyle(element);
+        const max = parseFloat(style.maxWidth);
+        const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+        const border = (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.borderRightWidth) || 0);
+        const room = Number.isFinite(max) ? (style.boxSizing === 'border-box' ? max - border : max + padding) : Number.POSITIVE_INFINITY;
+        if (element.clientWidth + 1 < Math.min(element.scrollWidth, room)) return true;
+    }
+    return false;
+}
+
+/** Setzt die Leiste auf die erste Stufe, die passt, und gibt sie zurueck. In voller Stufe passt sie nur, wenn auch die Wurzel ganz steht. */
 export function fitToolbar(bar: HTMLElement): ToolbarFit {
-    const fit = chooseToolbarFit(level => { bar.dataset.fit = level; return toolbarOverflows(bar); });
+    const fit = chooseToolbarFit(level => { bar.dataset.fit = level; return toolbarOverflows(bar) || (level === 'full' && toolbarSqueezes(bar)); });
     bar.dataset.fit = fit;
     return fit;
 }

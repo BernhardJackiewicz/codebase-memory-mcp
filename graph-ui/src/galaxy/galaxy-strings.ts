@@ -43,6 +43,9 @@ export const galaxyHistoryText = {
     forward: 'Forward',
     backGlyph: '←',
     forwardGlyph: '→',
+    /** The visible words while the row has room (K2: "← Back" and "Forward →"); the glyphs alone in its compact levels. */
+    backWide: '← Back',
+    forwardWide: 'Forward →',
     backTo: (label: string) => `Back to ${label} (Alt+Left)`,
     forwardTo: (label: string) => `Forward to ${label} (Alt+Right)`,
     noBack: 'Nothing to go back to yet',

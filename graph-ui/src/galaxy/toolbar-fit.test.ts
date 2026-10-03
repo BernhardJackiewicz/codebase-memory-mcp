@@ -58,4 +58,28 @@ describe('fitToolbar', () => {
         element.getBoundingClientRect = () => ({ left: 0, right: 1200, width: 1200, top: 0, bottom: 40, height: 40, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
         expect(fitToolbar(element)).toBe('full');
     });
+
+    /*
+     * Hand test K2 seen in the browser: with "← Back" and "Forward →" in words
+     * the root name shrank to "JS…" with the chat open, while nothing stuck
+     * out. The full level now also needs the root name whole.
+     */
+    it('leaves the full level when the root name would be squeezed below its text, but not for a name only its maximum width clips', () => {
+        const element = bar({ full: 990, compact: 900, tight: 900, wrap: 900 });
+        const name = document.createElement('button');
+        name.dataset.fitWhole = '';
+        name.style.maxWidth = '176px';
+        name.style.boxSizing = 'border-box';
+        let widths = { full: 40, compact: 100 } as Record<string, number>, content = 100;
+        Object.defineProperty(name, 'scrollWidth', { get: () => content });
+        Object.defineProperty(name, 'clientWidth', { get: () => widths[element.dataset.fit ?? 'full'] ?? 100 });
+        element.append(name);
+        expect(fitToolbar(element)).toBe('compact');
+        widths = { full: 100, compact: 100 };
+        expect(fitToolbar(element)).toBe('full');
+        // A long name is cut by its maximum width at every level: that alone is no reason to leave the full labels.
+        content = 300;
+        widths = { full: 176, compact: 176 };
+        expect(fitToolbar(element)).toBe('full');
+    });
 });

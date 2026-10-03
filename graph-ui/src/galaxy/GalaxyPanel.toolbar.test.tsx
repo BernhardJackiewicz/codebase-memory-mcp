@@ -78,6 +78,16 @@ it('K2: the history group and the root button say what they are to assistive tec
     const name = host.querySelector<HTMLButtonElement>('button.atlas-graph-scope-name')!;
     expect(name.getAttribute('aria-label')).toBe('Open the source of n2');
     expect(name.textContent).toBe('n2');
+    // K2 as planned: "← Back" and "Forward →" in words while the row has room, the glyphs alone in its compact levels.
+    const back = group.querySelector<HTMLButtonElement>('button[aria-label="Back"]')!;
+    const forward = group.querySelector<HTMLButtonElement>('button[aria-label="Forward"]')!;
+    expect(back.querySelector('.atlas-fit-wide')?.textContent).toBe('← Back');
+    expect(back.querySelector('.atlas-fit-narrow')?.getAttribute('data-label')).toBe('←');
+    expect(forward.querySelector('.atlas-fit-wide')?.textContent).toBe('Forward →');
+    expect(forward.querySelector('.atlas-fit-narrow')?.getAttribute('data-label')).toBe('→');
+    // The tooltips stay.
+    expect(back.title).toBe('Back to n1 · 1 layer (Alt+Left)');
+    expect(forward.title).toBe('Nothing to go forward to');
 });
 
 it('K3: the scoped toolbar measures its fit and carries a short label for each wide control', async () => {
