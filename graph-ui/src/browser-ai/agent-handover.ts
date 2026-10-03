@@ -1,4 +1,4 @@
-import type { BrowserChatRuntime } from './browser-ai-runtime';
+import type { BrowserAiProgress, BrowserChatRuntime } from './browser-ai-runtime';
 
 /** A project switch stays in the page (K24): the window of the old project unmounts and the
  * window of the new one mounts in the same commit (app/project-windows.tsx). The chat dock
@@ -14,6 +14,28 @@ export interface AgentHandover {
     settled?: Promise<void>;
     /** A model that is still loading; the new dock finishes loading it. */
     ready?: Promise<void>;
+    /** How far that load got, and its later progress, for the dock that shows it now. */
+    progress?: LoadProgress;
+}
+
+/** The progress of a model load, shown by one dock at a time. The worker reports to the dock
+ * that started the load; after a switch the dock of the new project follows it instead, from
+ * the last value on, so a download still running neither stalls nor starts over in the view. */
+export interface LoadProgress {
+    readonly latest?: BrowserAiProgress;
+    report(value: BrowserAiProgress): void;
+    /** The dock that shows the progress from now on; the one before stops hearing of it. */
+    follow(listener: (value: BrowserAiProgress) => void): void;
+}
+
+export function loadProgress(): LoadProgress {
+    let latest: BrowserAiProgress | undefined;
+    let listener: ((value: BrowserAiProgress) => void) | undefined;
+    return {
+        get latest() { return latest; },
+        report(value) { latest = value; listener?.(value); },
+        follow(next) { listener = next; if (latest) next(latest); },
+    };
 }
 
 let offered: (() => AgentHandover | undefined) | undefined;

@@ -127,6 +127,30 @@ describe('the loaded model across an in-page project switch (K24)', () => {
         expect(states.at(-1)).toBe('active');
     });
 
+    it('shows the progress of a download still running at the switch, and its later progress, in the new project', async () => {
+        const { props, runtime, states } = fixture(); const loading = deferred<void>();
+        let report: (value: BrowserAiProgress) => void = () => {};
+        runtime.prepare.mockImplementationOnce(async (progress) => { report = progress; return loading.promise; });
+        props.isCached = vi.fn(async () => false);
+        await configure(props, 'django-demo');
+        await act(async () => button('Download & load').click());
+        await act(async () => report({ file: 'onnx/model_q4f16.onnx', progress: 40 }));
+        const bar = () => document.body.querySelector<HTMLProgressElement>('.cbm-chat-loading progress');
+        expect(bar()?.value).toBe(40);
+        await switchTo(props, 'cbm');
+        // The configuration of the new project shows how far the download got, not an empty bar.
+        await act(async () => root.render(dock({ ...props, settingsRequest: 1 }, 'cbm')));
+        expect(bar()?.value).toBe(40);
+        expect(document.body.querySelector('.cbm-chat-loading')?.textContent).toContain('onnx/model_q4f16.onnx');
+        await act(async () => report({ file: 'onnx/model_q4f16.onnx', progress: 75 }));
+        expect(bar()?.value).toBe(75);
+        await act(async () => loading.resolve());
+        expect(bar()).toBeNull();
+        expect(states.at(-1)).toBe('active');
+        expect(props.createRuntime).toHaveBeenCalledOnce();
+        expect(runtime.prepare).toHaveBeenCalledOnce();
+    });
+
     it('unloads the model when no dock takes it, and on an unmount that is not a switch', async () => {
         const first = fixture();
         await load(first.props, 'django-demo');
