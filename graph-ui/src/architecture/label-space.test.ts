@@ -59,7 +59,11 @@ describe('label space', () => {
         // Hovering a chip makes it the priority chip, which is not a reason to move the names around it.
         const hovered = placeSceneLabels(chips, folders, { ...options, priorityId: 'create' });
         expect(hovered.folders).toEqual(resting.folders);
-        expect(hovered.visible.has('create')).toBe(true);
+        // Nor to hide its neighbours: only a selected chip grows, a hovered one keeps its size (Hotspots: create hid label_for_field).
+        const crowded: SceneChip[] = [...chips, { id: 'label_for_field', x: 230, y: 132, width: 110, height: 24, measured: true }];
+        const calm = placeSceneLabels(crowded, [], options);
+        expect(calm.visible.size).toBe(3);
+        expect([...placeSceneLabels(crowded, [], { ...options, priorityId: 'create' }).visible].sort()).toEqual([...calm.visible].sort());
         // A selected chip opens its extra rows; the name gives way to it.
         expect(placeSceneLabels(chips, folders, { ...options, priorityId: 'create', selectedId: 'create' }).folders.get('contrib')).toBe(1);
     });

@@ -75,17 +75,19 @@ export interface SceneLabelOptions {
 /**
  * Chips first, in the given order with the priority chip in front: with
  * `cull` a chip that leaves the canvas or meets one placed before it hides.
- * The priority chip reserves the height of a selected chip (96 px). Folder
- * names then take the free corners (placeSecondaryLabels), placed around
- * the chips as they lie without the pointer: hovering a chip must not make
- * the names beside it jump to another corner and back.
+ * Only the selected chip reserves the 96 px its extra rows take; a hovered
+ * chip goes first but keeps its size, so hovering a shown chip hides none of
+ * its neighbours, and hovering a box reveals its hidden chip. Folder names
+ * then take the free corners (placeSecondaryLabels), placed around the chips
+ * as they lie without the pointer: hovering must not make the names beside a
+ * chip jump to another corner and back.
  */
 export function placeSceneLabels(chips: readonly SceneChip[], folders: readonly SecondaryLabel[], options: SceneLabelOptions): { visible: Set<string>; folders: Map<string, number> } {
     const place = (priorityId: string | undefined) => {
         const occupied: LabelRect[] = [], boxes: LabelRect[] = [], visible = new Set<string>();
         const ordered = [...chips].sort((a, b) => Number(b.id === priorityId) - Number(a.id === priorityId));
         for (const chip of ordered) {
-            const height = chip.id === priorityId ? 96 : chip.height;
+            const height = chip.id === options.selectedId ? 96 : chip.height;
             const rect = labelRect(chip.x, chip.y, chip.width, height, chip.measured ? options.inset : [-5, 0]);
             if (options.cull && chip.id !== priorityId && (rect.right < 0 || rect.left > options.width || rect.bottom < 0 || rect.top > options.height
                 || occupied.some(other => labelsCollide(rect, other)))) continue;
