@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { capField, UI_LOG_FIELD_MAX, UiLogBuffer } from './ui-log';
+import { capField, repeatCount, UI_LOG_FIELD_MAX, UiLogBuffer } from './ui-log';
 import type { UiLogPayload, UiLogTransport } from './ui-log';
 
 interface Timer {
@@ -169,6 +169,45 @@ describe('UiLogBuffer', () => {
         expect(posts.length).toBe(1);
         expect(posts[0]?.final).toBe(true);
         expect(timers.every((timer) => timer.cancelled)).toBe(true);
+    });
+
+    it('records a repeated identical entry once and counts the repeats instead of queueing each one', async () => {
+        const posts: UiLogPayload[] = [];
+        const buffer = new UiLogBuffer({ page: '/', session: 'repeats', schedule: () => 0, cancel: () => undefined, bufferMax: 200, batchMax: 200,
+            transport: { send: async (payload) => { posts.push(payload); return true; } } });
+        const clock = 'THREE.THREE.Clock: This module has been deprecated. Please use THREE.Timer instead.';
+        for (let i = 0; i < 25; i++) buffer.record('warn', 'console', clock, { project: 'cbm' });
+        buffer.record('warn', 'console', 'a different warning', { project: 'cbm' });
+        buffer.record('warn', 'console', clock, { project: 'django-demo' });
+        await buffer.flush();
+        const sent = posts.flatMap((post) => post.entries);
+        // The first one in full, one count at ten, and the same text in another project as its own first entry.
+        expect(sent.map((entry) => [entry.message === clock ? 'clock' : entry.message, entry.project, repeatCount(entry.detail)])).toEqual([
+            ['clock', 'cbm', undefined], ['clock', 'cbm', 10], ['a different warning', 'cbm', undefined], ['clock', 'django-demo', undefined]]);
+        // Leaving the page reports the exact total.
+        await buffer.flush(true);
+        expect(posts.at(-1)?.entries.map((entry) => [entry.project, repeatCount(entry.detail)])).toEqual([['cbm', 25]]);
+        expect(buffer.stats().sent).toBe(5);
+    });
+
+    it('counts only truly identical entries: the same message from another place or with another detail is sent in full', async () => {
+        const posts: UiLogPayload[] = [];
+        const buffer = new UiLogBuffer({ page: '/', session: 'places', schedule: () => 0, cancel: () => undefined, bufferMax: 200, batchMax: 200,
+            transport: { send: async (payload) => { posts.push(payload); return true; } } });
+        const typeError = "Uncaught TypeError: Cannot read properties of undefined (reading 'x')";
+        buffer.record('error', 'window', typeError, { project: 'cbm', url: 'a.js', line: 10, col: 3, stack: 'at A (a.js:10)' });
+        buffer.record('error', 'window', typeError, { project: 'cbm', url: 'b.js', line: 99, col: 7, stack: 'at B (b.js:99)' });
+        buffer.record('error', 'rpc', '/rpc query_graph: HTTP 500', { project: 'cbm', detail: 'body one' });
+        buffer.record('error', 'rpc', '/rpc query_graph: HTTP 500', { project: 'cbm', detail: 'body two' });
+        for (let i = 0; i < 11; i++) buffer.record('error', 'window', typeError, { project: 'cbm', url: 'b.js', line: 99, col: 7, stack: 'at B (b.js:99)' });
+        await buffer.flush(true);
+        const sent = posts.flatMap((post) => post.entries);
+        // Both places and both response bodies reach the log in full; the twelve from b.js:99 become one entry and its count.
+        expect(sent.map((entry) => [entry.source, entry.url ?? entry.detail?.split('\n').at(-1), entry.line, repeatCount(entry.detail)])).toEqual([
+            ['window', 'a.js', 10, undefined], ['window', 'b.js', 99, undefined], ['rpc', 'body one', undefined, undefined],
+            ['rpc', 'body two', undefined, undefined], ['window', 'b.js', 99, 10], ['window', 'b.js', 99, 12]]);
+        // A count names the place it counts, so System › Logs can put it beside its first entry.
+        expect(sent.at(-1)).toMatchObject({ url: 'b.js', line: 99, col: 7, stack: 'at B (b.js:99)' });
     });
 
     it('does not throw when the transport does', async () => {

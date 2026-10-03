@@ -67,3 +67,5 @@
 @media (max-width: 550px) { .system-metrics { grid-template-columns: 1fr; }.system-section { padding: 14px; }.system-heading-actions { gap: 8px; } }
 @media (max-width: 800px) { .system-layout { grid-template-columns: 134px minmax(0, 1fr); gap: 14px; }.system-tabs { padding-right: 9px; }.system-tabs button { padding: 11px 9px; font-size: 12px; }.system-metrics { grid-template-columns: 1fr; } }
 @media (max-width: 550px) { .system-workspace { padding: 14px 9px; }.system-layout { grid-template-columns: 112px minmax(0, 1fr); gap: 9px; }.system-tabs button { padding: 10px 5px; }.system-metrics article { padding: 13px; } }
+/* How often a combined message occurred; the tooltip names the time span. */
+.system-log-repeat { display: inline-block; padding: 0 6px; border: 1px solid currentColor; border-radius: 9px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.5; }

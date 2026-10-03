@@ -7,6 +7,7 @@ import {
 import type { ArchitectureView, ConfigStorage } from './architecture-model';
 import { architectureText as text } from './strings';
 import './architecture.css';
+import { scenePaletteStyle } from './scene-palette';
 import type { RepositoryMapProps } from './RepositoryMap';
 import SpatialArchitecture from './SpatialArchitecture';
 import RoutesArchitecture from './RoutesArchitecture';
@@ -110,6 +111,8 @@ function Findings({ view, data, empty, onNavigate }: {
     </section>;
 }
 
+const paletteStyle = scenePaletteStyle();
+
 function ArchitectureWorkspace({ projectName, overview, loading = false, error, onRefresh, onNavigate, graph, selectionPanel, onSelect, onClearSelection, onSelectionEvidence, graphNote, graphGeneration, active = true, coverage, systemArchitectureLoader }: ArchitecturePanelProps): JSX.Element {
     const storage = useMemo(browserStorage, []);
     // A filter is a search for this visit: one saved by an earlier session would silently hide routes.
@@ -126,7 +129,8 @@ function ArchitectureWorkspace({ projectName, overview, loading = false, error, 
     // Only the Routes view offers the filter, so no other view may receive a stale one.
     const filter = config.view === 'routes' ? config.filter : '';
     const setFilter = (value: string) => setConfig(current => ({ ...current, filter: value }));
-    return <section className="atlas-architecture" data-testid="atlas-architecture" data-system-view={systemView} aria-label={text.title} aria-busy={!systemView && loading}>
+    // Every scene below draws with the same palette; the DOM reads it as CSS variables.
+    return <section className="atlas-architecture" data-testid="atlas-architecture" data-system-view={systemView} aria-label={text.title} aria-busy={!systemView && loading} style={paletteStyle}>
         <nav className="atlas-arch-tabs" aria-label={text.navigation}>{ARCHITECTURE_VIEWS.map(view =>
             <button className="atlas-arch-tab" key={view} aria-pressed={config.view === view || (view === 'overview' && ['dependencies', 'entryPoints'].includes(config.view))} data-view={view}
                 onClick={() => { if (view !== config.view) onSelectionEvidence?.(undefined); setConfig(current => ({ ...current, view })); }}>{text.views[view]}</button>)}</nav>

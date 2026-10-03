@@ -199,4 +199,17 @@ describe('System workspace', () => {
         expect(record?.querySelector('time')?.dateTime).toBe('2026-09-09T12:00:00Z');
         expect(container.textContent).toContain('SQLite history');
     });
+    it('combines repeated identical frontend warnings into one line with a count', async () => {
+        const api = source();
+        const clock = 'THREE.THREE.Clock: This module has been deprecated. Please use THREE.Timer instead.';
+        const records = Array.from({ length: 120 }, (_, index) => ({ id: 100 + index, ts: '2026-10-03T16:05:22Z', level: 'warn', source: 'console', project: 'cbm',
+            message: JSON.stringify({ session: 'a31adcaf', seq: index + 2, level: 'warn', source: 'console', message: clock, project: 'cbm' }) }));
+        records.push({ id: 400, ts: '2026-10-03T16:06:00Z', level: 'error', source: 'rpc', project: 'cbm', message: JSON.stringify({ session: 'a31adcaf', seq: 300, level: 'error', source: 'rpc', message: '/rpc query_graph: Failed to fetch' }) });
+        api.logs = vi.fn().mockResolvedValue(readLogs({ lines: [], total: 121, persistent: true, retention_limit: 5000, generation: 'fixture', records }));
+        await render(api); await click('Logs');
+        const rows = [...container.querySelectorAll('.system-log-record')];
+        expect(rows.filter((row) => row.textContent?.includes('THREE.THREE.Clock'))).toHaveLength(1);
+        expect(rows.find((row) => row.textContent?.includes('THREE.THREE.Clock'))?.querySelector('.system-log-repeat')?.textContent).toBe('×120');
+        expect(rows.find((row) => row.textContent?.includes('Failed to fetch'))?.querySelector('.system-log-repeat')).toBeNull();
+    });
 });

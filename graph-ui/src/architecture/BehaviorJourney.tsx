@@ -134,7 +134,8 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
             <p>{path ? 'Follow one recorded call chain across the parts it touches.' : 'Choose a starting operation. Explore its calls, or follow a path to a destination.'}</p></div>
             <button onClick={onRefresh}>Refresh</button></header>
         <div className="behavior-requests">
-            <label>Start <select aria-label="Behavior entry point" value={entryId ?? ''} onChange={event => request(availableEntries.find(item => item.id === Number(event.target.value)))}>
+            {/* The field names the operation the journey shows, also when the projection chose it. */}
+            <label>Start <select aria-label="Behavior entry point" value={entry?.id ?? ''} onChange={event => request(availableEntries.find(item => item.id === Number(event.target.value)))}>
                 <option value="">Choose an operation…</option>{availableEntries.map(item => <option key={item.id} value={item.id}>{item.name} · {item.file_path ?? item.qualified_name}</option>)}
             </select></label>
             <label>Reach <select aria-label="Behavior destination" value={targetId ?? ''} disabled={!entry || pending} onChange={event => request(entry, event.target.value ? Number(event.target.value) : undefined)}>
@@ -144,7 +145,7 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
         <div className="behavior-navigation"><button disabled={!history.length} onClick={() => { const previous = history.at(-1)!; setHistory(items => items.slice(0, -1)); request(previous.entry, previous.targetId, false); }}>← Back</button>
             {targetId !== undefined && <button onClick={() => request(entry)}>Immediate calls</button>}
             <span>{pending ? 'Updating this journey…' : path ? `${path.edges.length} call-chain hops · ${new Set(path.nodes.map(item => item.component_id)).size} components`
-                : `${journey?.counts.directChoices ?? 0} direct callees with returned evidence`}</span>
+                : text.directCallees(journey?.counts.directChoices ?? 0, journey?.counts.selfCalls ?? false)}</span>
             <span className="behavior-static-badge" title="Graph relationships describe possible calls. They do not prove execution order, path feasibility or actual runtime values.">Static evidence</span>
         </div>
         {error && <p role="alert">{error} <button onClick={onRefresh}>Try again</button></p>}
@@ -169,7 +170,8 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
                     <input type="range" aria-label="Call-chain position" min={0} max={path.nodes.length - 1} value={activeStep} onChange={event => selectStep(Number(event.target.value))} />
                     <span>{activeStep + 1} / {path.nodes.length}</span><button disabled={activeStep >= path.nodes.length - 1} onClick={() => selectStep(activeStep + 1)}>Next →</button></nav>}
                 {!path && journey.scene.nodes.length > 5 && <nav className="behavior-walk" aria-label="Direct call pages"><button disabled={branchPage === 0} onClick={() => { setBranchPage(page => page - 1); setSelection(undefined); }}>← Earlier calls</button>
-                    <span>Calls {branchPage * 4 + 1} to {Math.min(branchPage * 4 + 4, journey.scene.nodes.length - 1)} of {journey.scene.nodes.length - 1} shown</span>
+                    <span>{text.callPage(branchPage * 4 + 1, Math.min(branchPage * 4 + 4, journey.scene.nodes.length - 1), journey.scene.nodes.length - 1,
+                        journey.counts.omittedNodes, Boolean(filter.trim()) && journey.scene.nodes.length - 1 + journey.counts.omittedNodes < journey.counts.directChoices)}</span>
                     <button disabled={(branchPage + 1) * 4 >= journey.scene.nodes.length - 1} onClick={() => { setBranchPage(page => page + 1); setSelection(undefined); }}>More calls →</button></nav>}
             </div><aside className="behavior-inspector" aria-label="Behavior evidence inspector">
                 {caller ? <><span className="system-eyebrow">{call ? call.type.replaceAll('_', ' ') : path ? `Operation ${activeStep + 1}` : 'Starting operation'}</span>

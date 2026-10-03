@@ -6,10 +6,17 @@ import { layoutContainers } from './container-layout';
 import { loadContainerInventory, loadContainerTopology, type ContainerReading, type ContainerSelection } from './container-source';
 import type { ServiceEvidence } from './container-topology';
 import { useSelectionEvidence, type SelectionEvidenceListener } from '../galaxy/selection-evidence';
+import { architectureText as text } from './strings';
 import './spatial-architecture.css';
 import './container-map.css';
 
-interface Props { project: string; generation?: string; active: boolean; filter: string; onNavigate: (path: string, line?: number) => void; onClearSelection?: () => void; onSelectionEvidence?: SelectionEvidenceListener }
+interface Props {
+    project: string; generation?: string; active: boolean; filter: string; onNavigate: (path: string, line?: number) => void; onClearSelection?: () => void; onSelectionEvidence?: SelectionEvidenceListener;
+    /** Leads from a project without deployment files to the routes it does have. */
+    onShowEndpoints?: () => void;
+}
+/** Reading the deployment inventory: a project without Compose files is an answer, not a failure. */
+type Discovery = keyof typeof text.serviceMap | undefined;
 class ContainerSceneBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
     state = { failed: false };
     static getDerivedStateFromError() { return { failed: true }; }
@@ -21,10 +28,10 @@ const relativeSource = (absolute: string, selection: ContainerSelection) => {
     return absolute.startsWith(prefix) ? absolute.slice(prefix.length) : undefined;
 };
 
-export default function ContainerMap({ project, generation, active, filter, onNavigate, onClearSelection, onSelectionEvidence }: Props) {
+export default function ContainerMap({ project, generation, active, filter, onNavigate, onClearSelection, onSelectionEvidence, onShowEndpoints }: Props) {
     const [available, setAvailable] = useState<ProjectEntry[]>([]);
     const [selections, setSelections] = useState<ContainerSelection[]>([]);
-    const [discovery, setDiscovery] = useState('Finding indexed Compose definitions…');
+    const [discovery, setDiscovery] = useState<Discovery>('reading');
     const [reading, setReading] = useState<{ key: string; result?: ContainerReading; error?: string }>();
     const [revision, setRevision] = useState(0);
     const [discoveryRevision, setDiscoveryRevision] = useState(0);
@@ -40,7 +47,7 @@ export default function ContainerMap({ project, generation, active, filter, onNa
     useEffect(() => {
         if (!active) return;
         const controller = new AbortController(), client = new RpcIntelligenceClient({ signal: controller.signal });
-        setDiscovery('Finding indexed Compose definitions…');
+        setDiscovery('reading');
         void client.listProjects().then(async response => {
             const projects = response.projects;
             const current = projects.find(entry => entry.name === project);
@@ -48,8 +55,8 @@ export default function ContainerMap({ project, generation, active, filter, onNa
             const inventory = await loadContainerInventory(current, client);
             if (controller.signal.aborted) return;
             setAvailable(projects); setSelections([{ inventory, manifest: inventory.manifests[0] ?? '' }]);
-            setDiscovery(inventory.manifests.length ? '' : 'No indexed Compose file was found. The Endpoints view is still available.');
-        }).catch(() => { if (!controller.signal.aborted) setDiscovery('Could not read the indexed deployment files. Refresh to try again.'); });
+            setDiscovery(inventory.manifests.length ? undefined : 'none');
+        }).catch(() => { if (!controller.signal.aborted) setDiscovery('failed'); });
         return () => controller.abort();
     }, [project, active, generation, discoveryRevision]);
     const selectionKey = JSON.stringify(selections.map(item => [item.inventory.project, item.manifest]));
@@ -107,7 +114,7 @@ export default function ContainerMap({ project, generation, active, filter, onNa
         try {
             const inventory = await loadContainerInventory(entry, new RpcIntelligenceClient());
             setSelections(current => current.some(item => item.inventory.project === name) ? current : [...current, { inventory, manifest: inventory.manifests[0] ?? '' }]);
-        } catch { setDiscovery('Could not read that project. Its index may be unavailable.'); }
+        } catch { setDiscovery('compareFailed'); }
         finally { setAdding(false); }
     };
     const evidenceButton = (evidence: ServiceEvidence, index: number) => <button key={`${evidence.project}:${evidence.path}:${evidence.line}:${index}`} onClick={() => inspect(evidence)}>
@@ -143,7 +150,8 @@ export default function ContainerMap({ project, generation, active, filter, onNa
         <div className="spatial-controls"><nav aria-label="Service navigation"><button onClick={clearSelection}>All services</button>{focus && <span> / {servicesById.get(focus)?.name} and neighbors</span>}</nav>
             <div className="container-edge-key"><span><i className="container-call-key" />Calls</span><label><input type="checkbox" checked={configured} onChange={event => setConfigured(event.target.checked)} />Configured destinations</label>
                 <label><input type="checkbox" checked={startup} onChange={event => setStartup(event.target.checked)} />Startup dependencies</label></div></div>
-        {discovery && <p role="status" className="spatial-notice">{discovery}</p>}
+        {discovery && <div role="status" className="spatial-notice container-discovery" data-discovery={discovery}><p>{text.serviceMap[discovery]}</p>
+            {discovery === 'none' && onShowEndpoints && <button className="spatial-primary" onClick={onShowEndpoints}>{text.showEndpoints}</button>}</div>}
         {!discovery && selections.length > 0 && !selections.some(selection => selection.manifest) && <p className="spatial-notice">Select a Compose file to show its declared services.</p>}
         {reading?.key === key && !result && <p role="status" className="spatial-notice">{reading.error ?? 'Reading deployment definitions and bounded source evidence…'}</p>}
         {graph && topology && <><div className="spatial-map-layout"><div className="spatial-map">

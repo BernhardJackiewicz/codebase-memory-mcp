@@ -47,6 +47,19 @@ it('returns from a file symbol to the repository map on empty background', async
     expect(host.textContent).not.toContain('Analyze selected symbol');
     expect(clear).toHaveBeenCalledOnce();
 });
+it('summarizes the opened area in the inspector instead of the whole repository', async () => {
+    const nested: GraphData = { nodes: [{ ...node, file_path: 'django/contrib/admin/options.py' }, { ...node, id: 2, name: 'render', qualified_name: 'sample.render', file_path: 'django/shortcuts.py' },
+        { ...node, id: 3, name: 'setup', qualified_name: 'sample.setup', file_path: 'setup.py' }], edges: [], total_nodes: 3 };
+    await act(async () => root.render(<SpatialArchitecture project="sample" graph={nested} overview={overview} view="overview" filter="" active onNavigate={vi.fn()} onView={vi.fn()} />));
+    const inspector = () => host.querySelector('[aria-label="Architecture inspector"]');
+    expect(inspector()?.querySelector('h3')?.textContent).toBe('3 files');
+    await click('django'); await click('Open area →');
+    // Nothing is selected inside the opened area: the column speaks about django (2 of the 3 files), not the repository.
+    expect(inspector()?.querySelector('.spatial-eyebrow')?.textContent).toBe('Opened area');
+    expect(inspector()?.querySelector('h3')?.textContent).toBe('django');
+    expect(inspector()?.textContent).toContain('2 files');
+    expect(inspector()?.textContent).not.toContain('3 files');
+});
 it('opens nested areas level by level and walks back through the location trail', async () => {
     const nested: GraphData = { nodes: [{ ...node, file_path: 'django/contrib/admin/options.py' }, { ...node, id: 2, name: 'render', qualified_name: 'sample.render', file_path: 'django/shortcuts.py' }], edges: [], total_nodes: 2 };
     await act(async () => root.render(<SpatialArchitecture project="sample" graph={nested} overview={overview} view="overview" filter="" active onNavigate={vi.fn()} onView={vi.fn()} />));

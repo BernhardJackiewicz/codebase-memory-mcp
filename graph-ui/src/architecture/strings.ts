@@ -80,4 +80,20 @@ export const architectureText = {
     behaviorLimited: 'The analysis returned no call evidence.',
     includeTestRoutes: (hidden: number) => hidden ? `Include test routes (${hidden.toLocaleString()} hidden)` : 'Include test routes',
     showRoutes: (count: number) => `Show these ${count.toLocaleString()} routes →`,
+    /** Routes › Service map: what the deployment inventory read found. */
+    serviceMap: {
+        reading: 'Finding indexed Compose definitions…',
+        none: 'No Docker Compose deployment files were found in this index. Endpoints shows the routes.',
+        failed: 'Could not read the indexed deployment files. Refresh to try again.',
+        compareFailed: 'Could not read that project. Its index may be unavailable.',
+    },
+    showEndpoints: 'Show endpoints →',
+    /** Behavior: the callees of the start operation; a call to itself is named, not counted. */
+    directCallees: (count: number, selfCalls: boolean) => `${count.toLocaleString()} direct callees with returned evidence${selfCalls ? ' · also calls itself' : ''}`,
+    /** Behavior: the page of direct calls, the same calls the "direct callees" count names. */
+    callPage: (from: number, to: number, drawn: number, beyond: number, filtered: boolean) => `Calls ${from} to ${to} of ${drawn.toLocaleString()}${filtered ? ' matching the filter' : ''}${beyond ? ` · ${beyond.toLocaleString()} more beyond the display limit` : ''}`,
+    openedArea: 'Opened area',
+    openedFile: 'Opened file',
+    scopeMeasure: (files: number, lines?: number) => `${files.toLocaleString()} files · ${lines === undefined ? 'unknown' : lines.toLocaleString()} indexed lines`,
+    openedScopeHint: 'Select a part or connection to inspect it. The location above leads back to the repository.',
 };

@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { reportError } from '../provider/error-observer';
-import { UiLogBuffer } from './ui-log';
+import { repeatCount, UiLogBuffer } from './ui-log';
 import type { UiLogPayload } from './ui-log';
 import { describeArgs, installUiLog, safeStringify } from './ui-log-install';
 import type { UiLogHandle } from './ui-log-install';
@@ -209,5 +209,29 @@ describe('httpUiLogTransport', () => {
             fetch: (() => Promise.reject(new Error('down'))) as unknown as typeof globalThis.fetch,
         });
         expect(await failing.send({ page: '/', session: 's', entries: [] }, false)).toBe(false);
+    });
+
+    it('sends 120 identical console warnings through the transport as one entry with a count', async () => {
+        const bodies: UiLogPayload[] = [];
+        const fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => { bodies.push(JSON.parse(String(init?.body))); return new Response('{}'); });
+        const beaconed: Promise<void>[] = [];
+        const beacon = vi.fn((_url: string, body: Blob) => { beaconed.push(new Promise<string>((resolve) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.readAsText(body); }).then((text) => { bodies.push(JSON.parse(text)); })); return true; });
+        const buffer = new UiLogBuffer({ page: '/?project=cbm', session: 'three', transport: httpUiLogTransport({ fetch: fetch as typeof globalThis.fetch, beacon }),
+            schedule: () => 0, cancel: () => undefined, bufferMax: 200, batchMax: 200 });
+        const printed: unknown[] = [];
+        const fakeConsole = { debug: () => undefined, log: () => undefined, info: () => undefined, error: () => undefined,
+            warn: (...args: unknown[]) => printed.push(args[0]) } as unknown as Console;
+        handle = installUiLog({ buffer, console: fakeConsole, session: 'three', getProject: () => 'cbm' });
+        const clock = 'THREE.THREE.Clock: This module has been deprecated. Please use THREE.Timer instead.';
+        for (let i = 0; i < 120; i++) fakeConsole.warn(clock);
+        await buffer.flush();
+        window.dispatchEvent(new Event('pagehide'));
+        await vi.waitFor(() => expect(beaconed).toHaveLength(1));
+        await Promise.all(beaconed);
+        // The console still prints every call; the server gets the first in full and the counts.
+        expect(printed).toHaveLength(120);
+        const posted = bodies.flatMap((body) => body.entries).filter((entry) => entry.message === clock);
+        expect(posted.map((entry) => repeatCount(entry.detail) ?? 1)).toEqual([1, 10, 100, 120]);
+        expect(beacon).toHaveBeenCalledOnce();
     });
 });

@@ -490,7 +490,9 @@ describe('system architecture workspace', () => {
         expect(loader.mock.calls[1][0]).toEqual({ project: 'sample', entryNodeId: 2, expectedGeneration: 'analysis-g1', includeBehaviorEvidence: true });
         expect(loader.mock.calls[2][0]).toEqual({ project: 'sample', entryNodeId: undefined, includeBehaviorEvidence: true });
         expect(loader).toHaveBeenCalledTimes(3);
-        expect(container.querySelector<HTMLSelectElement>('[aria-label="Behavior entry point"]')?.value).toBe('');
+        // The stale choice is dropped; the Start field names the operation the reopened journey shows.
+        expect(container.querySelector('.behavior-heading h2')?.textContent).toBe('What can start call?');
+        expect(container.querySelector<HTMLSelectElement>('[aria-label="Behavior entry point"]')?.value).toBe('1');
         expect(container.textContent).not.toContain('Entry snapshot changed.');
     });
     it('opens exact source witnesses and synchronizes selection by qualified name', async () => {

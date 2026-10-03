@@ -7,6 +7,8 @@ import { useEdgeMotion } from './edge-motion';
 export interface EdgePulsePath {
     id: string | number; type: string; types?: readonly string[];
     points: readonly { x: number; y: number; z: number }[]; opacity?: number;
+    /** The colour the view drew the line in, when it is not the hue of its type. */
+    color?: string;
 }
 
 /** A full arrow is 1.65 times this scale in CSS pixels. Smaller embedded views
@@ -28,7 +30,7 @@ export function edgePulseGeometry(paths: readonly EdgePulsePath[]): BufferGeomet
         }
         const total = distances.at(-1)!;
         if (!total) continue;
-        const color = new Color(edgeColor(path.type, path.types)), phase = edgePhase(path.id);
+        const color = new Color(path.color ?? edgeColor(path.type, path.types)), phase = edgePhase(path.id);
         for (let i = 1; i < path.points.length; i++) for (const index of [i - 1, i]) {
             const point = path.points[index];
             positions.push(point.x, point.y, point.z); colors.push(color.r, color.g, color.b);
@@ -57,7 +59,7 @@ export function edgeArrowGeometry(paths: readonly EdgePulsePath[]): BufferGeomet
         }
         const total = distances.at(-1)!;
         if (!total) continue;
-        const color = new Color(edgeColor(path.type, path.types));
+        const color = new Color(path.color ?? edgeColor(path.type, path.types));
         for (let i = 1; i < path.points.length; i++) {
             if (distances[i] === distances[i - 1]) continue;
             const a = path.points[i - 1], b = path.points[i];
