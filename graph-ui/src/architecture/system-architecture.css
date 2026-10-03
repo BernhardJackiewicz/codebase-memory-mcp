@@ -4,7 +4,8 @@
 .atlas-architecture[data-system-view] .atlas-arch-heading h1 { font-size: 24px; line-height: 1.2; margin: 0 0 5px; }
 .atlas-architecture[data-system-view] .atlas-arch-heading p { margin: 0; font-size: 12px; }
 .atlas-architecture[data-system-view] .atlas-arch-project { display: none; }
-.atlas-architecture[data-system-view] .atlas-arch-tabs { margin-bottom: 10px; gap: 5px; }
+.atlas-architecture[data-system-view] .atlas-arch-tabrow { margin-bottom: 10px; }
+.atlas-architecture[data-system-view] .atlas-arch-tabs { gap: 5px; }
 .atlas-architecture[data-system-view] .atlas-arch-tab { padding: 7px 10px; }
 .atlas-architecture[data-system-view] .atlas-arch-toolbar { margin-bottom: 12px; gap: 8px; }
 .system-toolbar, .system-reading-status, .system-map-caption { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: space-between; }

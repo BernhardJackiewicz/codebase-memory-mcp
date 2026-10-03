@@ -1,11 +1,18 @@
-# PR 2068: Galaxy back and forward (K2)
+# PR 2068: back and forward in Galaxy (K2) and Architecture (K27)
+
+Both workspaces share one bounded history model and one set of rules, and each
+keeps its own history. Galaxy came first and is described first; the section
+"Architecture (K27)" lists what an Architecture entry holds and the few rules
+Architecture adds.
+
+## Galaxy (K2)
 
 Hand test finding K2: a click on a node makes it the new root, and the only way
 out is "All graph". This note fixes the concept before the code. K9 belongs to
 it: a click on empty canvas no longer leaves the scope, so Back is the way to
 undo a step.
 
-## What an entry is
+### What an entry is
 
 One entry is the complete question the Galaxy workspace answers at that moment:
 
@@ -26,7 +33,7 @@ and nothing grows with the session.
 "All graph" is an entry like any other, so Back after "All graph" returns to
 the scope that was open before.
 
-## Rules
+### Rules
 
 1. **Bounded.** At most 25 entries. A push beyond that drops the oldest entry.
 2. **Consecutive duplicates merge.** An entry equal to the current one (same
@@ -62,12 +69,11 @@ the scope that was open before.
     cancelled layer) keeps the selection, so Selection details and the chat
     context stay.
 
-## Where it lives
+### Where it lives
 
 - `graph-ui/src/graph/navigation-history.ts`: the generic, pure model
-  (`push`, `back`, `forward`, `recent`) over any entry with a key function. K27
-  (Architecture back and forward) is meant to reuse this module rather than
-  write a second one.
+  (`push`, `back`, `forward`, `recent`) over any entry with a key function.
+  Architecture (K27) uses the same module, see below.
 - `graph-ui/src/galaxy/scope-history.ts`: the Galaxy entry, its key and the
   tooltips that name a target ("Back to JSONBAgg · 2 layers").
 - `GalaxyPanel.tsx`: derives the current entry from its state, pushes it when it
@@ -75,10 +81,103 @@ the scope that was open before.
   Back and Forward buttons with disabled states and the Recent list in the
   scoped toolbar.
 
-## Not in scope
+### Not in scope
 
 - No breadcrumb of the whole chain. The tooltips name the Back and Forward
   targets, and the Recent list names the roots; a breadcrumb would cost the one
   toolbar row that K3 asks for.
 - No persistence across reloads. A reload starts with an empty history, the same
   as a new browser tab.
+
+## Architecture (K27)
+
+Hand test finding K27: Architecture had several ways back that meant different
+things. Overview had its location trail ("django-demo / django"), System
+structure had a "← Back" that walked the focus, Behavior had a "← Back" that
+walked the starts, and "Show these N routes" had no way back at all. Nothing
+went forward. Architecture now uses the same model (`navigation-history.ts`)
+and the same rules as Galaxy, with a history of its own.
+
+### What an entry is
+
+One entry is the place the workspace shows: the subtab and what that subtab
+has opened.
+
+| Field | Meaning |
+|---|---|
+| `view` | The subtab: Overview (Structure, or Entry points as its mode), Routes, Hotspots, System structure or Behavior. |
+| `spatial` | Overview, Entry points, Hotspots and Endpoints draw one map: the opened area (`areaPath`) or file (`filePath`), the hotspot area, and Plan or 3D (`planar`). |
+| `routes` | The Routes perspective: Service map or Endpoints. |
+| `filter` | The Routes filter. An opened route group ("Show these N routes") is that filter. |
+| `system.focus`, `system.expanded` | The System structure focus and the expanded groups. |
+| `system.behavior` | The Behavior start, the destination ("Reach") and, after a followed call (double-click, "Follow calls from here"), the start the hops began from. |
+| `system.shown` | The start Behavior shows when none was requested (the server picks one, or the first entry point), so a tooltip can name it. |
+
+The entry holds identities and names, never projections, scenes or cameras.
+Its key covers only what the current subtab shows: a field another subtab holds
+does not split a step, and the names are there for the tooltips only. The
+Behavior start is the numeric identity of one analysis snapshot and stays
+guarded by its generation, as before.
+
+### Rules
+
+All Galaxy rules apply: at most 25 entries, consecutive duplicates merge, a new
+navigation after Back drops the forward branch, no `pushState` per step, a
+Recent list of the last 8 distinct places that is independent of the cursor,
+Alt+Left and Alt+Right neither while typing nor while another surface takes the
+keys, and a fresh history per project (the workspace remounts per project).
+Architecture adds:
+
+1. **One Back.** Back, Forward and Recent sit beside the subtabs and serve the
+   whole workspace. The "← Back" buttons in System structure and Behavior stay
+   where users know them and take the same step, with the same tooltip; there
+   is no second, local meaning of Back. "Whole system" stays as a way to the
+   top, and the Overview location trail stays; both are ordinary steps.
+2. **Separate from Galaxy.** Galaxy and Architecture each keep their own
+   history, and Alt+Left and Alt+Right act only in the active workspace.
+3. **Typing is one step.** Typing in the Routes filter becomes a step once it
+   pauses (600 ms), not one step per key. A navigation while typing first
+   records what the field showed. Back or Forward while typing drops the text
+   that is not a step yet.
+4. **The page's own choices are no steps.** What the page sets by itself (the
+   suggested Behavior start such as `main`, a reset after reindexing) replaces
+   the current step (`replaceNavigation`). As a step of its own, Back would land
+   on an empty Behavior, the page would pick `main` again, and Back would never
+   get past it.
+5. **Followed calls.** A followed call is a new start that remembers where the
+   hops began. Empty background returns there, as it did before, and that is a
+   step too.
+6. **Tooltips name the target**, for example "Back to Overview · django",
+   "Forward to Routes · Endpoints · /edit" or "Back to Behavior · get_autocommit
+   · followed from handle".
+7. **The current step keeps its newest details.** A change that leaves the key
+   alone (a name known only later, a field another subtab holds) updates the
+   current entry in place (`refreshNavigation`) instead of adding a step. On
+   django-demo the suggested `main` is rejected once for a stale analysis
+   snapshot, the start is reset, and the journey shows `main` on its own; the
+   step is still named "Behavior · main".
+
+### Where it lives
+
+- `graph-ui/src/graph/navigation-history.ts`: the shared model, with
+  `replaceNavigation` for rule 4 and `refreshNavigation` for rule 7.
+- `graph-ui/src/architecture/architecture-history.ts`: the Architecture entry,
+  its key, its recent place and the labels for tooltips and the Recent list.
+- `graph-ui/src/architecture/use-architecture-history.ts`: the place as state,
+  pushing on a new key, restoring without a push, the filter pause and the keys.
+- `ArchitecturePanel.tsx` holds the place and shows Back, Forward and Recent.
+  `SpatialArchitecture`, `RoutesArchitecture`, `SystemArchitecture` and
+  `BehaviorJourney` read their part of the place and report changes back
+  (`lifted-place.ts`). Rendered on their own, as in their unit tests, they keep
+  that part as their own state and offer no Back.
+- Tests: `architecture-history.test.ts` (entry, key, labels),
+  `ArchitecturePanel.history.test.tsx` (the wiring) and the browser run
+  `graph-ui/tools/handtest-fixes-k27.mjs` on django-demo and cbm.
+
+### Not in scope
+
+- Not steps: the Plan or 3D switch in System structure and Behavior, the Entry
+  points start and call depth, selections, the path and step within a call
+  chain, paging, the relationship filters and the camera.
+- No persistence across reloads. As before, only the subtab is remembered per
+  project.

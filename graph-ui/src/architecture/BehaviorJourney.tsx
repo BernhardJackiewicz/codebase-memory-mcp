@@ -1,7 +1,8 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { behaviorJourney } from './behavior-journey-model';
 import { projectionLimits, type SystemSceneModel } from './system-architecture-model';
-import { architectureText as text } from './strings';
+import { architectureHistoryText as historyText, architectureText as text } from './strings';
+import type { SharedBack } from './architecture-history';
 import type { SystemProjection, SystemSymbol } from './system-architecture-source';
 import BehaviorSourceEvidence, { type BehaviorSourceSnapshot } from './BehaviorSourceEvidence';
 import { useSelectionEvidence, type SelectionEvidenceListener } from '../galaxy/selection-evidence';
@@ -12,12 +13,21 @@ export interface BehaviorJourneyProps {
     project: string; generation?: string; data?: SystemProjection; entries: SystemSymbol[];
     targets: (SystemSymbol & { distance: number })[]; entryId?: number; targetId?: number;
     active: boolean; pending: boolean; error?: string; filter: string;
-    onRequest: (entry: SystemSymbol | undefined, targetId?: number) => void;
+    onRequest: (entry: SystemSymbol | undefined, targetId?: number, detail?: BehaviorRequestDetail) => void;
+    /** The start the followed calls began from (K27); empty background returns there. */
+    from?: SystemSymbol;
+    /** The shared Architecture Back; without it the journey offers no Back of its own. */
+    back?: SharedBack;
+    /** Reports the start shown when none was requested, so a Back or Forward tooltip can name it (K27). */
+    onShownStart?: (name: string) => void;
     onClearSelection?: () => void;
     onSelectionEvidence?: SelectionEvidenceListener;
     onRefresh: () => void; onSelectSymbol: (symbol: SystemSymbol) => void;
     onNavigate: (path: string, line?: number, name?: string) => void;
 }
+
+/** What a request carries besides start and destination: where followed calls began, and the destination's name. */
+export interface BehaviorRequestDetail { from?: SystemSymbol; targetName?: string }
 
 /** Overlapping windows keep every operation legible and retain actual call adjacency. */
 export function journeyPage(scene: SystemSceneModel, step: number, choices = false, pathWindow = 5): SystemSceneModel {
@@ -38,18 +48,16 @@ export function journeyPage(scene: SystemSceneModel, step: number, choices = fal
 }
 
 export default function BehaviorJourney({ project, generation, data, entries, targets, entryId, targetId, active, pending, error, filter,
-    onRequest, onRefresh, onSelectSymbol, onNavigate, onClearSelection, onSelectionEvidence }: BehaviorJourneyProps) {
+    onRequest, onRefresh, onSelectSymbol, onNavigate, onClearSelection, onSelectionEvidence, from, back, onShownStart }: BehaviorJourneyProps) {
     const [pathIndex, setPathIndex] = useState(0), [step, setStep] = useState(0);
     const [branchPage, setBranchPage] = useState(0);
     const [overview, setOverview] = useState(false);
     const [selection, setSelection] = useState<{ node?: string; edge?: string }>();
     const [planar, setPlanar] = useState(false), [resetKey, setResetKey] = useState(0);
-    const [history, setHistory] = useState<{ entry: SystemSymbol; targetId?: number }[]>([]);
     const visual = useRef<HTMLDivElement>(null);
     const [pathWindow, setPathWindow] = useState(5);
     const [sourceEvidence, setSourceEvidence] = useState<BehaviorSourceSnapshot>();
     useEffect(() => { setSelection(undefined); setPathIndex(0); setStep(0); setBranchPage(0); }, [project, generation, entryId, targetId, filter]);
-    useEffect(() => { setHistory([]); }, [project, generation]);
     const journey = useMemo(() => data ? behaviorJourney(data, { entryId, targetId, pathIndex, filter }) : undefined,
         [data, entryId, targetId, pathIndex, filter]);
     const path = journey?.path;
@@ -78,6 +86,10 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
         .filter(item => item.id !== (entryId ?? journey?.entry?.id)).map(item => [item.id, item])).values()];
     const entry = journey?.entry ?? entries.find(item => item.id === entryId);
     const availableEntries = entry && !entries.some(item => item.id === entry.id) ? [entry, ...entries] : entries;
+    const reportShown = useRef(onShownStart);
+    reportShown.current = onShownStart;
+    const shownStart = entryId === undefined && !pending ? entry?.name : undefined;
+    useEffect(() => { if (shownStart !== undefined) reportShown.current?.(shownStart); }, [shownStart]);
     const selectedTarget = targetOptions.find(item => item.id === targetId) ?? path?.nodes.at(-1);
     const limits = data?.status === 'limited' ? projectionLimits(data) : [];
     const sourceKey = caller ? JSON.stringify([project, generation, caller.qualified_name, call?.callsite?.file_path ?? caller.file_path, call?.callsite?.line ?? caller.start_line]) : undefined;
@@ -92,16 +104,22 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
         limitations: { analysis: data?.limits, warnings: data?.warnings, journey: journey.limits, counts: journey.counts,
             interpretation: 'Static call evidence only. Call-chain depth is not execution order. Branch feasibility, parameter binding, runtime values and data transformation are not established.' },
     } : undefined, active);
+    /** Empty background leaves a destination and returns from followed calls to where they began. */
     function clearSelection() {
-        const origin = history[0]?.entry ?? entry;
-        setOverview(true); setSelection(undefined); setStep(0); setBranchPage(0); setPathIndex(0); setHistory([]);
+        const origin = from ?? entry;
+        setOverview(true); setSelection(undefined); setStep(0); setBranchPage(0); setPathIndex(0);
         setResetKey(value => value + 1); onClearSelection?.();
-        if (history.length || targetId !== undefined) onRequest(origin);
+        if (from || targetId !== undefined) onRequest(origin, undefined, {});
     }
-    function request(next: SystemSymbol | undefined, destination?: number, remember = true) {
+    /**
+     * Every request is a step of the shared Architecture history (K27). `origin` is where followed calls began:
+     * kept for a destination and for further hops, dropped for a start picked in the field.
+     */
+    function request(next: SystemSymbol | undefined, destination?: number, origin?: SystemSymbol) {
         setOverview(false);
-        if (remember && entry) setHistory(items => [...items.slice(-19), { entry, targetId }]);
-        setSelection(undefined); setStep(0); setPathIndex(0); onRequest(next, destination);
+        setSelection(undefined); setStep(0); setPathIndex(0);
+        const targetName = destination === undefined ? undefined : targetOptions.find(item => item.id === destination)?.name;
+        onRequest(next, destination, { ...(origin && origin.id !== next?.id ? { from: origin } : {}), ...(targetName ? { targetName } : {}) });
     }
     function selectNode(id: string) {
         setOverview(false);
@@ -126,7 +144,7 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
     }
     function follow(id: string) {
         const operation = allNodes.find(node => node.id === id)?.symbol;
-        if (operation && operation.id !== entryId) request(operation);
+        if (operation && operation.id !== entryId) request(operation, undefined, from ?? entry);
     }
     return <section className="system-architecture behavior-journey" aria-label="Behavior" data-testid="behavior-journey" aria-busy={pending}>
         <header className="behavior-heading"><div><span className="system-eyebrow">Behavior · source-guided exploration</span>
@@ -138,12 +156,12 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
             <label>Start <select aria-label="Behavior entry point" value={entry?.id ?? ''} onChange={event => request(availableEntries.find(item => item.id === Number(event.target.value)))}>
                 <option value="">Choose an operation…</option>{availableEntries.map(item => <option key={item.id} value={item.id}>{item.name} · {item.file_path ?? item.qualified_name}</option>)}
             </select></label>
-            <label>Reach <select aria-label="Behavior destination" value={targetId ?? ''} disabled={!entry || pending} onChange={event => request(entry, event.target.value ? Number(event.target.value) : undefined)}>
+            <label>Reach <select aria-label="Behavior destination" value={targetId ?? ''} disabled={!entry || pending} onChange={event => request(entry, event.target.value ? Number(event.target.value) : undefined, from)}>
                 <option value="">Explore immediate calls</option>{targetOptions.map(item => <option key={item.id} value={item.id}>{item.name} · {item.file_path ?? ''}</option>)}
             </select></label>
         </div>
-        <div className="behavior-navigation"><button disabled={!history.length} onClick={() => { const previous = history.at(-1)!; setHistory(items => items.slice(0, -1)); request(previous.entry, previous.targetId, false); }}>← Back</button>
-            {targetId !== undefined && <button onClick={() => request(entry)}>Immediate calls</button>}
+        <div className="behavior-navigation">{back && <button disabled={!back.target} title={back.target ? historyText.backTo(back.target) : historyText.noBack} onClick={back.onBack}>{historyText.inViewBack}</button>}
+            {targetId !== undefined && <button onClick={() => request(entry, undefined, from)}>Immediate calls</button>}
             <span>{pending ? 'Updating this journey…' : path ? `${path.edges.length} call-chain hops · ${new Set(path.nodes.map(item => item.component_id)).size} components`
                 : text.directCallees(journey?.counts.directChoices ?? 0, journey?.counts.selfCalls ?? false)}</span>
             <span className="behavior-static-badge" title="Graph relationships describe possible calls. They do not prove execution order, path feasibility or actual runtime values.">Static evidence</span>
@@ -179,7 +197,7 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
                     <p>{call && callee ? caller.component_id === callee.component_id ? 'A call within the same component.' : `Crosses from ${components.get(caller.component_id)?.label ?? caller.component_id} into ${components.get(callee.component_id)?.label ?? callee.component_id}.`
                         : components.get(caller.component_id)?.label ?? caller.file_path}</p>
                     {call?.resolution && <p className="behavior-resolution">{call.resolution.strategy?.replaceAll('_', ' ') ?? 'Indexed resolution'}{call.resolution.candidates && call.resolution.candidates > 1 ? ` · ${call.resolution.candidates} candidate targets` : ''}</p>}
-                    <div className="behavior-inspector-actions">{symbol && symbol.id !== entryId && <button onClick={() => request(symbol)}>Follow calls from here</button>}
+                    <div className="behavior-inspector-actions">{symbol && symbol.id !== entryId && <button onClick={() => request(symbol, undefined, from ?? entry)}>Follow calls from here</button>}
                         {symbol?.file_path && <button onClick={() => onNavigate(symbol.file_path!, symbol.start_line, symbol.name)}>Open definition ↗</button>}</div>
                     <div className="behavior-contract" aria-label="Indexed call contract">
                         {call?.arguments && <section><h4>Passed expressions</h4>{call.arguments.length ? <ol>{call.arguments.map((argument, index) => <li key={`${argument.i}:${index}`}><code>{argument.e}</code>

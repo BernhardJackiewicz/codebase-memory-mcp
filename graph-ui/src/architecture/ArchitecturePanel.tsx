@@ -1,11 +1,17 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX, ReactNode } from 'react';
 import type { ArchitectureHotspot, ArchitectureOverviewDto } from '../core/intelligence-provider';
 import {
     ARCHITECTURE_VIEWS, readArchitectureConfig, saveArchitectureConfig,
 } from './architecture-model';
 import type { ArchitectureView, ConfigStorage } from './architecture-model';
-import { architectureText as text } from './strings';
+import { architectureHistoryText as historyText, architectureText as text } from './strings';
+import { peekNavigation, type NavigationHistory } from '../graph/navigation-history';
+import {
+    architectureEntryDetail, architectureEntryLabel, architectureEntryName, architectureHistoryOptions, initialArchitecturePlace,
+    type ArchitectureHistoryEntry, type PlaceChange, type RoutesPerspective, type SharedBack, type SpatialPlace, type SystemPlace,
+} from './architecture-history';
+import { useArchitectureHistory } from './use-architecture-history';
 import './architecture.css';
 import { scenePaletteStyle } from './scene-palette';
 import type { RepositoryMapProps } from './RepositoryMap';
@@ -21,6 +27,8 @@ export interface ArchitecturePanelProps extends Pick<RepositoryMapProps, 'graph'
     projectName: string;
     graphGeneration?: string;
     active?: boolean;
+    /** Another surface (help, settings, a dialog) takes the keys: Alt+Left and Alt+Right stay with it. */
+    escapeTaken?: boolean;
     coverage?: CoverageIndex;
     overview?: ArchitectureOverviewDto;
     loading?: boolean;
@@ -113,48 +121,112 @@ function Findings({ view, data, empty, onNavigate }: {
 
 const paletteStyle = scenePaletteStyle();
 
-function ArchitectureWorkspace({ projectName, overview, loading = false, error, onRefresh, onNavigate, graph, selectionPanel, onSelect, onClearSelection, onSelectionEvidence, graphNote, graphGeneration, active = true, coverage, systemArchitectureLoader }: ArchitecturePanelProps): JSX.Element {
+/**
+ * Back, Forward and the Recent list for the whole workspace (K27). The
+ * tooltips name the target ("Back to Overview · django"); the list holds the
+ * last distinct places, newest first, and the current one is not a target.
+ */
+function HistoryControls({ history, place, onGo, onJump }: {
+    history: NavigationHistory<ArchitectureHistoryEntry>; place: ArchitectureHistoryEntry;
+    onGo: (step: -1 | 1) => void; onJump: (entry: ArchitectureHistoryEntry) => void;
+}): JSX.Element {
+    const back = peekNavigation(history, -1), forward = peekNavigation(history, 1);
+    const here = architectureHistoryOptions.recentKey?.(place);
+    return <div className="atlas-arch-history" role="group" aria-label={historyText.group} data-position={`${history.index + 1}/${history.entries.length}`}>
+        <button type="button" aria-label={historyText.back} disabled={!back} onClick={() => onGo(-1)}
+            title={back ? historyText.backTo(architectureEntryLabel(back)) : historyText.noBack}>{historyText.backGlyph}</button>
+        <button type="button" aria-label={historyText.forward} disabled={!forward} onClick={() => onGo(1)}
+            title={forward ? historyText.forwardTo(architectureEntryLabel(forward)) : historyText.noForward}>{historyText.forwardGlyph}</button>
+        {history.recent.length > 1 && <details className="atlas-arch-recent" onKeyDown={event => {
+            if (event.key === 'Escape') { event.stopPropagation(); event.currentTarget.open = false; }
+        }}>
+            <summary title={historyText.recentTitle} aria-label={historyText.recent}>{historyText.recentGlyph}</summary>
+            <ul className="atlas-arch-recent-menu" aria-label={historyText.recentList}>{history.recent.map(entry => {
+                const id = architectureHistoryOptions.recentKey?.(entry);
+                const current = id === here;
+                const detail = architectureEntryDetail(entry);
+                return <li key={id}>
+                    <button type="button" disabled={current} aria-current={current ? 'true' : undefined} title={architectureEntryLabel(entry)} onClick={event => {
+                        const details = event.currentTarget.closest('details');
+                        if (details) details.open = false;
+                        onJump(entry);
+                    }}><strong>{architectureEntryName(entry)}</strong>{detail && <span>{detail}</span>}</button>
+                </li>;
+            })}</ul>
+        </details>}
+    </div>;
+}
+
+function ArchitectureWorkspace({ projectName, overview, loading = false, error, onRefresh, onNavigate, graph, selectionPanel, onSelect, onClearSelection, onSelectionEvidence, graphNote, graphGeneration, active = true, escapeTaken = false, coverage, systemArchitectureLoader }: ArchitecturePanelProps): JSX.Element {
     const storage = useMemo(browserStorage, []);
-    // A filter is a search for this visit: one saved by an earlier session would silently hide routes.
-    const [config, setConfig] = useState(() => ({ ...readArchitectureConfig(storage, projectName), filter: '' }));
-    useEffect(() => { saveArchitectureConfig(storage, projectName, config); }, [config, projectName, storage]);
+    /*
+     * The place is the whole history entry (K27): subtab, opened area or file,
+     * Plan or 3D, route perspective and filter, System structure focus and
+     * groups, Behavior start. The views below read their part of it and report
+     * changes back, so Back and Forward restore every part at once. A filter is
+     * a search for this visit: one saved by an earlier session would silently
+     * hide routes, so only the subtab is read back.
+     */
+    const navigation = useArchitectureHistory(() => initialArchitecturePlace(readArchitectureConfig(storage, projectName).view), {
+        active, escapeTaken, onRestore: (from, to) => { if (from.view !== to.view) onSelectionEvidence?.(undefined); },
+    });
+    const { place, navigate } = navigation;
+    useEffect(() => { saveArchitectureConfig(storage, projectName, { view: place.view, filter: place.filter }); }, [place.view, place.filter, projectName, storage]);
+    const setView = useCallback((view: ArchitectureView) => navigate(current => ({ ...current, view: view === 'dependencies' ? 'overview' : view })), [navigate]);
+    const changeSpatial = useCallback<PlaceChange<SpatialPlace>>((change, automatic) =>
+        navigate(current => ({ ...current, spatial: { ...current.spatial, ...change } }), automatic), [navigate]);
+    const changeSystem = useCallback<PlaceChange<SystemPlace>>((change, automatic) =>
+        navigate(current => ({ ...current, system: { ...current.system, ...change } }), automatic), [navigate]);
+    const changePerspective = useCallback((routes: RoutesPerspective) => navigate(current => ({ ...current, routes })), [navigate]);
+    // An opened route group ("Show these N routes") is a step at once; typing waits for a pause.
+    const openRouteGroup = useCallback((filter: string) => navigate(current => ({ ...current, filter })), [navigate]);
+    const sharedBack: SharedBack = { target: navigation.back ? architectureEntryLabel(navigation.back) : undefined, onBack: () => navigation.go(-1) };
     // A cached summary from another project must never appear here.
     const data = overview?.projectName && overview.projectName !== projectName ? undefined : overview;
     const ready = Boolean(data && !loading && !error && projectName);
-    const systemView = config.view === 'structure' || config.view === 'behavior' ? config.view : undefined;
+    const systemView = place.view === 'structure' || place.view === 'behavior' ? place.view : undefined;
     useEffect(() => {
         if (active && (!projectName || (!systemView && (!ready || !graph)))) onSelectionEvidence?.(undefined);
     }, [active, projectName, systemView, ready, graph, onSelectionEvidence]);
-    const SpatialView = config.view === 'routes' ? RoutesArchitecture : SpatialArchitecture;
     // Only the Routes view offers the filter, so no other view may receive a stale one.
-    const filter = config.view === 'routes' ? config.filter : '';
-    const setFilter = (value: string) => setConfig(current => ({ ...current, filter: value }));
+    const filter = place.view === 'routes' ? navigation.filter : '';
+    const spatialProps = !systemView && ready && data && graph ? {
+        project: projectName, generation: graphGeneration, graph, overview: data,
+        view: place.view === 'dependencies' || place.view === 'structure' || place.view === 'behavior' ? 'overview' as const : place.view,
+        filter, onFilter: openRouteGroup, active, graphNote, coverage, onSelect, onClearSelection, onSelectionEvidence, selectionPanel, onNavigate,
+        onView: (view: ArchitectureView) => { onSelectionEvidence?.(undefined); setView(view); }, place: place.spatial, onPlace: changeSpatial,
+    } : undefined;
     // Every scene below draws with the same palette; the DOM reads it as CSS variables.
     return <section className="atlas-architecture" data-testid="atlas-architecture" data-system-view={systemView} aria-label={text.title} aria-busy={!systemView && loading} style={paletteStyle}>
-        <nav className="atlas-arch-tabs" aria-label={text.navigation}>{ARCHITECTURE_VIEWS.map(view =>
-            <button className="atlas-arch-tab" key={view} aria-pressed={config.view === view || (view === 'overview' && ['dependencies', 'entryPoints'].includes(config.view))} data-view={view}
-                onClick={() => { if (view !== config.view) onSelectionEvidence?.(undefined); setConfig(current => ({ ...current, view })); }}>{text.views[view]}</button>)}</nav>
+        <div className="atlas-arch-tabrow">
+            <nav className="atlas-arch-tabs" aria-label={text.navigation}>{ARCHITECTURE_VIEWS.map(view =>
+                <button className="atlas-arch-tab" key={view} aria-pressed={place.view === view || (view === 'overview' && ['dependencies', 'entryPoints'].includes(place.view))} data-view={view}
+                    onClick={() => { if (view !== place.view) onSelectionEvidence?.(undefined); setView(view); }}>{text.views[view]}</button>)}</nav>
+            <HistoryControls history={navigation.history} place={place} onGo={navigation.go} onJump={navigation.jump} />
+        </div>
         {systemView && projectName ? <Suspense fallback={<div role="status"><Empty>Preparing system analysis…</Empty></div>}><SystemArchitecture
             project={projectName} generation={graphGeneration} view={systemView} filter={filter} active={active}
-            graph={graph} onSelect={onSelect} onClearSelection={onClearSelection} onSelectionEvidence={onSelectionEvidence} onNavigate={onNavigate} loader={systemArchitectureLoader} /></Suspense> : null}
+            graph={graph} onSelect={onSelect} onClearSelection={onClearSelection} onSelectionEvidence={onSelectionEvidence} onNavigate={onNavigate} loader={systemArchitectureLoader}
+            place={place.system} onPlace={changeSystem} back={sharedBack} /></Suspense> : null}
         {!systemView && (!projectName ? <Empty>{text.chooseProject}</Empty> : loading ? <div role="status"><Empty>{text.loading}</Empty></div>
             : error ? <div role="alert" className="atlas-arch-empty" data-error="true"><p>{text.loadFailed}</p><p className="atlas-arch-error-detail">{error}</p>
                 {onRefresh && <button className="atlas-arch-action" onClick={onRefresh}>{text.retry}</button>}</div>
                 : !data ? <Empty>{text.unavailable}</Empty> : null)}
         {systemView && !projectName && <Empty>{text.chooseProject}</Empty>}
-        {!systemView && ready && data && graph && config.view === 'routes' && <div className="atlas-arch-toolbar"><label className="atlas-arch-filter">
+        {spatialProps && place.view === 'routes' && <div className="atlas-arch-toolbar"><label className="atlas-arch-filter">
             <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="6.5" cy="6.5" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.4" /><path d="m10 10 4 4" stroke="currentColor" strokeWidth="1.4" /></svg>
-            <input aria-label={text.filter} placeholder={text.filterPlaceholder} type="search" value={config.filter} onChange={event => setFilter(event.target.value)} /></label></div>}
-        {!systemView && ready && data && graph && <SpatialView project={projectName} generation={graphGeneration} graph={graph} overview={data}
-            view={config.view === 'dependencies' || config.view === 'structure' || config.view === 'behavior' ? 'overview' : config.view} filter={filter} onFilter={setFilter} active={active}
-            graphNote={graphNote} coverage={coverage} onSelect={onSelect} onClearSelection={onClearSelection} onSelectionEvidence={onSelectionEvidence} selectionPanel={selectionPanel} onNavigate={onNavigate} onView={view => { onSelectionEvidence?.(undefined); setConfig(current => ({ ...current, view: view === 'dependencies' ? 'overview' : view })); }} />}
+            <input aria-label={text.filter} placeholder={text.filterPlaceholder} type="search" value={navigation.filter} onChange={event => navigation.type(event.target.value)} /></label></div>}
+        {spatialProps && (place.view === 'routes'
+            ? <RoutesArchitecture {...spatialProps} perspective={place.routes} onPerspective={changePerspective} />
+            : <SpatialArchitecture {...spatialProps} />)}
         {!systemView && ready && data && !graph && <div className="atlas-arch-content" data-testid="atlas-architecture-content">
             <p className="atlas-arch-fallback-summary">{data.files.length.toLocaleString()} files · {data.groups.length.toLocaleString()} source areas · {data.boundaries.length.toLocaleString()} cross-area connections</p>
-            <Findings view={config.view === 'overview' || config.view === 'dependencies' ? 'entryPoints' : config.view} data={data} empty={text.noData} onNavigate={onNavigate} />
+            <Findings view={place.view === 'overview' || place.view === 'dependencies' ? 'entryPoints' : place.view} data={data} empty={text.noData} onNavigate={onNavigate} />
         </div>}
     </section>;
 }
 
+/** A project switch remounts the workspace: a fresh history, as in Galaxy. */
 export default function ArchitecturePanel(props: ArchitecturePanelProps): JSX.Element {
     return <ArchitectureWorkspace key={props.projectName} {...props} />;
 }

@@ -45,6 +45,30 @@
 }
 .atlas-arch-tab[aria-pressed="true"] { color: var(--atlas-fg); border-bottom-color: var(--atlas-phosphor); }
 .atlas-arch-tab:hover { color: var(--atlas-fg); background: var(--atlas-panel); }
+/* K27: the tabs and one Back, Forward and Recent for the whole workspace share a row. The menu sits outside the scrolling tab strip. */
+.atlas-arch-tabrow { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--atlas-line); margin-bottom: 16px; }
+.atlas-arch-tabrow > .atlas-arch-tabs { flex: 1 1 auto; min-width: 0; border-bottom: 0; margin-bottom: 0; }
+.atlas-arch-history { display: flex; align-items: center; gap: 4px; flex: none; position: relative; }
+.atlas-arch-history > button, .atlas-arch-recent > summary {
+    border: 1px solid var(--atlas-line); border-radius: 7px; background: var(--atlas-panel); color: var(--atlas-fg);
+    min-width: 32px; min-height: 30px; padding: 3px 8px; line-height: 1.4;
+}
+.atlas-arch-history > button:hover:not(:disabled), .atlas-arch-recent > summary:hover { background: var(--atlas-panel-raised); border-color: var(--atlas-dim); }
+.atlas-arch-history > button:disabled { opacity: 0.45; }
+.atlas-arch-recent { position: relative; }
+.atlas-arch-recent > summary { display: block; cursor: pointer; list-style: none; text-align: center; white-space: nowrap; color: var(--atlas-dim); }
+.atlas-arch-recent > summary::-webkit-details-marker { display: none; }
+.atlas-arch-recent-menu {
+    position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; width: min(24rem, calc(100vw - 3rem)); max-height: 20rem; overflow: auto;
+    margin: 0; padding: 6px; list-style: none; border: 1px solid var(--atlas-line); border-radius: 8px; background: var(--atlas-panel); box-shadow: 0 8px 24px #0006;
+}
+.atlas-arch-recent-menu button {
+    width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left;
+    border: 0; border-radius: 6px; background: transparent; color: var(--atlas-fg); padding: 5px 8px;
+}
+.atlas-arch-recent-menu button:hover:not(:disabled) { background: var(--atlas-panel-raised); }
+.atlas-arch-recent-menu button span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--atlas-dim); }
+.atlas-arch-recent-menu button[aria-current="true"] { opacity: 0.6; }
 .atlas-arch-toolbar { margin-bottom: 24px; gap: 10px; }
 .atlas-arch-filter { position: relative; flex: 1; max-width: 370px; }
 .atlas-arch-filter svg { color: var(--atlas-dim); left: 11px; position: absolute; top: 10px; pointer-events: none; }

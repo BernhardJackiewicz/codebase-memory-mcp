@@ -70,26 +70,39 @@ describe('behavior journeys', () => {
         expect([...container.querySelectorAll('[data-edge]')].map(item => item.getAttribute('data-edge'))).toEqual(['14', '15', '16', '17']);
         expect(container.querySelector('[aria-label="Call-chain position"]')?.getAttribute('value')).toBe('5');
     });
-    it('double-clicking an operation requests its actual symbol and Back restores the previous scope', async () => {
-        const props = await render(fixture());
+    it('double-clicking an operation requests its actual symbol as a hop from the start, and Back is the shared Back (K27)', async () => {
+        const onBack = vi.fn();
+        const props = await render(fixture(), { back: { target: 'Behavior · operation1', onBack } });
         const button = container.querySelector('[data-node="journey-choice:2"]')!;
         await act(async () => button.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
-        expect(props.onRequest).toHaveBeenLastCalledWith(expect.objectContaining({ id: 2 }), undefined);
-        await click('← Back');
-        expect(props.onRequest).toHaveBeenLastCalledWith(expect.objectContaining({ id: 1 }), undefined);
+        expect(props.onRequest).toHaveBeenLastCalledWith(expect.objectContaining({ id: 2 }), undefined, { from: expect.objectContaining({ id: 1 }) });
+        const back = [...container.querySelectorAll<HTMLButtonElement>('.behavior-navigation button')].find(item => item.textContent === '← Back')!;
+        expect(back.title).toBe('Back to Behavior · operation1 (Alt+Left)');
+        await act(async () => back.click());
+        expect(onBack).toHaveBeenCalledOnce();
+        // A second hop still names the operation the hops started from.
+        const next = fixture(); next.entrypoints = [next.paths[0].nodes[1]];
+        next.paths = [{ ...next.paths[0], entrypoint_id: 2, nodes: next.paths[0].nodes.slice(1), edges: next.paths[0].edges.slice(1) }];
+        await render(next, { ...props, data: next, entryId: 2, from: fixture().entrypoints[0] });
+        await act(async () => container.querySelector('[data-node="journey-choice:3"]')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+        expect(props.onRequest).toHaveBeenLastCalledWith(expect.objectContaining({ id: 3 }), undefined, { from: expect.objectContaining({ id: 1 }) });
+        // A start picked in the field begins anew.
+        await act(async () => { const select = container.querySelector<HTMLSelectElement>('[aria-label="Behavior entry point"]')!; select.value = '1'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+        expect(props.onRequest).toHaveBeenLastCalledWith(expect.objectContaining({ id: 1 }), undefined, {});
     });
     it('clears inspection and returns from a followed operation to the original entry on empty background', async () => {
         const clear = vi.fn(); const props = await render(fixture(), { onClearSelection: clear });
-        await act(async () => container.querySelector('[data-node="journey-choice:2"]')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
         const next = fixture(); next.entrypoints = [next.paths[0].nodes[1]];
         next.paths = [{ ...next.paths[0], entrypoint_id: 2, nodes: next.paths[0].nodes.slice(1), edges: next.paths[0].edges.slice(1) }];
-        await render(next, { ...props, data: next, entryId: 2 });
+        await render(next, { ...props, data: next, entryId: 2, from: fixture().entrypoints[0], back: { onBack: vi.fn() } });
         await click('Empty background');
-        expect(props.onRequest).toHaveBeenLastCalledWith(expect.objectContaining({ id: 1 }));
+        expect(props.onRequest).toHaveBeenLastCalledWith(expect.objectContaining({ id: 1 }), undefined, {});
         expect(container.querySelector('[data-scene]')?.getAttribute('data-selected')).toBeNull();
         expect(container.querySelector('[aria-label="Behavior evidence inspector"]')?.textContent).toContain('Select an operation or a call');
         expect(clear).toHaveBeenCalledOnce();
-        expect([...container.querySelectorAll('button')].find(item => item.textContent === '← Back')?.disabled).toBe(true);
+        const back = [...container.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent === '← Back');
+        expect(back?.disabled).toBe(true);
+        expect(back?.title).toBe('Nothing to go back to yet');
     });
     it('shows exact argument expressions and declaration facts without inventing argument-to-parameter bindings', async () => {
         const data = fixture();
