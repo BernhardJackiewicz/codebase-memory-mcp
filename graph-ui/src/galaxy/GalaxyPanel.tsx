@@ -139,7 +139,9 @@ import GalaxyNavigator from './GalaxyNavigator';
 import { TraceEdgeFilter } from './TraceEdgeFilter';
 import { PathPicker, PathSteps } from './ScopePathControls';
 import { callOrder, pathNodes, shortestScopePath, type ScopePathStep } from './scope-path';
-import { galaxyPathText, galaxyToolbarText } from './galaxy-strings';
+import { galaxyHistoryText, galaxyPathText, galaxyToolbarText } from './galaxy-strings';
+import { emptyNavigationHistory, moveNavigation, peekNavigation, pushNavigation } from '../graph/navigation-history';
+import { galaxyHistoryOptions, historyEntryDetail, historyEntryLabel, scopeIdentity, type GalaxyHistoryEntry, type ScopeTrail } from './scope-history';
 import { useOrganicLayout } from './use-organic-layout';
 import RenderProgress from './RenderProgress';
 import { useGraphScope } from './use-graph-scope';
@@ -451,6 +453,8 @@ export interface AtlasGalaxySeam {
     drawnEdges: number;
     /** Die zweite Kopfzeile: woraus die Linien bestehen und was fehlt. */
     edgeNote: string;
+    /** Der Verlauf aus Zurueck und Vor (K2): Eintraege als Tooltip-Text, der Zeiger, die letzten Wurzeln. */
+    history: { index: number; entries: string[]; recent: string[] };
 }
 
 /** Ein Akteur, so wie der Beweislauf ihn liest. */
@@ -1834,7 +1838,8 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         [layout, data, picture, mode, flyTo, onOpenNode, props.onSelectNode, props.workspaceExpanded, scope.select, clearTrail],
     );
 
-    const handleBackgroundClick = useCallback(() => {
+    /* "All graph" und Escape: der Ausschnitt wird verlassen, und das ist selbst ein Schritt im Verlauf (K2). */
+    const leaveScope = useCallback(() => {
         setBackgroundCleared(true);
         if (props.workspaceExpanded) setChosenMode('galaxy');
         clearTrail();
@@ -1845,6 +1850,140 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         refitNow();
         props.onClearSelection?.();
     }, [mode, refitNow, props.onClearSelection, readerProjection, scope.reset, props.workspaceExpanded, changeTraceTypes, clearTrail]);
+    /*
+     * Ein Klick ins Leere hebt im Ausschnitt nur die Markierung auf (Handtest
+     * K9). Bis dahin verliess er den Ausschnitt samt Ebenen und Pfad, ohne
+     * Rueckfrage, und ein Klick knapp neben einen Knoten genuegte. Aus dem
+     * Ausschnitt fuehren jetzt nur "All graph", Escape und Zurueck; der
+     * aufgehobene Pfad ist ein Schritt im Verlauf und kommt mit Zurueck wieder.
+     */
+    const handleBackgroundClick = useCallback(() => {
+        if (props.workspaceExpanded && scope.scope) { clearTrail(); return; }
+        leaveScope();
+    }, [props.workspaceExpanded, scope.scope, clearTrail, leaveScope]);
+
+    /*
+     * Zurueck und Vor (Handtest K2), wie beim Blaettern.
+     *
+     * Der Eintrag ist die ganze Frage dieses Augenblicks: Wurzel, Tiefe,
+     * Richtung, Kantenarten, offener Pfad und Ansicht, und nichts von der
+     * Antwort. Er wird aus dem Zustand ABGELEITET und nicht an jeder Stelle
+     * abgelegt, die ihn aendert; so kann kein Weg in einen neuen Ausschnitt den
+     * Verlauf vergessen. Was ein Zurueck selbst herstellt, legt keinen neuen
+     * Eintrag ab (`restoringKey`). Regeln und Grenzen: src/graph/navigation-history.ts
+     * und docs/development/pr-2068-galaxy-history.md.
+     */
+    const historyTrail: ScopeTrail | undefined = trail?.key !== organicKey ? undefined
+        : trail.kind === 'calls' ? { kind: 'calls' } : { kind: 'path', target: trail.target, name: trail.name };
+    const historyEntry: GalaxyHistoryEntry | undefined = props.workspaceExpanded ? {
+        ...(scope.scope ? { scope: scope.scope } : {}), depth: scope.depth, direction: scope.direction,
+        ...(traceTypes ? { edgeTypes: traceTypes } : {}), ...(historyTrail ? { trail: historyTrail } : {}), mode,
+    } : undefined;
+    const historyKey = historyEntry ? galaxyHistoryOptions.key(historyEntry) : '';
+    const latestEntry = useRef(historyEntry);
+    latestEntry.current = historyEntry;
+    const [history, setHistory] = useState(() => emptyNavigationHistory<GalaxyHistoryEntry>());
+    const restoringKey = useRef<string | undefined>(undefined);
+    const selectOnComplete = useRef<string | undefined>(undefined);
+    const historyProject = useRef(project);
+    useEffect(() => {
+        const entry = latestEntry.current;
+        /*
+         * Ein Projektwechsel beginnt einen neuen Verlauf. Das Projekt kommt oft
+         * erst nach dem ersten Bild aus der Adresszeile; der ganze Graph steht
+         * dann schon da und muss der erste Eintrag bleiben. Ein offener
+         * Ausschnitt gehoert noch zum alten Projekt und wird nicht uebernommen.
+         */
+        if (historyProject.current !== project) {
+            historyProject.current = project;
+            restoringKey.current = undefined;
+            const fresh = emptyNavigationHistory<GalaxyHistoryEntry>();
+            setHistory(entry !== undefined && !entry.scope ? pushNavigation(fresh, entry, galaxyHistoryOptions) : fresh);
+            return;
+        }
+        if (entry === undefined) return;
+        const expected = restoringKey.current;
+        restoringKey.current = undefined;
+        if (expected === historyKey) return;
+        setHistory((current) => pushNavigation(current, entry, galaxyHistoryOptions));
+    }, [historyKey, project]);
+    const applyEntry = useCallback((entry: GalaxyHistoryEntry) => {
+        scope.restore({ ...(entry.scope ? { scope: entry.scope } : {}), depth: entry.depth, direction: entry.direction });
+        const types = entry.edgeTypes ? [...entry.edgeTypes] : undefined;
+        changeTraceTypes(types);
+        setChosenMode(entry.mode);
+        const nextKey = JSON.stringify([project, entry.scope, entry.scope ? entry.direction : 'both', types]);
+        setTrail(entry.trail ? { key: nextKey, ...entry.trail } : undefined);
+        setTrailStep(0);
+        setBackgroundCleared(false);
+        setNote('');
+        // A symbol scope reports its root itself once it is complete (see `notifiedScopedSymbol`).
+        if (entry.scope) selectOnComplete.current = entry.scope.kind === 'symbol' ? undefined : scopeIdentity(entry.scope);
+        else { setHighlighted(null); props.onClearSelection?.(); }
+    }, [scope.restore, changeTraceTypes, project, props.onClearSelection]);
+    const historyBack = peekNavigation(history, -1);
+    const historyForward = peekNavigation(history, 1);
+    const goHistory = useCallback((step: -1 | 1) => {
+        const entry = peekNavigation(history, step);
+        if (entry === undefined) return;
+        restoringKey.current = galaxyHistoryOptions.key(entry);
+        setHistory((current) => moveNavigation(current, step, galaxyHistoryOptions));
+        applyEntry(entry);
+    }, [history, applyEntry]);
+    // A recent root is a new navigation: it is pushed and drops the forward branch.
+    const jumpToRecent = useCallback((entry: GalaxyHistoryEntry) => applyEntry(entry), [applyEntry]);
+    useEffect(() => {
+        if (!scope.complete || !scopedRoot || !scope.scope || selectOnComplete.current !== scopeIdentity(scope.scope)) return;
+        selectOnComplete.current = undefined;
+        props.onSelectNode?.(layoutNodeForSelection(layout, scopedRoot) ?? scopedRoot);
+    }, [scope.complete, scopedRoot, scope.scope, layout, props.onSelectNode]);
+    useEffect(() => {
+        if (!props.workspaceExpanded || escapeTaken) return;
+        const onKey = (event: globalThis.KeyboardEvent): void => {
+            if (event.defaultPrevented || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            if (isTypingTarget(event.target instanceof Element ? event.target : null)) return;
+            const step = event.key === 'ArrowLeft' ? -1 : 1;
+            if (peekNavigation(history, step) === undefined) return;
+            event.preventDefault();
+            goHistory(step);
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [props.workspaceExpanded, escapeTaken, history, goHistory]);
+    /* Escape ohne offenen Pfad verlaesst den Ausschnitt (K9); den Pfad gibt der Griff weiter oben frei. */
+    useEffect(() => {
+        if (!props.workspaceExpanded || !scope.scope || trailView || escapeTaken) return;
+        const onKey = (event: globalThis.KeyboardEvent): void => {
+            if (event.key !== 'Escape' || event.defaultPrevented) return;
+            if (isTypingTarget(event.target instanceof Element ? event.target : null)) return;
+            event.preventDefault();
+            leaveScope();
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [props.workspaceExpanded, scope.scope, trailView, escapeTaken, leaveScope]);
+    const historyControls = props.workspaceExpanded ? <span className="atlas-graph-history" role="group" aria-label={galaxyHistoryText.recentList}>
+        <button type="button" aria-label={galaxyHistoryText.back} disabled={!historyBack} onClick={() => goHistory(-1)}
+            title={historyBack ? galaxyHistoryText.backTo(historyEntryLabel(historyBack)) : galaxyHistoryText.noBack}>{galaxyHistoryText.backGlyph}</button>
+        <button type="button" aria-label={galaxyHistoryText.forward} disabled={!historyForward} onClick={() => goHistory(1)}
+            title={historyForward ? galaxyHistoryText.forwardTo(historyEntryLabel(historyForward)) : galaxyHistoryText.noForward}>{galaxyHistoryText.forwardGlyph}</button>
+        {history.recent.length > 1 && <details className="atlas-graph-recent" onKeyDown={event => {
+            if (event.key === 'Escape') { event.stopPropagation(); event.currentTarget.open = false; }
+        }}>
+            <summary title={galaxyHistoryText.recentTitle}>{galaxyHistoryText.recent}</summary>
+            <ul className="atlas-graph-recent-menu" aria-label={galaxyHistoryText.recentList}>{history.recent.map((entry) => {
+                const current = galaxyHistoryOptions.recentKey?.(entry) === (scope.scope ? scopeIdentity(scope.scope) : undefined);
+                return <li key={galaxyHistoryOptions.recentKey?.(entry)}>
+                    <button type="button" disabled={current} aria-current={current ? 'true' : undefined} onClick={(event) => {
+                        const details = event.currentTarget.closest('details');
+                        if (details) details.open = false;
+                        jumpToRecent(entry);
+                    }}><strong>{entry.scope?.name}</strong><span>{historyEntryDetail(entry)}</span></button>
+                </li>;
+            })}</ul>
+        </details>}
+    </span> : null;
 
     /*
      * Die Vorgabe der Ansicht, mit der Wahl des Lesers darauf.
@@ -2064,6 +2203,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
             hiddenKinds: [...hiddenKinds].sort(),
             drawnEdges: sceneShown?.edges.length ?? 0,
             edgeNote,
+            history: { index: history.index, entries: history.entries.map(historyEntryLabel), recent: history.recent.map(historyEntryLabel) },
             hierarchy:
                 projection === undefined
                     ? undefined
@@ -2323,9 +2463,10 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                 )}
             </header>
             {(props.workspaceExpanded || scope.scope) && <div className="atlas-graph-exploration" aria-label="Graph scope">
+                {historyControls}
                 {props.workspaceExpanded && <GalaxyNavigator embedded nodes={layout?.nodes ?? []} project={project} fetch={fetchImpl} onSelect={handleNodeClick} onSelectScope={next => { props.onClearSelection?.(); setBackgroundCleared(false); clearTrail(); scope.select(next); }} />}
                 {scope.scope ? <>
-                    {props.workspaceExpanded && <button type="button" onClick={handleBackgroundClick}>All graph</button>}
+                    {props.workspaceExpanded && <button type="button" onClick={leaveScope}>{galaxyHistoryText.allGraph}</button>}
                     <strong className="atlas-graph-scope-name" title={scope.scope.name}>{scope.scope.name}</strong>
                     {props.workspaceExpanded && scopedRoot?.file_path && <button type="button" onClick={() => props.onOpenNode(layoutNodeForSelection(layout, scopedRoot) ?? scopedRoot)}>Open source</button>}
                     {props.workspaceExpanded && <label>Trace <select aria-label="Trace direction" value={scope.direction}

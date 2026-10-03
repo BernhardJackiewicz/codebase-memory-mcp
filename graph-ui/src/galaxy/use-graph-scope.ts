@@ -136,6 +136,11 @@ export function useGraphScope({ project, layout, filePath, range, fetch: fetchIm
         complete: Boolean(complete), retry: () => setReload(value => value + 1),
         select: (next: GraphScope) => { setChosen(next); setDepth(minimumScopeDepth(next)); setDirection('both'); },
         reset: () => { setChosen(undefined); setDepth(0); setReaderDepth(undefined); setDirection('both'); },
+        /** Back, Forward and a recent jump (K2): the whole question at once, not a fresh selection. */
+        restore: (next: { scope?: GraphScope; depth: number; direction: TraceDirection }) => {
+            setChosen(next.scope); setDirection(next.scope ? next.direction : 'both');
+            setDepth(next.scope ? Math.max(minimumScopeDepth(next.scope), next.depth) : 0);
+        },
         setDepth: (next: number) => filePath ? setReaderDepth({ key: readerKey, depth: Math.max(minDepth, next) }) : setDepth(Math.max(minDepth, next)),
     };
 }

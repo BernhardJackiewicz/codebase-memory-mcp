@@ -34,6 +34,28 @@ export const galaxyPathText = {
     position: (index: number, total: number) => `${index} of ${total}`,
 };
 
+/** Back, Forward and the recent roots of the scoped Galaxy (K2). */
+export const galaxyHistoryText = {
+    back: 'Back',
+    forward: 'Forward',
+    backGlyph: '←',
+    forwardGlyph: '→',
+    backTo: (label: string) => `Back to ${label} (Alt+Left)`,
+    forwardTo: (label: string) => `Forward to ${label} (Alt+Right)`,
+    noBack: 'Nothing to go back to yet',
+    noForward: 'Nothing to go forward to',
+    recent: 'Recent',
+    recentTitle: 'Jump straight to a recently visited root with its last depth, direction and edge types',
+    recentList: 'Recently visited roots',
+    allGraph: 'All graph',
+    layers: (depth: number) => (depth === 1 ? '1 layer' : `${depth} layers`),
+    direction: { inbound: 'incoming', outbound: 'outgoing' } as Record<'inbound' | 'outbound', string>,
+    noTypes: 'no edge types',
+    hierarchy: 'hierarchy',
+    callOrder: 'call order',
+    pathTo: (name: string) => `path to ${name}`,
+};
+
 /** Compact toolbar words, so the scoped toolbar keeps to one row at 1600 px. */
 export const galaxyToolbarText = {
     groups: (count: number) => `${count.toLocaleString()} groups`,
