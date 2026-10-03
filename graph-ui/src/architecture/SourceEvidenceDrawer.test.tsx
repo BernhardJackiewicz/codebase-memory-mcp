@@ -149,15 +149,18 @@ it('does not invent line evidence for a malformed source body', async () => {
 
 it('preserves the actual Module EOF line reported by the source API and highlights its call site', async () => {
     // Recorded local project_lock.c response, start_line=53/end_line=190.
-    // Its trailing empty segment is the indexed EOF line, not a page separator.
+    // Its trailing empty segment is the indexed EOF line, not a page separator:
+    // the range matches. The file itself ends at 189 (review of K13), so the
+    // drawer neither draws an empty line 190 nor names it in the range.
     const ui = await mount(vi.fn(async () => page(53, { ...projectLockEof, source_mode: 'full',
         source_truncated: undefined, source_clipped: undefined, next_start_line: undefined })));
     await ui.render({ filePath: path, line: 61 });
     expect(ui.container.querySelector('[role=alert]')).toBeNull();
-    expect(ui.container.querySelectorAll('code > span')).toHaveLength(138);
-    expect(ui.container.querySelector('code > span:last-child .source-evidence-line-number')?.textContent).toBe('190');
+    expect(ui.container.querySelectorAll('code > span')).toHaveLength(137);
+    expect(ui.container.querySelector('code > span:last-child .source-evidence-line-number')?.textContent).toBe('189');
     expect(ui.container.querySelector('[data-selected=true]')?.textContent).toContain('cbm_private_lock_directory_close(directory)');
-    expect(ui.container.textContent).toContain('Lines 53 to 190');
+    expect(ui.container.textContent).toContain('Lines 53 to 189');
+    expect(ui.container.textContent).toContain('end of file');
     expect([...ui.container.querySelectorAll('button')].find(button => button.textContent === 'Next lines')?.disabled).toBe(true);
 });
 
@@ -188,7 +191,11 @@ it('says "end of file" when the last page reaches the end of the Module, so a di
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
     const pager = ui.container.querySelector('nav[aria-label="Source pages"]')!;
     expect(ui.container.querySelector('[role=alert]')).toBeNull();
-    expect(pager.textContent).toContain('Lines 42 to 66 · end of file');
+    // Review of K13: the range, the lines drawn and the title all end at the file's real last line, 65.
+    expect(pager.textContent).toContain('Lines 42 to 65 · end of file');
+    const numbers = [...ui.container.querySelectorAll('.source-evidence-line-number')].map(entry => entry.textContent);
+    expect(numbers).toHaveLength(24);
+    expect(numbers.at(-1)).toBe('65');
     const next = [...pager.querySelectorAll('button')].find(button => button.textContent === 'Next lines')!;
     expect(next.disabled).toBe(true);
     // The title names the file's real last line, not the empty end segment the range counts.
@@ -202,4 +209,6 @@ it('names the last line itself when a file ends without a final line break (hand
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
     const next = [...ui.container.querySelectorAll('nav[aria-label="Source pages"] button')].find(button => button.textContent === 'Next lines')!;
     expect(next.getAttribute('title')).toBe('Line 66 is the last line of this file.');
+    expect(ui.container.querySelector('nav[aria-label="Source pages"]')!.textContent).toContain('Lines 42 to 66 · end of file');
+    expect([...ui.container.querySelectorAll('.source-evidence-line-number')].at(-1)?.textContent).toBe('66');
 });
