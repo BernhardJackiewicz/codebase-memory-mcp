@@ -332,6 +332,22 @@ describe('route identities and service evidence', () => {
         const filtered = buildSemanticGraph(graph, { view: 'routes', groupRoutes: true, filter: '/accounts', routeSnapshot });
         expect(filtered.nodes.filter(item => item.kind === 'route').map(item => item.label)).toEqual(['/accounts/login/', '/accounts/logout/']);
     });
+    it('shortens the shared start of routes that would read alike and keeps the distinguishing part', () => {
+        const paths = ['/generic-lastmod/index.xml', '/generic-lastmod/sitemap.xml', '/callable-lastmod-full-sitemap.xml', '/callable-lastmod-partial-sitemap.xml', '/about/'];
+        const routes = paths.map((name, index) => ({ ...route, id: 600 + index, name, qualified_name: `fixture.route.${600 + index}`, file_path: 'tests/sitemaps_tests/urls/http.py' }));
+        const graph: GraphData = { nodes: routes, edges: [], total_nodes: routes.length };
+        const shown = (model: ReturnType<typeof buildSemanticGraph>) => Object.fromEntries(model.nodes.filter(item => item.kind === 'route')
+            .map(item => [item.label, item.shortLabel ?? item.label]));
+        // "Show these 2 routes" filters by the group prefix: both labels started "/generic-lastmod…" and read alike.
+        expect(shown(buildSemanticGraph(graph, { view: 'routes', groupRoutes: true, filter: '/generic-lastmod' })))
+            .toEqual({ '/generic-lastmod/index.xml': '…/index.xml', '/generic-lastmod/sitemap.xml': '…/sitemap.xml' });
+        // Distinct first segments are not grouped, yet were cut to the same "/callable-lastmo…".
+        const grouped = shown(buildSemanticGraph(graph, { view: 'routes', groupRoutes: true }));
+        expect(grouped['/callable-lastmod-full-sitemap.xml']).toBe('…full-sitemap.xml');
+        expect(grouped['/callable-lastmod-partial-sitemap.xml']).toBe('…partial-sitemap.xml');
+        expect(grouped['/about/']).toBe('/about/');
+        expect(grouped['/generic-lastmod · 2']).toBe('/generic-lastmod · 2');
+    });
     it('selects exactly the routes of a group when the filter names its prefix', () => {
         const at = (id: number, name: string, file_path: string): GraphNode => ({ ...route, id, name, qualified_name: `fixture.route.${id}`, file_path });
         const routes = [at(400, '/', 'app/urls.py'), at(401, '/', 'shop/urls.py'), at(402, '/', 'blog/urls.py'),

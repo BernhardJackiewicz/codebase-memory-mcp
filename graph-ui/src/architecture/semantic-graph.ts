@@ -26,6 +26,8 @@ export interface SemanticNode {
     external?: boolean;
     /** The first path segment shared by the routes of a route group. */
     routePrefix?: string;
+    /** What the chip shows when the full label would read like a neighbour's; the tooltip keeps the full label. */
+    shortLabel?: string;
 }
 export interface SemanticEvidence {
     source: GraphNode;
@@ -110,6 +112,33 @@ const TEST_SOURCE = /(^|\/)(tests|__tests__|specs?)\/|^(src\/)?test\/|(^|\/)(tes
  * (decodeURI), and a path that is not valid percent-encoding stays as indexed. */
 export const readableRoute = (path: string): string => { try { return decodeURI(path); } catch { return path; } };
 const routePrefixOf = (label: string) => `/${label.replace(/^[A-Z]+\s+/, '').split('/').filter(Boolean)[0] ?? ''}`;
+/** Characters a compact route chip shows before it cuts the label (spatial-architecture.css, 112px at 10px). */
+const COMPACT_LABEL_CHARS = 14;
+
+/**
+ * Labels that a compact chip would cut to the same visible start ("/generic-lastmo…")
+ * lose their shared start instead: "…/index.xml" and "…/sitemap.xml". The cut falls on a
+ * separator, so the rest begins with a whole segment or word; a slash stays to mark a path.
+ */
+export function distinctLabels(labels: readonly string[], visible = COMPACT_LABEL_CHARS): Map<string, string> {
+    const result = new Map<string, string>();
+    const long = [...new Set(labels)].filter(label => label.length > visible);
+    for (const label of long) {
+        let shared = 0;
+        for (const other of long) {
+            if (other === label || other.slice(0, visible - 1) !== label.slice(0, visible - 1)) continue;
+            let common = 0;
+            while (common < label.length && label[common] === other[common]) common++;
+            shared = Math.max(shared, common);
+        }
+        if (!shared) continue;
+        const cut = Math.max(...['/', '-', '_', '.'].map(separator => label.lastIndexOf(separator, shared - 1)));
+        const rest = cut > 0 ? (label[cut] === '/' ? label.slice(cut) : label.slice(cut + 1)) : '';
+        // A label that is the shared start itself keeps its full text; its neighbours carry the difference.
+        if (rest.replace('/', '').length > 1) result.set(label, `…${rest}`);
+    }
+    return result;
+}
 const sourceNode = (node: GraphNode) => Boolean(node.file_path && node.file_path !== '{}'
     && !['Project', 'Folder', 'Package', 'Branch', 'Route'].includes(node.label));
 const symbolNode = (node: GraphNode): SemanticNode => ({ id: symbolId(node),
@@ -601,6 +630,10 @@ export function buildSemanticGraph(graph: GraphData, options: SemanticGraphOptio
                 options.view === 'entryPoints' ? lane * 3 : 0, (siblingIndex % laneRows - (laneRows - 1) / 2) * 20];
         }
     });
+    if (options.view === 'routes') {
+        const short = distinctLabels(nodes.filter(node => node.kind === 'route').map(node => node.label));
+        for (const node of nodes) if (node.kind === 'route' && short.has(node.label)) node.shortLabel = short.get(node.label);
+    }
     if (unresolved) warnings.push(`${unresolved} relationships have an endpoint outside the loaded repository snapshot.`);
     if (graph.total_nodes > graph.nodes.length) warnings.push('The loaded repository snapshot contains only part of the indexed graph.');
     return { view: options.view, scopeKey: `${options.view}:${options.areaPath ?? ''}:${options.filePath ?? ''}:${rootId ?? ''}:${filter ?? ''}`,

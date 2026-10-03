@@ -173,7 +173,7 @@ function ArchitectureNode({ node, selected, highlighted, dimmed, labelVisible = 
                 onPointerEnter={() => onHover(node.id)} onPointerLeave={() => onHover()}
                 title={`${node.label}${path && path !== node.label ? `\n${path}` : ''}\n${node.detail}${measure ? `\n${lineText}\n${measure.languages.map(language => language.name).join(', ')} (from file types)` : ''}`}>
                 {selected && <span className="architecture-node-kind"><i style={{ background: color }} />{node.kindLabel ?? (node.kind === 'area' ? 'Source area' : node.kind)}</span>}
-                <span className="architecture-node-title"><strong>{node.hotspot && <span className="architecture-hotspot-mark" title={`${node.hotspot.findings.length} ranked hotspots; strongest measured fan-in ${node.hotspot.maxFanIn ?? 'unavailable'}${node.gravityPercent === undefined ? '' : `; gravity ${Number(node.gravityPercent.toFixed(1))}%`}`}>◉ </span>}{node.label}</strong>{!measure && node.gravityPercent !== undefined && <small className="architecture-node-size" title="Gravity relative to strongest hotspot">{node.gravityPercent > 0 && node.gravityPercent < 0.1 ? '<0.1' : Number(node.gravityPercent.toFixed(1))}%</small>}</span>
+                <span className="architecture-node-title"><strong>{node.hotspot && <span className="architecture-hotspot-mark" title={`${node.hotspot.findings.length} ranked hotspots; strongest measured fan-in ${node.hotspot.maxFanIn ?? 'unavailable'}${node.gravityPercent === undefined ? '' : `; gravity ${Number(node.gravityPercent.toFixed(1))}%`}`}>◉ </span>}{node.shortLabel ?? node.label}</strong>{!measure && node.gravityPercent !== undefined && <small className="architecture-node-size" title="Gravity relative to strongest hotspot">{node.gravityPercent > 0 && node.gravityPercent < 0.1 ? '<0.1' : Number(node.gravityPercent.toFixed(1))}%</small>}</span>
                 {selected && measure && <span className="architecture-node-metric"><i style={{ background: color }} />{measure.lines === undefined ? '?' : `${measure.measuredFiles < measure.files ? '≥' : ''}${Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(measure.lines)}`} lines{mixed ? ' · mixed' : ''}</span>}
                 {selected && <span className="architecture-node-detail">{node.detail}</span>}
             </button>
@@ -214,7 +214,7 @@ function HotspotLabels({ model, priorityId, onVisible }: { model: RenderGraph; p
             const point = new Vector3(...node.position).add(new Vector3(0, dimensions(node)[1] + 7, 0)).project(camera);
             const x = (point.x + 1) * size.width / 2; const y = (1 - point.y) * size.height / 2;
             const box = boxes.current.get(node.id);
-            const width = box?.width ?? Math.min(178, Math.max(78, node.label.length * 7 + (node.gravityPercent === undefined ? 26 : 68)));
+            const width = box?.width ?? Math.min(178, Math.max(78, (node.shortLabel ?? node.label).length * 7 + (node.gravityPercent === undefined ? 26 : 68)));
             const height = node.id === priorityId ? 96 : box?.height ?? 38;
             const rect = labelRect(x, y, width, height, box ? inset : [-5, 0]);
             if (node.id !== priorityId && (rect.right < 0 || rect.left > size.width || rect.bottom < 0 || rect.top > size.height
