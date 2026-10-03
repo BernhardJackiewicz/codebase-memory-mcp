@@ -7,6 +7,7 @@ import { edgeColor, isDirectedEdge, normalizeEdgeType } from '../graph/edge-styl
 import { EdgePulseLayer } from '../graph/EdgePulseLayer';
 import { useGraphBackgroundReset } from '../graph/useGraphBackgroundReset';
 import { connectionLoad, type ConnectionLoad } from '../graph/connection-load';
+import { SCENE_MAX_TILT, SCENE_PALETTE } from './scene-palette';
 
 /** The model keeps its stable XY layout; rendering places that footprint on XZ. */
 const groundPosition = ([x, y, z]: [number, number, number]): Vector3 => new Vector3(x, z, -y);
@@ -82,8 +83,8 @@ function FolderBackplate({ lane }: { lane: SystemSceneLane }) {
     return <group position={groundPosition(lane.position)}>
         <mesh raycast={() => null}>
             <boxGeometry args={[lane.width, lane.depth, height]} />
-            <meshStandardMaterial color="#536977" roughness={0.95} transparent opacity={0.09} depthWrite={false} />
-            <Edges color="#6e8a98" transparent opacity={0.24} />
+            <meshStandardMaterial color={SCENE_PALETTE.plate} roughness={0.95} transparent opacity={0.09} depthWrite={false} />
+            <Edges color={SCENE_PALETTE.plateEdge} transparent opacity={0.24} />
         </mesh>
         <Html position={[-lane.width / 2 + 3, lane.depth / 2 + 0.2, -height / 2 + 3]} zIndexRange={[5, 1]} style={{ pointerEvents: 'none' }}>
             <span className="system-scene-lane-label" data-folder-id={lane.id} title={lane.label}>{lane.label}</span>
@@ -183,7 +184,7 @@ function NodeLabels({ model, selectedNode, highlightedPathIndex, onSelect, onExp
             data-node-id={node.id} data-position={center(node).toArray().join(',')} data-size={dimensions(node).join(',')}
             data-color={node.visual?.color} data-color-label={node.visual?.label}
             data-connection-load={loads?.get(node.id)?.links}
-            style={{ '--system-node-tint': node.visual?.color ?? '#91a6b4' } as CSSProperties}
+            style={{ '--system-node-tint': node.visual?.color ?? SCENE_PALETTE.node } as CSSProperties}
             data-muted={!activeNode(model, node, highlightedPathIndex)} title={`${node.label} · ${node.detail}${loads ? ` · ${loads.get(node.id)?.links ?? 0} visible links · ${loads.get(node.id)?.neighbors ?? 0} connected items` : ''}${node.visual ? ` · ${node.visual.label}${node.visual.basis ? ` (${node.visual.basis})` : ''}` : ''}`}
             type="button" aria-label={`${node.label} · ${node.detail}`} aria-pressed={selectedNode === node.id}
             onClick={() => onSelect(node.id)} onDoubleClick={onExpand && (node.group || presentation === 'journey') ? () => onExpand(node.id) : undefined}>
@@ -245,11 +246,11 @@ export default function SystemArchitectureScene({ model, selectedNode, selectedE
     return <SceneBoundary><div className="system-scene" data-testid="system-scene" data-projection={planar ? 'plan' : '3d'}>
         <Canvas {...background} frameloop={active ? 'demand' : 'never'} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false, powerPreference: 'low-power' }}
             role="img" aria-label={presentation === 'journey' ? 'Behavior call journey. Follow recorded invocations across component lanes. Double-click an operation to explore its calls.' : `System ${planar ? 'plan' : '3D map'}. Groups lie on a ground plane; expanded members sit above their group. Use the adjacent list to inspect source evidence.`}>
-            <color attach="background" args={['#0b1118']} />
+            <color attach="background" args={[SCENE_PALETTE.background]} />
             <OrthographicCamera makeDefault position={[80, 115, 105]} zoom={4} near={0.1} far={10000} />
-            <ambientLight intensity={1.6} /><directionalLight position={[30, 80, 20]} intensity={2.4} color="#dcfff3" />
-            <directionalLight position={[-20, 20, -30]} intensity={1.2} color="#a899ff" />
-            <gridHelper args={[extent, Math.min(80, Math.ceil(extent / 12)), '#1c3440', '#15242e']} position={[0, floorY, 0]} raycast={() => null} />
+            <ambientLight intensity={1.6} /><directionalLight position={[30, 80, 20]} intensity={2.4} color={SCENE_PALETTE.keyLight} />
+            <directionalLight position={[-20, 20, -30]} intensity={1.2} color={SCENE_PALETTE.fillLight} />
+            <gridHelper args={[extent, Math.min(80, Math.ceil(extent / 12)), SCENE_PALETTE.gridMajor, SCENE_PALETTE.gridMinor]} position={[0, floorY, 0]} raycast={() => null} />
             {(model.lanes ?? []).map(lane => <FolderBackplate key={lane.id} lane={lane} />)}
             {showConnectionLoad && model.nodes.map(node => {
                 const load = loads.get(node.id)!;
@@ -259,7 +260,7 @@ export default function SystemArchitectureScene({ model, selectedNode, selectedE
                 return <mesh key={`load:${node.id}`} position={[position.x, position.y - size[1] / 2 - 0.1, position.z]}
                     rotation={[-Math.PI / 2, 0, 0]} scale={[size[0] * 0.56, size[2] * 0.62, 1]} raycast={() => null}>
                     <ringGeometry args={[1, Math.sqrt(1 + load.strength * 1.1), 48]} />
-                    <meshBasicMaterial color="#91a6b4" transparent opacity={muted ? 0.025 : 0.08 + load.strength * 0.12} depthWrite={false} />
+                    <meshBasicMaterial color={SCENE_PALETTE.node} transparent opacity={muted ? 0.025 : 0.08 + load.strength * 0.12} depthWrite={false} />
                 </mesh>;
             })}
             {model.edges.map(edge => {
@@ -272,21 +273,21 @@ export default function SystemArchitectureScene({ model, selectedNode, selectedE
             <EdgePulseLayer paths={pulsePaths} active={active} />
             {model.nodes.map(node => {
                 const selected = selectedNode === node.id, active = activeNode(model, node, activePath) && (!neighborhood.size || neighborhood.has(node.id)), size = dimensions(node);
-                const color = node.visual?.color ?? (node.kind === 'remainder' ? '#9c9a8b' : '#91a6b4');
-                const fill = new Color('#27333e').lerp(new Color(color), selected ? 0.34 : 0.2);
+                const color = node.visual?.color ?? (node.kind === 'remainder' ? SCENE_PALETTE.remainder : SCENE_PALETTE.node);
+                const fill = new Color(SCENE_PALETTE.body).lerp(new Color(color), selected ? 0.34 : 0.2);
                 return <mesh key={node.id} position={center(node)} onClick={event => { event.stopPropagation(); onSelectNode(node.id); }}
                     onDoubleClick={onExpandNode && (node.group || presentation === 'journey') ? event => { event.stopPropagation(); onExpandNode(node.id); } : undefined}>
                     <boxGeometry args={size} />
                     <meshStandardMaterial color={fill} roughness={0.85} metalness={0.05} emissive={color} emissiveIntensity={selected ? 0.05 : 0.008}
                         transparent opacity={selected ? 0.6 : !active ? 0.045 : node.expanded ? 0.065 : node.parentId ? 0.36 : 0.28} depthWrite={false} />
-                    <Edges color={selected ? '#f0f6fa' : color} transparent opacity={selected ? 0.95 : !active ? 0.12 : node.expanded ? 0.36 : 0.46} />
+                    <Edges color={selected ? SCENE_PALETTE.selected : color} transparent opacity={selected ? 0.95 : !active ? 0.12 : node.expanded ? 0.36 : 0.46} />
                 </mesh>;
             })}
             <NodeLabels model={model} selectedNode={selectedNode} highlightedPathIndex={activePath} onSelect={onSelectNode} onExpand={onExpandNode} loads={showConnectionLoad ? loads : undefined} presentation={presentation} />
             <OrbitControls makeDefault enabled={active} enableRotate={!planar} enableDamping={false}
                 mouseButtons={{ LEFT: planar ? MOUSE.PAN : MOUSE.ROTATE, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN }}
                 touches={{ ONE: planar ? TOUCH.PAN : TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }}
-                minZoom={0.15} maxZoom={90} rotateSpeed={0.5} zoomSpeed={0.8} maxPolarAngle={Math.PI / 2.05} zoomToCursor />
+                minZoom={0.15} maxZoom={90} rotateSpeed={0.5} zoomSpeed={0.8} maxPolarAngle={SCENE_MAX_TILT} zoomToCursor />
             <ScopeCamera model={model} resetKey={resetKey} planar={planar} presentation={presentation} />
         </Canvas>
     </div></SceneBoundary>;

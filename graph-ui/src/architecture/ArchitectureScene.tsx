@@ -11,6 +11,7 @@ import { edgeColor, isDirectedEdge } from '../graph/edge-style';
 import { EdgePulseLayer } from '../graph/EdgePulseLayer';
 import './architecture-scene.css';
 import { useGraphBackgroundReset } from '../graph/useGraphBackgroundReset';
+import { SCENE_MAX_TILT, SCENE_PALETTE } from './scene-palette';
 
 export interface ArchitectureSceneProps {
     model: SemanticGraph;
@@ -53,8 +54,8 @@ function FolderPlatform({ platform }: { platform: SemanticPlatform }) {
     return <group position={platform.position}>
         <mesh position={[0, -0.225, 0]} raycast={() => null}>
             <boxGeometry args={[platform.width, 0.45, platform.depth]} />
-            <meshStandardMaterial color="#536977" roughness={0.95} transparent opacity={0.11 + platform.level * 0.015} depthWrite={false} />
-            <Edges color="#6e8a98" transparent opacity={0.3} />
+            <meshStandardMaterial color={SCENE_PALETTE.plate} roughness={0.95} transparent opacity={0.11 + platform.level * 0.015} depthWrite={false} />
+            <Edges color={SCENE_PALETTE.plateEdge} transparent opacity={0.3} />
         </mesh>
         <Html position={[-platform.width / 2 + 3, 0.12, platform.depth / 2 - 2]} zIndexRange={[5, 1]} style={{ pointerEvents: 'none' }}>
             <span className="architecture-folder-label" data-folder-path={platform.path} data-level={platform.level}
@@ -128,7 +129,7 @@ function ArchitectureNode({ node, selected, highlighted, dimmed, labelVisible = 
     onOpen?: () => void;
 }) {
     const color = node.tint ?? PALETTE[node.kind];
-    const fill = useMemo(() => new Color('#27333e').lerp(new Color(color), selected ? 0.34 : highlighted ? 0.25 : 0.18), [color, selected, highlighted]);
+    const fill = useMemo(() => new Color(SCENE_PALETTE.body).lerp(new Color(color), selected ? 0.34 : highlighted ? 0.25 : 0.18), [color, selected, highlighted]);
     const size = dimensions(node);
     const labelY = size[1] + 7;
     const measure = node.measure;
@@ -152,7 +153,7 @@ function ArchitectureNode({ node, selected, highlighted, dimmed, labelVisible = 
             <meshStandardMaterial color={fill} roughness={0.85} metalness={0.05}
                 emissive={color} emissiveIntensity={selected ? 0.08 : highlighted ? 0.035 : 0.008}
                 transparent opacity={dimmed ? 0.14 : selected ? 0.65 : highlighted ? 0.55 : 0.42} depthWrite={false} />
-            <Edges color={selected ? '#f0fff9' : color} transparent opacity={dimmed ? 0.12 : selected ? 1 : highlighted ? 0.85 : 0.48} />
+            <Edges color={selected ? SCENE_PALETTE.selected : color} transparent opacity={dimmed ? 0.12 : selected ? 1 : highlighted ? 0.85 : 0.48} />
         </mesh>
         {roofLanguages.map(language => {
             const width = size[0] * (measure?.lines ? language.lines : language.files) / roofTotal;
@@ -163,7 +164,7 @@ function ArchitectureNode({ node, selected, highlighted, dimmed, labelVisible = 
         })}
         {selected && <mesh position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
             <ringGeometry args={[Math.max(size[0], size[2]) * 0.65, Math.max(size[0], size[2]) * 0.65 + 0.12, 64]} />
-            <meshBasicMaterial color="#ecfff7" transparent opacity={0.85} depthWrite={false} />
+            <meshBasicMaterial color={SCENE_PALETTE.selected} transparent opacity={0.85} depthWrite={false} />
         </mesh>}
         <Html position={[0, labelY, 0]} center zIndexRange={selected ? [60, 50] : [20, 10]}>
             <button type="button" className={`architecture-node-label${selected ? ' is-selected' : ''}${dimmed ? ' is-dimmed' : ''}${labelVisible ? '' : ' is-hidden'}`}
@@ -347,12 +348,12 @@ export function ArchitectureScene({ model: graphModel, selectedId, selectedEdgeI
         <Canvas {...background} frameloop={active ? 'demand' : 'never'} dpr={[1, 1.5]}
             gl={{ antialias: true, alpha: false, powerPreference: 'low-power' }}
             role="img" aria-label={`${model.title}. ${model.positionMeaning}. Use the adjacent list to select nodes and inspect relationships.`}>
-            <color attach="background" args={['#0b1118']} />
+            <color attach="background" args={[SCENE_PALETTE.background]} />
             <OrthographicCamera makeDefault position={[80, 100, 100]} near={0.1} far={2000} zoom={5} />
             <ambientLight intensity={1.6} />
-            <directionalLight position={[30, 80, 20]} intensity={2.4} color="#dcfff3" />
-            <directionalLight position={[-20, 20, -30]} intensity={1.2} color="#a899ff" />
-            <gridHelper args={[extent, Math.min(80, Math.ceil(extent / 12)), '#1c3440', '#15242e']} position={[0, floorY, 0]} />
+            <directionalLight position={[30, 80, 20]} intensity={2.4} color={SCENE_PALETTE.keyLight} />
+            <directionalLight position={[-20, 20, -30]} intensity={1.2} color={SCENE_PALETTE.fillLight} />
+            <gridHelper args={[extent, Math.min(80, Math.ceil(extent / 12)), SCENE_PALETTE.gridMajor, SCENE_PALETTE.gridMinor]} position={[0, floorY, 0]} />
             {model.platforms?.map(platform => <FolderPlatform key={platform.id} platform={platform} />)}
             {model.nodes.filter(node => node.gravity).map(node => <GravityWell key={`gravity:${node.id}`} node={node} floorY={floorY} dimmed={related.size > 0 && !related.has(node.id)} />)}
             {model.edges.map(edge => {
@@ -371,7 +372,7 @@ export function ArchitectureScene({ model: graphModel, selectedId, selectedEdgeI
             <OrbitControls ref={controls} makeDefault enabled={active} enableRotate={!planar} enableDamping={false}
                 mouseButtons={{ LEFT: planar ? MOUSE.PAN : MOUSE.ROTATE, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN }}
                 touches={{ ONE: planar ? TOUCH.PAN : TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }}
-                minZoom={0.15} maxZoom={60} rotateSpeed={0.5} zoomSpeed={0.8} maxPolarAngle={Math.PI / 2.05} zoomToCursor />
+                minZoom={0.15} maxZoom={60} rotateSpeed={0.5} zoomSpeed={0.8} maxPolarAngle={SCENE_MAX_TILT} zoomToCursor />
             <FitArchitecture model={model} planar={planar} resetKey={resetKey} controls={controls} active={active} />
             {(adaptiveLabels || model.view === 'hotspots') && <HotspotLabels model={model} priorityId={selectedId ?? hoveredId} onVisible={setVisibleHotspotLabels} />}
         </Canvas>
