@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { AtlasApi } from '../app/atlas-api';
 import type { ProjectEntry } from '../provider/rpc-schemas';
 import IndexesPanel, { type IndexesApi } from './IndexesPanel';
-import { cpuText, logLevel, memoryLabel, memoryText } from './system-model';
+import { collapseRepeats, cpuText, logLevel, memoryLabel, memoryText, repeatTitle } from './system-model';
 import { useSystemPoll, type SystemReading } from './useSystemPoll';
 import './system.css';
 
@@ -61,6 +61,8 @@ export default function SystemWorkspace({ api, onOpenProjects, active = true, ve
     const self = report?.processes.find((process) => process.isSelf);
     const visibleLines = logs.data?.lines ?? [];
     const visibleRecords = logs.data?.records;
+    // Identical messages read as one line with a count; a repeated warning cannot push the rest out of view.
+    const logRows = useMemo(() => visibleRecords ? collapseRepeats(visibleRecords) : undefined, [visibleRecords]);
     const selectedReading = tab === 'logs' ? logs : tab === 'indexes' ? jobs : processes;
 
     useEffect(() => {
@@ -71,7 +73,7 @@ export default function SystemWorkspace({ api, onOpenProjects, active = true, ve
     const copyLogs = async () => {
         try {
             if (!navigator.clipboard?.writeText) throw new Error('Clipboard access is unavailable. Select and copy the visible text.');
-            await navigator.clipboard.writeText(visibleRecords ? visibleRecords.map((record) => `${record.ts} ${record.level.toUpperCase()} ${record.source} #${record.id}\n${record.message}`).join('\n') : visibleLines.join('\n'));
+            await navigator.clipboard.writeText(logRows ? logRows.map(({ record, count }) => `${record.ts} ${record.level.toUpperCase()} ${record.source} #${record.id}${count > 1 ? ` ×${count}` : ''}\n${record.message}`).join('\n') : visibleLines.join('\n'));
             setCopyStatus('Visible lines copied');
         } catch (error) {
             setCopyStatus(error instanceof Error ? error.message : 'Could not copy the log.');
@@ -165,7 +167,7 @@ export default function SystemWorkspace({ api, onOpenProjects, active = true, ve
                     const element = logRef.current;
                     if (element && element.scrollHeight - element.scrollTop - element.clientHeight > 32) setFollowTail(false);
                 }}>
-                    {visibleRecords ? visibleRecords.map((record) => <div className={`system-log-line system-log-record system-log-${logLevel(`level=${record.level}`)}`} key={`${logs.data?.generation ?? ''}:${record.id}`}><strong>{record.level.toUpperCase() || 'UNCLASSIFIED'}</strong> · <time dateTime={record.ts}>{record.ts || 'Time unavailable'}</time> · {record.source || 'Source unavailable'} · Event #{record.id} · {record.project ? `Project: ${record.project}` : 'Project not recorded'}<pre>{record.message}</pre></div>) : visibleLines.map((line, index) => <div className={`system-log-line system-log-${logLevel(line)}`} key={index}>{line || '\u00a0'}</div>)}
+                    {logRows ? logRows.map((row) => { const { record } = row; return <div className={`system-log-line system-log-record system-log-${logLevel(`level=${record.level}`)}`} key={`${logs.data?.generation ?? ''}:${record.id}`}><strong>{record.level.toUpperCase() || 'UNCLASSIFIED'}</strong> · <time dateTime={record.ts}>{record.ts || 'Time unavailable'}</time> · {record.source || 'Source unavailable'} · Event #{record.id} · {record.project ? `Project: ${record.project}` : 'Project not recorded'}{row.count > 1 && <> · <span className="system-log-repeat" title={repeatTitle(row)}>×{row.count}</span></>}<pre>{record.message}</pre></div>; }) : visibleLines.map((line, index) => <div className={`system-log-line system-log-${logLevel(line)}`} key={index}>{line || '\u00a0'}</div>)}
                     {(visibleRecords?.length ?? visibleLines.length) === 0 && <p>{logs.loading ? 'Reading log…' : !logs.data ? 'No log reading available.' : 'No retained events match these filters.'}</p>}
                 </div>
             </section>

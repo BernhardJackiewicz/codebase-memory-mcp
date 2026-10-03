@@ -30,6 +30,13 @@
  *  - **Capped fields.** Every text field is cut at UI_LOG_FIELD_MAX
  *    characters, the same cap the server applies; a cut is marked so nobody
  *    reads a truncated stack as a complete one.
+ *  - **Once per session, then counted.** An entry identical to an earlier
+ *    one of this session (level, source, project and message) is counted,
+ *    not queued. A deprecation warning that a library prints on every scene
+ *    mount (THREE.Clock from @react-three/fiber) would otherwise push the
+ *    real messages out of System › Logs. The count goes out as one more
+ *    entry with the same text at 10, 100, 1000 repeats and when the page is
+ *    left (`final`), so the journal holds a handful of lines, not hundreds.
  *
  * Time and timers are injectable so a test runs in one tick.
  */
@@ -92,6 +99,8 @@ export const UI_LOG_BATCH_MAX = 25;
 export const UI_LOG_FLUSH_MS = 1500;
 export const UI_LOG_BUFFER_MAX = 200;
 export const UI_LOG_BACKOFF_MS: readonly number[] = [2000, 5000, 15000, 60000];
+/** Distinct entries counted per session; beyond this, new texts are recorded one by one again. */
+export const UI_LOG_REPEAT_KEYS_MAX = 256;
 
 export interface UiLogOptions {
     page: string;
@@ -108,13 +117,37 @@ export interface UiLogOptions {
     backoffMs?: readonly number[];
 }
 
+/**
+ * The detail of a repeat count. The server keeps only the known fields of an
+ * entry, so the count travels in `detail`, in words a reader understands and
+ * in a form System › Logs reads back (repeatCount).
+ */
+export function repeatDetail(count: number): string {
+    return `${count} identical entries in this session; only the first is recorded in full`;
+}
+
+/** The count of a repeat entry, undefined for an ordinary one. */
+export function repeatCount(detail: string | undefined): number | undefined {
+    const match = /^(\d+) identical entries in this session\b/.exec(detail ?? '');
+    return match ? Number(match[1]) : undefined;
+}
+
 /** Cut a text field at the shared cap and say so. */
 export function capField(text: string, max = UI_LOG_FIELD_MAX): string {
     return text.length > max ? `${text.slice(0, max)} [cut at ${max}]` : text;
 }
 
+interface Repeat {
+    entry: UiLogEntry;
+    count: number;
+    reported: number;
+}
+
+const powerOfTen = (count: number): boolean => count >= 10 && /^10*$/.test(String(count));
+
 export class UiLogBuffer {
     private readonly queue: UiLogEntry[] = [];
+    private readonly repeats = new Map<string, Repeat>();
     private seq = 0;
     private sent = 0;
     private dropped = 0;
@@ -178,8 +211,33 @@ export class UiLogBuffer {
         if (typeof extra.col === 'number' && Number.isFinite(extra.col)) {
             entry.col = extra.col;
         }
+        const key = [entry.level, entry.source, entry.project ?? '', entry.message].join('\u0000');
+        const repeat = this.repeats.get(key);
+        if (repeat !== undefined) {
+            this.seq -= 1;
+            repeat.count += 1;
+            if (powerOfTen(repeat.count)) {
+                this.report(repeat);
+                this.arm(this.flushMs);
+            }
+            return;
+        }
+        if (this.repeats.size < UI_LOG_REPEAT_KEYS_MAX) {
+            this.repeats.set(key, { entry, count: 1, reported: 1 });
+        }
         this.push(entry);
         this.arm(this.flushMs);
+    }
+
+    /** Queue the running count of a repeated entry, with the text of its first occurrence. */
+    private report(repeat: Repeat): void {
+        const { level, source, message, project } = repeat.entry;
+        const entry: UiLogEntry = { ts: this.now().toISOString(), seq: ++this.seq, level, source, message, detail: repeatDetail(repeat.count) };
+        if (project !== undefined) {
+            entry.project = project;
+        }
+        repeat.reported = repeat.count;
+        this.push(entry);
     }
 
     stats(): UiLogStats {
@@ -203,6 +261,14 @@ export class UiLogBuffer {
         }
         if (this.inFlight && !final) {
             return;
+        }
+        if (final) {
+            // The page is going away: every count not yet reported goes with it.
+            for (const repeat of this.repeats.values()) {
+                if (repeat.count > repeat.reported) {
+                    this.report(repeat);
+                }
+            }
         }
         if (this.queue.length === 0) {
             return;

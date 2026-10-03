@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { capField, UI_LOG_FIELD_MAX, UiLogBuffer } from './ui-log';
+import { capField, repeatCount, UI_LOG_FIELD_MAX, UiLogBuffer } from './ui-log';
 import type { UiLogPayload, UiLogTransport } from './ui-log';
 
 interface Timer {
@@ -169,6 +169,25 @@ describe('UiLogBuffer', () => {
         expect(posts.length).toBe(1);
         expect(posts[0]?.final).toBe(true);
         expect(timers.every((timer) => timer.cancelled)).toBe(true);
+    });
+
+    it('records a repeated identical entry once and counts the repeats instead of queueing each one', async () => {
+        const posts: UiLogPayload[] = [];
+        const buffer = new UiLogBuffer({ page: '/', session: 'repeats', schedule: () => 0, cancel: () => undefined, bufferMax: 200, batchMax: 200,
+            transport: { send: async (payload) => { posts.push(payload); return true; } } });
+        const clock = 'THREE.THREE.Clock: This module has been deprecated. Please use THREE.Timer instead.';
+        for (let i = 0; i < 25; i++) buffer.record('warn', 'console', clock, { project: 'cbm' });
+        buffer.record('warn', 'console', 'a different warning', { project: 'cbm' });
+        buffer.record('warn', 'console', clock, { project: 'django-demo' });
+        await buffer.flush();
+        const sent = posts.flatMap((post) => post.entries);
+        // The first one in full, one count at ten, and the same text in another project as its own first entry.
+        expect(sent.map((entry) => [entry.message === clock ? 'clock' : entry.message, entry.project, repeatCount(entry.detail)])).toEqual([
+            ['clock', 'cbm', undefined], ['clock', 'cbm', 10], ['a different warning', 'cbm', undefined], ['clock', 'django-demo', undefined]]);
+        // Leaving the page reports the exact total.
+        await buffer.flush(true);
+        expect(posts.at(-1)?.entries.map((entry) => [entry.project, repeatCount(entry.detail)])).toEqual([['cbm', 25]]);
+        expect(buffer.stats().sent).toBe(5);
     });
 
     it('does not throw when the transport does', async () => {
