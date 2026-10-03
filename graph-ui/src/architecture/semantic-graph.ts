@@ -119,6 +119,8 @@ const COMPACT_LABEL_CHARS = 14;
  * Labels that a compact chip would cut to the same visible start ("/generic-lastmo…")
  * lose their shared start instead: "…/index.xml" and "…/sitemap.xml". The cut falls on a
  * separator, so the rest begins with a whole segment or word; a slash stays to mark a path.
+ * A shared start without a separator inside ("/sitemapindex1.xml") keeps the end that
+ * fits the chip, and that end holds the difference: "…mapindex1.xml".
  */
 export function distinctLabels(labels: readonly string[], visible = COMPACT_LABEL_CHARS): Map<string, string> {
     const result = new Map<string, string>();
@@ -133,7 +135,8 @@ export function distinctLabels(labels: readonly string[], visible = COMPACT_LABE
         }
         if (!shared) continue;
         const cut = Math.max(...['/', '-', '_', '.'].map(separator => label.lastIndexOf(separator, shared - 1)));
-        const rest = cut > 0 ? (label[cut] === '/' ? label.slice(cut) : label.slice(cut + 1)) : '';
+        const rest = cut > 0 ? (label[cut] === '/' ? label.slice(cut) : label.slice(cut + 1))
+            : label.slice(Math.min(shared, Math.max(1, label.length - (visible - 1))));
         // A label that is the shared start itself keeps its full text; its neighbours carry the difference.
         if (rest.replace('/', '').length > 1) result.set(label, `…${rest}`);
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSemanticGraph, layoutFolderHierarchy, readableRoute, semanticEntryPoints, type SemanticNode, type SemanticPlatform } from './semantic-graph';
+import { buildSemanticGraph, distinctLabels, layoutFolderHierarchy, readableRoute, semanticEntryPoints, type SemanticNode, type SemanticPlatform } from './semantic-graph';
 import type { GraphData, GraphNode } from '../galaxy/types';
 
 const node = (id: number, file: string, name = `symbol${id}`, status: GraphNode['status'] = 'normal'): GraphNode => ({
@@ -347,6 +347,15 @@ describe('route identities and service evidence', () => {
         expect(grouped['/callable-lastmod-partial-sitemap.xml']).toBe('…partial-sitemap.xml');
         expect(grouped['/about/']).toBe('/about/');
         expect(grouped['/generic-lastmod · 2']).toBe('/generic-lastmod · 2');
+    });
+    it('shows the differing end of routes that share a long start without an inner separator', () => {
+        const short = distinctLabels(['/sitemapindex1.xml', '/sitemapindex2.xml', '/sitemapindex-with-a-tail1', '/sitemapindex-with-a-tail2']);
+        // The cut cannot fall on a separator inside "/sitemapindex", so the chip keeps the end that fits and differs.
+        expect(short.get('/sitemapindex1.xml')).toBe('…mapindex1.xml');
+        expect(short.get('/sitemapindex2.xml')).toBe('…mapindex2.xml');
+        // With a separator inside the shared start the cut still falls on it.
+        expect(short.get('/sitemapindex-with-a-tail1')).toBe('…tail1');
+        for (const label of short.values()) expect(label.length).toBeLessThanOrEqual(14);
     });
     it('selects exactly the routes of a group when the filter names its prefix', () => {
         const at = (id: number, name: string, file_path: string): GraphNode => ({ ...route, id, name, qualified_name: `fixture.route.${id}`, file_path });
