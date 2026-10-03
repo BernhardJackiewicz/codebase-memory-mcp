@@ -5,9 +5,13 @@ export const AUTO_INPUT_TOKENS = 1536;
 export const AUTO_OUTPUT_TOKENS = 128;
 export const CHAT_INPUT_TOKENS = 2048;
 
+/** Code sections are headed by where they come from; graph facts already begin with
+ * their own words ("Selected:", "Incoming relationships:"). Numbered ids such as
+ * "[graph-1]" stay out: a small model repeats them as "Graph 1" in its answer. */
 export function formatExplanationEvidence(packet: PreparedExplanationContext): string {
-    return [packet.label, ...packet.evidence.map(item => `[${item.id}]${item.location ? ` ${item.location.path}:${item.location.startLine}-${item.location.endLine}` : ''}\n${item.text}`),
-        ...packet.limitations.map(limit => `Limit: ${limit}`)].join('\n\n');
+    return [packet.label, ...packet.evidence.map(item => item.source === 'code'
+        ? `Source${item.location ? ` ${item.location.path}:${item.location.startLine}-${item.location.endLine}` : ''}:\n${item.text}` : item.text),
+    ...packet.limitations.map(limit => `Limit: ${limit}`)].join('\n\n');
 }
 
 export function explanationMessages(packet: PreparedExplanationContext): BrowserChatMessage[] {

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { citedInterpretation, explanationMessages, parseExplanationResponse } from './explanation-response';
+import { citedInterpretation, explanationMessages, formatExplanationEvidence, parseExplanationResponse } from './explanation-response';
+import { prepareExplanationContext } from './explanation-context';
+import { jsonbAggEvidence } from './galaxy-evidence.fixture';
 const packet = { label: 'file.c', evidence: [{ id: 'E1', text: 'u.i = (uintptr_t)CBM_NOT_FOUND;', source: 'code' as const, location: { path: 'file.c', startLine: 103, startColumn: 5, endLine: 103, endColumn: 36, sourceVersion: 'v1' } }], limitations: [], fallback: 'Source excerpt', characterCount: 50 };
 describe('explanation attribution', () => {
     it('keeps evidence in the user request and requires a current exact citation', () => {
@@ -80,5 +82,19 @@ describe('generated explanation response', () => {
         expect(messages[1].content).toContain('two short sentences');
         expect(messages[1].content).toContain('at most 50 words');
         expect(messages[1].content).toContain('do not guess from names');
+    });
+});
+
+describe('evidence sections in the prompt', () => {
+    it('heads sections with meaningful words, never numbered ids the model could echo as "Graph 1" (K4)', () => {
+        const reader = { project: 'django-demo', path: 'django/contrib/postgres/aggregates/general.py', status: 'ready' as const, source: { id: 'file:1', kind: 'file' as const,
+            project: 'django-demo', path: 'django/contrib/postgres/aggregates/general.py', text: 'class JSONBAgg(OrderableAggMixin, Aggregate):\n    function = "JSONB_AGG"',
+            startLine: 50, startColumn: 1, endLine: 51, endColumn: 31, sourceVersion: 'v1' } };
+        const packet = prepareExplanationContext(reader, jsonbAggEvidence(), 3200);
+        const prompt = [formatExplanationEvidence(packet), ...explanationMessages(packet).map(message => message.content)].join('\n');
+        expect(prompt).not.toMatch(/\[(?:graph|source)-\d+\]/);
+        expect(prompt).not.toMatch(/\b(?:graph|source)[- ]\d+\b/i);
+        expect(formatExplanationEvidence(packet)).toMatch(/^Source django\/contrib\/postgres\/aggregates\/general\.py:50-51:$/m);
+        expect(formatExplanationEvidence(packet)).toContain('Incoming relationships: 23 from 12 symbols.');
     });
 });
