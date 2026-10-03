@@ -14,6 +14,12 @@
  * Punkt ein index-<tag>.md mit jedem Bild und dem, was es zeigt, und
  * report-<tag>.json.
  *
+ * Nachpruefung der Durchsicht: K19-lines (Behavior und Service map ohne
+ * blaue Linien), K20-hover (Ordnernamen bleiben beim Ueberfahren der Schilder
+ * stehen), K25 von einem frischen Profil aus und K26-identity (gleicher Text
+ * von zwei Stellen wird zweimal voll gesendet, ein Zaehler traegt seine
+ * Stelle).
+ *
  * Beschriftungen und Kamera haengen von der Groesse der Zeichenflaeche ab. K20,
  * K21 und K25 laufen darum zweimal: mit 1600x1000 und in der Ansicht des
  * Handtests (1494x728, Chat offen), in der die leeren Behavior-Kaesten
@@ -125,6 +131,23 @@ function colorAt(image, x, y) {
 }
 const hex = ([r, g, b]) => `#${[r, g, b].map((value) => value.toString(16).padStart(2, '0')).join('')}`;
 const close = (a, b, tolerance = 6) => a.every((value, index) => Math.abs(value - b[index]) <= tolerance);
+/**
+ * Bildpunkte in einem Rechteck (CSS-Pixel), deren staerkster Kanal deutlich
+ * Blau ist, wie die geteilte CALLS-Farbe #579fc7 oder das Blaugrau #85b4c5
+ * der aus Quelltext gebauten Dienste, und solche, die deutlich
+ * gruen sind wie die Aufruffarbe der Palette.
+ */
+function hueCounts(image, rect) {
+    let blue = 0; let green = 0;
+    for (let y = Math.max(0, Math.round(rect.top * SCALE)); y < Math.min(image.height, Math.round(rect.bottom * SCALE)); y++) {
+        for (let x = Math.max(0, Math.round(rect.left * SCALE)); x < Math.min(image.width, Math.round(rect.right * SCALE)); x++) {
+            const at = (y * image.width + x) * image.channels; const r = image.pixels[at]; const g = image.pixels[at + 1]; const b = image.pixels[at + 2];
+            if (b - g >= 12 && b - r >= 40) blue += 1;
+            if (g - b >= 25 && g - r >= 60) green += 1;
+        }
+    }
+    return { blue, green };
+}
 
 /* ------------------------------------------------------------------ */
 /* Seite                                                                */
@@ -141,7 +164,7 @@ async function open(page, project, workspace = 'architecture') {
     if (await toggle.count() && (await toggle.getAttribute('aria-expanded') === 'true') !== size.chat) { await toggle.click(); await wait(800); }
 }
 const tab = (page, view) => page.locator(`button.atlas-arch-tab[data-view="${view}"]`).first();
-async function sceneSettled(page, selector, timeout = 30000) {
+async function sceneSettled(page, selector, timeout = 60000) {
     await page.waitForFunction((sel) => document.querySelectorAll(sel).length > 0, selector, { timeout }).catch(() => {});
     await wait(2500);
 }
@@ -296,6 +319,32 @@ async function k19(page) {
         { scenes: scenes.map(({ raw, ...rest }) => rest), sameBackground, labelBackgrounds: [...labels] });
 }
 
+/** "behaviour wieder blau statt gruen": keine blauen Linien in Behavior und in der Service map. */
+async function k19Lines(page) {
+    const canvasRect = () => page.evaluate(() => { const box = document.querySelector('.atlas-architecture canvas')?.getBoundingClientRect(); return box ? { left: box.left, top: box.top, right: box.right, bottom: box.bottom } : null; });
+    await open(page, PROJECT);
+    await tab(page, 'behavior').click();
+    await sceneSettled(page, '.system-scene-node-label', 40000);
+    await wait(1500);
+    let png = await shot(page, 'K19', 'behavior-linien', 'Behavior in django-demo: Aufruflinien in der Farbe der Palette');
+    let rect = await canvasRect();
+    const behavior = rect ? hueCounts(decodePng(png), rect) : null;
+    await open(page, CONTROL);
+    await tab(page, 'routes').click();
+    await page.waitForFunction(() => document.querySelectorAll('.container-map .architecture-node-label').length > 0, null, { timeout: 60000 }).catch(() => {});
+    await wait(3000);
+    png = await shot(page, 'K19', 'cbm-service-map', 'Service map in cbm mit Diensten: Dienste und Aufruflinien in der Palette');
+    rect = await canvasRect();
+    const services = rect ? hueCounts(decodePng(png), rect) : null;
+    const key = await page.evaluate(() => { const element = document.querySelector('.container-call-key'); return element ? getComputedStyle(element).backgroundColor : null; });
+    const keyGreen = /rgb\((\d+), (\d+), (\d+)\)/.exec(key ?? '');
+    const keyIsGreen = Boolean(keyGreen) && Number(keyGreen[2]) > Number(keyGreen[1]) && Number(keyGreen[2]) > Number(keyGreen[3]);
+    const chips = await page.locator('.container-map .architecture-node-label').count();
+    check('K19-lines', 'Behavior und Service map zeichnen ihre Aufrufe gruen, keine blauen Linien',
+        behavior !== null && services !== null && behavior.blue <= 40 && behavior.green > 0 && services.blue <= 40 && keyIsGreen && chips > 0,
+        { behavior, serviceMap: services, serviceChips: chips, callKey: key });
+}
+
 /* ------------------------------------------------------------------ */
 /* K20: Beschriftungen ohne Ueberdeckung, rechte Spalte im Bereich        */
 
@@ -305,6 +354,8 @@ async function k20(page) {
     await sceneSettled(page, '.architecture-node-label');
     await shot(page, 'K20', 'overview-wurzel', 'Overview an der Wurzel');
     const area = page.locator('button.architecture-node-label', { hasText: /^\W*django\s*$/ }).first();
+    // django-demo liest seine Architektur bei vollem Server auch einmal laenger als eine halbe Minute.
+    await area.waitFor({ timeout: 120000 });
     await area.click(); await wait(800);
     const openArea = page.getByRole('button', { name: /Open area/ }).first();
     await series(page, 'K20', 'django-geoeffnet', async () => { if (await openArea.count()) await openArea.click(); else await area.dblclick(); }, 'Bereich django geoeffnet');
@@ -345,6 +396,72 @@ async function k20(page) {
     const hotspots = await labelGeometry(page);
     await shot(page, 'K20', 'hotspots-fertig', 'Hotspots mit Bereichsnamen unter den Schildern');
     check('K20d', 'Hotspots: Bereichsnamen und Schilder ueberlagern sich nicht', hotspots.overlaps.length === 0 && hotspots.labels.some((item) => item.kind === 'folder'), summary(hotspots));
+    if (layout === 'standard') await hoverSweep(page);
+}
+
+/** Die sichtbaren Schilder der Karte. */
+const shownChips = (page) => page.evaluate(() => [...document.querySelectorAll('button.architecture-node-label[data-node-id]:not(.is-hidden)')].map((label) => label.dataset.nodeId).sort());
+
+/** Wo jeder Ordnername steht: Ecke, Lage und ob er sichtbar ist. */
+const folderPlacement = (page) => page.evaluate(() => [...document.querySelectorAll('.architecture-folder-label[data-folder-id]')].map((label) => {
+    const box = label.getBoundingClientRect(); const hidden = getComputedStyle(label).visibility === 'hidden';
+    return `${label.dataset.folderId}:${hidden ? 'hidden' : `${label.dataset.align}@${Math.round(box.left)},${Math.round(box.top)}`}`;
+}).sort());
+
+/**
+ * Durchsicht: das Ueberfahren eines Schilds liess Ordnernamen springen oder
+ * verschwinden. Jedes sichtbare Schild wird ueberfahren; gemessen wird, ob
+ * sich ein Ordnername bewegt. Zwischen zwei Schildern geht der Zeiger aus der
+ * Zeichenflaeche, damit kein Kasten darunter haengen bleibt.
+ */
+async function hoverSweep(page) {
+    const sweeps = [];
+    for (const [view, scope] of [['hotspots', 'Hotspots'], ['overview', 'Overview in django']]) {
+        if (view === 'overview') {
+            await tab(page, 'overview').click();
+            await sceneSettled(page, '.architecture-node-label');
+            const area = page.locator('button.architecture-node-label', { hasText: /^\W*django\s*$/ }).first();
+            if (await area.count()) { await area.click(); await wait(800); }
+            const openArea = page.getByRole('button', { name: /Open area/ }).first();
+            if (await openArea.count()) await openArea.click();
+            await sceneSettled(page, '.architecture-folder-label');
+        } else {
+            await tab(page, 'hotspots').click();
+            await sceneSettled(page, '.architecture-node-label');
+        }
+        // Ohne Auswahl: ein gewaehltes Schild darf Platz beanspruchen, und neben ihm aendert ein Zeiger nichts. Ein Klick ins Leere hebt sie auf.
+        if (await page.locator('.architecture-node-label.is-selected').count()) {
+            const box = await page.locator('.atlas-architecture canvas').first().boundingBox();
+            if (box) { await page.mouse.click(box.x + 12, box.y + box.height - 12); await wait(900); }
+        }
+        const selected = await page.locator('.architecture-node-label.is-selected').count();
+        await page.mouse.move(5, 5); await wait(600);
+        const resting = await folderPlacement(page);
+        const restingChips = await shownChips(page);
+        await shot(page, 'K20', `${view}-ruhend`, `${scope}: Ordnernamen ohne Zeiger`);
+        const ids = await page.evaluate(() => [...document.querySelectorAll('button.architecture-node-label:not(.is-hidden):not(.is-selected)')].map((label) => label.dataset.nodeId).filter(Boolean));
+        const moved = [];
+        const hid = [];
+        let shown = false;
+        for (const id of ids.slice(0, 14)) {
+            const chip = page.locator(`button.architecture-node-label[data-node-id="${id.replace(/"/g, '\\"')}"]`).first();
+            if (!(await chip.isVisible().catch(() => false))) continue;
+            await chip.hover({ timeout: 3000 }).catch(() => {});
+            await wait(450);
+            const hovered = await folderPlacement(page);
+            const changed = hovered.filter((item, index) => item !== resting[index]);
+            if (changed.length) moved.push({ chip: id, changed: changed.slice(0, 4) });
+            const now = new Set(await shownChips(page));
+            const gone = restingChips.filter((other) => !now.has(other));
+            if (gone.length) hid.push({ chip: id, hidden: gone.slice(0, 4) });
+            if (!shown) { await shot(page, 'K20', `${view}-schild-ueberfahren`, `${scope}: Zeiger auf dem Schild ${id}, Ordnernamen bleiben`); shown = true; }
+            await page.mouse.move(5, 5); await wait(350);
+        }
+        sweeps.push({ scope, selected, chipsHovered: Math.min(ids.length, 14), folders: resting.length, moved: moved.length, examples: moved.slice(0, 3),
+            chipsHidden: hid.length, hiddenExamples: hid.slice(0, 3) });
+    }
+    check('K20-hover', 'Ordnernamen und Nachbarschilder bleiben stehen, waehrend der Zeiger ueber die Schilder faehrt (Hotspots, Overview in django)',
+        sweeps.every((sweep) => sweep.selected === 0 && sweep.chipsHovered > 0 && sweep.folders > 0 && sweep.moved === 0 && sweep.chipsHidden === 0), { sweeps });
 }
 
 /* ------------------------------------------------------------------ */
@@ -391,13 +508,19 @@ async function k25(page) {
     await sceneSettled(page, '.system-scene-node-label', 40000);
     await shot(page, 'K25', 'behavior-django-vor-wechsel', 'Behavior in django-demo vor dem Projektwechsel');
     await series(page, 'K25', 'behavior-cbm', () => switchProject(page, CONTROL), 'Projektwechsel nach cbm mit offenem Behavior');
+    // cbm oeffnet in der Unteransicht, die sein Profil kennt; ein frisches Profil zeigt Overview. Behavior darum ausdruecklich waehlen.
+    await page.waitForFunction((name) => new URLSearchParams(location.search).get('project') === name || document.querySelector('.atlas-shell details summary')?.textContent?.includes(name), CONTROL, { timeout: 30000 }).catch(() => {});
+    await wait(1500);
+    if (await tab(page, 'behavior').getAttribute('aria-selected') !== 'true') await tab(page, 'behavior').click();
     await page.waitForFunction(() => /What can main call\?/i.test(document.querySelector('.behavior-heading h2')?.textContent ?? ''), null, { timeout: 40000 }).catch(() => {});
     await sceneSettled(page, '.system-scene-node-label', 40000);
     const first = await journeyLabels(page);
     await shot(page, 'K25', 'seite-1', 'Erste Seite der direkten Aufrufe von main');
     const direct = Number(first.state.navigation.match(/(\d+) direct callees?/)?.[1] ?? NaN);
     const pageTotal = Number(first.state.pages.match(/of (\d+)/)?.[1] ?? NaN);
-    const explained = /not drawn|beyond the display limit|match the filter/i.test(first.state.pages);
+    const explained = /not drawn|beyond the display limit/i.test(first.state.pages);
+    // Ohne gesetzten Filter darf der Zaehler keinen Filter nennen.
+    const noFilterClaim = !/matching the filter/i.test(first.state.pages);
     const more = page.getByRole('button', { name: /More calls/ }).first();
     let second = null;
     if (await more.count() && await more.isEnabled()) {
@@ -406,8 +529,8 @@ async function k25(page) {
     }
     const allInside = (reading) => reading && reading.chips.length === reading.state.sceneNodes && reading.chips.every((chip) => chip.inside);
     check('K25', 'Behavior cbm main: Anzahl direkter Aufrufe und Seitenzaehler stimmen ueberein, alle Kaesten jeder Seite im Bild',
-        Number.isFinite(direct) && (direct === pageTotal || explained) && allInside(first) && (second === null || allInside(second)),
-        { direct, pageTotal, pages: first.state.pages, firstPage: { sceneNodes: first.state.sceneNodes, inside: first.chips.filter((chip) => chip.inside).length, labels: first.chips.map((chip) => chip.text) },
+        Number.isFinite(direct) && (direct === pageTotal || explained) && noFilterClaim && allInside(first) && (second === null || allInside(second)),
+        { direct, pageTotal, pages: first.state.pages, navigation: first.state.navigation, noFilterClaim, firstPage: { sceneNodes: first.state.sceneNodes, inside: first.chips.filter((chip) => chip.inside).length, labels: first.chips.map((chip) => chip.text) },
             secondPage: second ? { pages: second.state.pages, sceneNodes: second.state.sceneNodes, inside: second.chips.filter((chip) => chip.inside).length, labels: second.chips.map((chip) => chip.text) } : null });
 }
 
@@ -481,10 +604,42 @@ async function k26(page) {
     check('K26-transport', '120 gleiche Warnungen gehen als Erstmeldung plus Zaehler an /api/ui-log, nicht 120-mal',
         entries.length > 0 && entries.length <= 4 && counted.some((detail) => /120/.test(detail)), { posted: entries.length, details: counted });
 
+    // Durchsicht: derselbe Fehlertext von zwei Stellen sind zwei Fehler; nur wirklich gleiche werden gezaehlt.
+    uiLogPosts = [];
+    await page.evaluate(() => {
+        window.__beacons = [];
+        // Ein Aufrufort fuer alle: der Stapel ist bei allen gleich, nur Datei und Zeile unterscheiden die erste Stelle von der zweiten.
+        const places = [['probe-a.js', 10], ...Array.from({ length: 12 }, () => ['probe-b.js', 99])];
+        for (const [file, line] of places) window.dispatchEvent(new ErrorEvent('error', { message: 'Uncaught TypeError: handtest probe', filename: file, lineno: line, colno: 3, error: new TypeError('handtest probe') }));
+    });
+    await wait(2500);
+    await page.evaluate(() => { window.dispatchEvent(new Event('pagehide')); });
+    await wait(800);
+    const probeBeacons = await page.evaluate(async () => Promise.all(window.__beacons.filter((item) => item.url.includes('/api/ui-log')).map(async (item) => JSON.parse(await item.data.text()))));
+    const probes = [...uiLogPosts, ...probeBeacons].flatMap((post) => post.entries ?? []).filter((entry) => entry.message === 'Uncaught TypeError: handtest probe')
+        .map((entry) => ({ url: entry.url ?? null, line: entry.line ?? null, count: Number(/^(\d+) identical/.exec(entry.detail ?? '')?.[1] ?? 1), stack: Boolean(entry.stack) }));
+    const full = probes.filter((entry) => entry.count === 1);
+    const countsB = probes.filter((entry) => entry.count > 1);
+    check('K26-identity', 'Gleicher Fehlertext von zwei Stellen geht zweimal voll hinaus, der Zaehler nennt seine Stelle',
+        full.length === 2 && new Set(full.map((entry) => entry.url)).size === 2 && countsB.length > 0 && countsB.every((entry) => entry.url === 'probe-b.js' && entry.line === 99) && Math.max(...countsB.map((entry) => entry.count)) === 12,
+        { probes });
+
     await page.getByRole('tab', { name: 'Logs' }).click();
     await page.getByLabel('Log severity').selectOption('warn');
     await wait(4000);
     const rows = await page.evaluate(() => [...document.querySelectorAll('.system-log-record')].map((row) => row.textContent ?? ''));
+    // Eine Meldung und ihre eigenen Zaehler gehoeren in eine Zeile: gleiche Felder in zwei Zeilen waeren dieselbe Meldung zweimal.
+    const split = await page.evaluate(() => {
+        const keys = new Map();
+        for (const row of document.querySelectorAll('.system-log-record')) {
+            let entry; try { entry = JSON.parse(row.querySelector('pre')?.textContent ?? ''); } catch { continue; }
+            if (!entry || typeof entry.message !== 'string') continue;
+            const detail = typeof entry.detail === 'string' ? (/^\d+ identical entries in this session/.test(entry.detail) ? entry.detail.split('\n').slice(1).join('\n') : entry.detail) : '';
+            const key = JSON.stringify([entry.level, entry.source, entry.project ?? '', entry.message, detail.slice(0, 2048), (entry.stack ?? '').slice(0, 2048), entry.url ?? '', entry.line ?? null, entry.col ?? null]);
+            keys.set(key, (keys.get(key) ?? 0) + 1);
+        }
+        return [...keys].filter(([, count]) => count > 1).map(([key, count]) => ({ message: JSON.parse(key)[3].slice(0, 80), rows: count }));
+    });
     const clockRows = rows.filter((row) => row.includes('THREE.THREE.Clock'));
     const counts = clockRows.map((row) => Number(row.match(/×(\d+)/)?.[1] ?? 1));
     await shot(page, 'K26', 'system-logs', 'System › Logs, Warnungen und Fehler');
@@ -492,7 +647,7 @@ async function k26(page) {
     await wait(300);
     await shot(page, 'K26', 'system-logs-ende', 'System › Logs, Ende der Liste');
     check('K26-logs', 'System › Logs fasst gleiche Meldungen zu einer Zeile mit Zaehler zusammen',
-        clockRows.length > 0 && clockRows.length <= 3 && counts.some((count) => count > 1), { rows: rows.length, clockRows: clockRows.length, counts });
+        clockRows.length > 0 && clockRows.length <= 3 && counts.some((count) => count > 1) && split.length === 0, { rows: rows.length, clockRows: clockRows.length, counts, splitRows: split });
 }
 
 /* ------------------------------------------------------------------ */
@@ -515,7 +670,7 @@ await context.route('**/api/ui-log', async (route) => {
 const page = context.pages()[0] ?? await context.newPage();
 const pageErrors = [];
 page.on('pageerror', (error) => { pageErrors.push(error.message); console.error(`[pageerror] ${error.message}`); });
-const steps = { K18: k18, K19: k19, K20: k20, K21: k21, K22: k22, K23: k23, K25: k25, K26: k26 };
+const steps = { K18: k18, K19: async (current) => { await k19(current); await k19Lines(current); }, K20: k20, K21: k21, K22: k22, K23: k23, K25: k25, K26: k26 };
 // Beschriftungen und Kamera haengen von der Groesse der Zeichenflaeche ab: diese drei auch in der Ansicht des Handtests.
 const bothLayouts = new Set(['K20', 'K21', 'K25']);
 for (const id of ONLY) {
