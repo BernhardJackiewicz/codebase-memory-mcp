@@ -4757,6 +4757,9 @@ export default function App(): JSX.Element {
             ir: matchingInspectorIr(liveCode.ir, symbol, project, activePath), selection }, crypto.randomUUID()));
         setBrowserAiOpen(true);
     };
+    // The chat grounds explanations in the selected symbol's source, read like "Read source evidence" (K14).
+    const readSymbolSource = useCallback((qualifiedName: string, window: { maxLines: number }) =>
+        client.getCodeSnippet(project, qualifiedName, window), [client, project]);
     const clearAttachment = (id: string): void => {
         setChatAttachment(current => current?.id === id ? undefined : current);
     };
@@ -4783,7 +4786,7 @@ export default function App(): JSX.Element {
                 readerContext={workspace === 'explore' ? currentReaderContext : undefined}
                 pendingContext={chatGraphSelection} onContextConsumed={clearChatGraphSelection} onContextRemoved={clearChatGraphSelection}
                 context={browserGraphContext(inspector.ir, project, inspector.filePath, inspector.symbol ? workspacePathOf(inspector.symbol.uri) : '')}
-                attachment={chatAttachment} onAttachmentConsumed={clearAttachment} onAttachmentRemoved={clearAttachment} />}
+                attachment={chatAttachment} onAttachmentConsumed={clearAttachment} onAttachmentRemoved={clearAttachment} readSource={readSymbolSource} />}
             readerActions={<>
                 <button type="button" disabled={!liveSelection} aria-keyshortcuts="Control+Shift+L Meta+Shift+L"
                     onClick={() => { if (liveSelection) attachSelection(liveSelection); }}>{workspaceText.askSelection}</button>

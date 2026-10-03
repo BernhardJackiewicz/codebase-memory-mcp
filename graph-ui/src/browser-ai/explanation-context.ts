@@ -1,6 +1,7 @@
 import { snapshotReaderContext, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatSource } from './chat-model';
 import { fairShares, readGalaxyEvidence, relationshipLine, scopeSentence, selectionSentence, sideLoaded, type GalaxyEvidence } from './galaxy-evidence';
 import { relationshipWords } from './strings';
+import { architectureFacts } from './architecture-evidence';
 
 export interface ExplanationEvidence {
     id: string;
@@ -231,6 +232,14 @@ function graphEvidence(context: BrowserChatContext): GraphPreparation {
         || !evidence.project || typeof evidence.generation !== 'string' || !evidence.generation || evidence.generation === 'unavailable') {
         limits.push('Graph provenance or index generation unavailable; freshness is not established.');
     }
+    // Architecture views in sentences; "Selected.members[3].startLine: 13" made the model list "Finding a line number" (K7).
+    const architecture = architectureFacts(evidence);
+    if (architecture) {
+        const declared = record(evidence.limitations);
+        const notes = [...Array.isArray(declared?.warnings) ? declared.warnings : [], declared?.interpretation]
+            .filter((note): note is string => typeof note === 'string' && note.trim().length > 0).slice(0, 3).map(note => bounded(note.trim(), 220));
+        return { facts: [fixedFact(architecture.facts.join('\n'))], limitations: [...limits, ...notes] };
+    }
     const declaredLimits = graphFacts(evidence.limitations, 'Graph limitations', 600);
     if (declaredLimits) limits.push(declaredLimits);
     const upstream = graphFacts(parsed?.omissions, 'Upstream omissions', 350);
@@ -244,15 +253,38 @@ function graphEvidence(context: BrowserChatContext): GraphPreparation {
     return { facts, limitations: limits };
 }
 
+/** The selection in a few bullets, listed from the graph and never written by the model:
+ * what is selected, its relationships by direction and type, how the scope was drawn (K7). */
+export function selectionSummary(context: BrowserChatContext | undefined): string[] {
+    if (!context || context.text.length > 128_000) return [];
+    const galaxy = readGalaxyEvidence(context.text);
+    if (galaxy) {
+        const words = relationshipWords.en;
+        const side = (name: 'incoming' | 'outgoing') => {
+            const groups = galaxy.relationships[name];
+            if (!sideLoaded(galaxy, name)) return name === 'incoming' ? words.incomingNotLoaded : words.outgoingNotLoaded;
+            if (!groups.length) return galaxy.truncated ? words.cut(name) : name === 'incoming' ? words.noIncoming : words.noOutgoing;
+            const total = groups.reduce((sum, group) => sum + group.count, 0);
+            const line = name === 'incoming' ? words.incoming(total, galaxy.relationships.incomingSymbols) : words.outgoing(total, galaxy.relationships.outgoingSymbols);
+            return `${line.slice(0, -1)} (${groups.map(group => `${group.type} ${group.count}`).join(', ')}).`;
+        };
+        return [selectionSentence(galaxy)[0], side('incoming'), side('outgoing'), scopeSentence(galaxy, words)];
+    }
+    let parsed: Record<string, unknown> | undefined;
+    try { parsed = record(record(JSON.parse(context.text))?.evidence); } catch { return []; }
+    return parsed?.kind === 'current-selection-evidence' ? architectureFacts(parsed)?.facts ?? [] : [];
+}
+
 /** Pure preparation for automatic explanations and bounded current-file chat.
- * Everything returned remains untrusted evidence data, never model instructions. */
+ * Everything returned remains untrusted evidence data, never model instructions.
+ * `symbolSource` is the selected symbol's own source for a graph selection (K14). */
 export function prepareExplanationContext(reader?: BrowserChatReaderContext,
-    graph?: BrowserChatContext | readonly BrowserChatContext[], maxCharacters = 4000): PreparedExplanationContext {
+    graph?: BrowserChatContext | readonly BrowserChatContext[], maxCharacters = 4000, symbolSource?: BrowserChatSource): PreparedExplanationContext {
     const budget = Number.isFinite(maxCharacters) ? Math.max(0, Math.floor(maxCharacters)) : 4000;
-    const snapshot = snapshotReaderContext(reader), source = snapshot?.source;
+    const snapshot = snapshotReaderContext(reader), source = snapshot?.source ?? (symbolSource?.text ? symbolSource : undefined);
     const graphs: readonly BrowserChatContext[] = graph ? Array.isArray(graph) ? graph : [graph as BrowserChatContext] : [];
     const selectedGraphs = graphs.slice(0, 2).map(graphEvidence);
-    const label = bounded(source?.path ?? reader?.path ?? graphs[0]?.label ?? 'Current selection', Math.min(120, Math.floor(budget / 10)));
+    const label = bounded(snapshot?.source?.path ?? reader?.path ?? graphs[0]?.label ?? source?.path ?? 'Current selection', Math.min(120, Math.floor(budget / 10)));
     const fallback = bounded(source?.text
         ? `${source.kind === 'selection' ? 'Selected source' : 'Source'} is available as cited text. A generated explanation is unavailable.`
         : `Source unavailable.${selectedGraphs.some(item => item.facts.length) ? ' Only the supplied static graph facts are available.' : ' There is insufficient evidence to explain this selection.'}`,
@@ -260,7 +292,7 @@ export function prepareExplanationContext(reader?: BrowserChatReaderContext,
     const limitBudget = Math.min(1000, Math.floor((budget - label.length - fallback.length) / 3));
     const desiredLimits: string[] = [];
     if (!source?.text) desiredLimits.push(`Source unavailable${reader ? ` (reader status: ${snapshot?.status ?? 'unavailable'})` : ''}; implementation details cannot be established.`);
-    if (source?.partial) desiredLimits.push(`Reader source limitation: ${bounded(source.partial, 220)}`);
+    if (source?.partial) desiredLimits.push(`${snapshot?.source ? 'Reader source limitation' : 'Source limitation'}: ${bounded(source.partial, 220)}`);
     if (graphs.length > 2) desiredLimits.push(`${graphs.length - 2} graph snapshots omitted.`);
     desiredLimits.push(...selectedGraphs.flatMap(item => item.limitations));
     const evidenceBudget = Math.max(0, budget - label.length - fallback.length - limitBudget);

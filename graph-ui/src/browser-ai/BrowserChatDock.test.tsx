@@ -8,6 +8,7 @@ import type { BrowserChatOptions } from './browser-ai-controller';
 import { BROWSER_MODELS } from './model-policy';
 import { JSONB_AGG_CALLERS, jsonbAggEvidence, jsonbAggScope } from './galaxy-evidence.fixture';
 import { AGENT_PREFERENCES_KEY } from './agent-preferences';
+import { djangoAreaEvidence } from './architecture-evidence.fixture';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -30,7 +31,10 @@ function fixture() {
         chat: vi.fn(async (_messages: readonly BrowserChatMessage[], _onToken: (chunk: string) => void, _options?: BrowserChatOptions) => 'Adds the two values.'),
         stop: vi.fn(), dispose: vi.fn(),
     };
-    const props = { proactive: false, open: true, onClose: vi.fn(), onAttachmentConsumed: vi.fn(), onAttachmentRemoved: vi.fn(), createRuntime: vi.fn(() => runtime), removeCache: vi.fn(async () => {}) };
+    // The selected symbol's source, as get_code_snippet returns it for JSONBAgg (K14).
+    const readSource = vi.fn(async () => ({ source: 'class JSONBAgg(OrderableAggMixin, Aggregate):\n    function = "JSONB_AGG"\n', file_path: 'django/contrib/postgres/aggregates/general.py',
+        start_line: 50, end_line: 51, source_mode: 'full' }));
+    const props = { proactive: false, open: true, onClose: vi.fn(), onAttachmentConsumed: vi.fn(), onAttachmentRemoved: vi.fn(), createRuntime: vi.fn(() => runtime), removeCache: vi.fn(async () => {}), readSource };
     return { runtime, props };
 }
 async function render(props: BrowserChatDockProps): Promise<void> { renderedProps = props; await act(async () => root.render(<BrowserChatDock {...props} />)); }
@@ -1157,7 +1161,9 @@ describe('per-selection explanation cache', () => {
         await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence() });
         await settleSelection();
         expect(runtime.chat).toHaveBeenCalledOnce();
-        expect(runtime.chat.mock.calls[0][0].at(-1)!.content).toContain('Incoming relationships: 23 from 12 symbols.');
+        // The complete scope's facts are listed in the card; the model reads the symbol's source (K7, K14).
+        expect(card()).toContain('Incoming relationships: 23 from 12 symbols (CALLS 11, TESTS 11, DEFINES 1).');
+        expect(runtime.chat.mock.calls[0][0].at(-1)!.content).toContain('class JSONBAgg(OrderableAggMixin, Aggregate):');
         await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence({ state: 'partial' }) });
         await settleSelection(); expect(runtime.chat).toHaveBeenCalledOnce();
     });
@@ -1267,5 +1273,74 @@ describe('agent configuration limits', () => {
         await click('Download & load');
         await act(async () => { await vi.advanceTimersByTimeAsync(650); });
         expect(runtime.chat.mock.calls[0][2]).toMatchObject({ maxOutputTokens: 64, generationProfile: 'automatic-explanation' });
+    });
+});
+
+describe('grounded automatic explanations (K14, K7)', () => {
+    afterEach(() => vi.useRealTimers());
+    const settle = async () => { await act(async () => { await vi.advanceTimersByTimeAsync(650); }); };
+    const card = () => container.querySelector('[aria-label="Current selection explanation"]')!;
+    const snippet = { source: 'class JSONBAgg(OrderableAggMixin, Aggregate):\n    function = "JSONB_AGG"\n    template = "%(function)s(%(distinct)s%(expressions)s %(order_by)s)"\n    allow_distinct = True\n    output_field = JSONField()\n',
+        file_path: '/abs/django/contrib/postgres/aggregates/general.py', start_line: 50, end_line: 54, source_mode: 'full' };
+
+    it('reads the selected symbol source, sends it with the facts and shows listed facts with one model sentence', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        const readSource = vi.fn(async () => snippet);
+        runtime.chat.mockResolvedValueOnce('`JSONBAgg` sets `function` to "JSONB_AGG" and allows distinct values. It is called on a list of integers.');
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence(), readSource }); await click('Download & load'); await settle();
+        expect(readSource).toHaveBeenCalledExactlyOnceWith('django-demo.JSONBAgg', { maxLines: 40 });
+        const prompt = runtime.chat.mock.calls[0][0].map(message => message.content).join('\n');
+        expect(prompt).toContain('```\nclass JSONBAgg(OrderableAggMixin, Aggregate):\n    function = "JSONB_AGG"');
+        expect(prompt).toContain('Describe this class in one short sentence that starts with `JSONBAgg`.');
+        expect(prompt).not.toContain('Source unavailable');
+        expect(card().textContent).toContain('Incoming relationships: 23 from 12 symbols (CALLS 11, TESTS 11, DEFINES 1).');
+        expect(card().textContent).toContain('JSONBAgg sets function to "JSONB_AGG" and allows distinct values.');
+        expect(card().textContent).not.toContain('list of integers');
+        expect(card().textContent).toContain('Facts listed from the indexed graph; the last sentence is generated by the model.');
+        const disclosure = card().querySelector('.cbm-chat-source-content')!;
+        expect(disclosure.textContent).not.toContain('Source unavailable');
+        expect(disclosure.textContent).toContain('class JSONBAgg(OrderableAggMixin, Aggregate):');
+        // A question about the selection gets the same source, read once.
+        await type('What does it configure?'); await click('Send ↑');
+        expect(readSource).toHaveBeenCalledOnce();
+        expect(runtime.chat.mock.calls[1][0].at(-1)!.content).toContain('function = "JSONB_AGG"');
+    });
+
+    it('shows only the listed facts when the model names what the evidence lacks', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        const readSource = vi.fn(async () => snippet);
+        runtime.chat.mockResolvedValueOnce('JSONBAgg is checked by the flake8 linter.');
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence(), readSource }); await click('Download & load'); await settle();
+        expect(runtime.chat).toHaveBeenCalledOnce();
+        expect(card().textContent).toContain('Selected: JSONBAgg (Class) in django/contrib/postgres/aggregates/general.py:50-54.');
+        expect(card().textContent).not.toContain('flake8');
+        expect(card().textContent).toContain("The model's sentence named something the evidence does not show and was left out.");
+    });
+
+    it('does not ask the model at all without source: the listed facts are the explanation', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        const readSource = vi.fn(async () => { throw new Error('source unavailable'); });
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence(), readSource }); await click('Download & load'); await settle();
+        expect(readSource).toHaveBeenCalledOnce();
+        expect(runtime.countTokens).not.toHaveBeenCalled();
+        expect(runtime.chat).not.toHaveBeenCalled();
+        expect(card().textContent).toContain('Incoming relationships: 23 from 12 symbols (CALLS 11, TESTS 11, DEFINES 1).');
+        expect(card().textContent).toContain('Listed from the indexed graph; not generated by the model.');
+    });
+
+    it('explains an Architecture area from readable facts without reading source', async () => {
+        vi.useFakeTimers(); const { props, runtime } = fixture();
+        const readSource = vi.fn(async () => snippet);
+        await render({ ...props, proactive: true, selectionScope: 'django-demo:architecture', proactiveSelection: djangoAreaEvidence(), readSource }); await click('Download & load'); await settle();
+        expect(readSource).not.toHaveBeenCalled();
+        expect(runtime.chat).not.toHaveBeenCalled();
+        expect(card().textContent).toContain('Selected source area: django (2310 files · 15299 indexed nodes).');
+        expect(card().textContent).toMatch(/Connections to \(root\): CALLS ×1,743/);
+        expect(card().textContent).not.toMatch(/Finding a|Selected\.|members\[\d+\]|startLine/);
+        // A question about the area gets the same readable facts.
+        await type('What is in this area?'); await click('Send ↑');
+        const prompt = runtime.chat.mock.calls[0][0].map(message => message.content).join('\n');
+        expect(prompt).toContain('Selected source area: `django` (2310 files · 15299 indexed nodes).');
+        expect(prompt).not.toMatch(/Selected\.|members\[\d+\]|startLine/);
     });
 });

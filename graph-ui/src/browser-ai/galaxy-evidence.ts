@@ -9,7 +9,7 @@ export interface GalaxyEvidence {
     /** The selected scope itself (node id, qualified name or path): stable while it loads. */
     identity: unknown;
     selectionKind: string;
-    roots: { name: string; kind?: string; filePath?: string; startLine?: number; endLine?: number; documentation?: string }[];
+    roots: { name: string; kind?: string; qualifiedName?: string; filePath?: string; startLine?: number; endLine?: number; documentation?: string }[];
     rootCount: number;
     depth: number;
     direction: 'both' | 'inbound' | 'outbound';
@@ -68,7 +68,7 @@ export function readGalaxyEvidence(snapshot: string): GalaxyEvidence | undefined
     const state = limits?.state === 'complete-indexed-scope' ? 'complete' : limits?.state === 'loading-partial-preview' ? 'loading' : 'partial';
     const roots = records(selected?.roots).flatMap(root => {
         const name = text(root.name, 120);
-        return name ? [{ name, kind: text(root.kind, 40), filePath: text(root.filePath, 240), startLine: line(root.startLine),
+        return name ? [{ name, kind: text(root.kind, 40), qualifiedName: text(root.qualifiedName, 400), filePath: text(root.filePath, 240), startLine: line(root.startLine),
             endLine: line(root.endLine), documentation: text(root.documentation, 300) }] : [];
     });
     return {

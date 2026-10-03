@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type JSX, type Re
 import type { BrowserAiProgress } from './browser-ai-controller';
 import { createBrowserChatRuntime, type BrowserChatRuntime } from './browser-ai-runtime';
 import { BROWSER_MODELS, removeBrowserModelCache, type BrowserModel } from './model-policy';
-import { buildChatMessages, selectionLocation, snapshotAttachment, snapshotReaderContext, trimChatHistory, type BrowserChatAttachment, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatTurn } from './chat-model';
+import { buildChatMessages, selectionLocation, snapshotAttachment, snapshotReaderContext, trimChatHistory, type BrowserChatAttachment, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatSource, type BrowserChatTurn } from './chat-model';
 import { explanationInput, EXPLANATION_DELAY_MS, type ExplanationInput } from './proactive-selection';
-import { prepareExplanationContext, type PreparedExplanationContext } from './explanation-context';
-import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, citedInterpretation, parseExplanationResponse, explanationMessages, formatExplanationEvidence } from './explanation-response';
+import { prepareExplanationContext, selectionSummary, type PreparedExplanationContext } from './explanation-context';
+import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, citedInterpretation, explanationMode, explanationSentence, parseExplanationResponse, explanationMessages, formatExplanationEvidence } from './explanation-response';
+import { carriedSource, selectionSubject, SYMBOL_SOURCE_LINES, sourceTargetOf, symbolSource, type SymbolSourceReader } from './symbol-source';
 import { relationshipAnswer, relationshipSuggestion } from './relationship-answer';
 import { clampTokenLimits, tokenLimitBounds, tokenLimitsFor, useAgentPreferences, type TokenLimits } from './agent-preferences';
 import { browserChatText, relationshipWords } from './strings';
@@ -39,6 +40,8 @@ export interface BrowserChatDockProps {
     onAttachmentRemoved?: (id: string) => void;
     createRuntime?: (modelId: string) => BrowserChatRuntime;
     removeCache?: (modelId: string) => Promise<void>;
+    /** Reads a selected symbol's source (get_code_snippet), so explanations stand on code, not names. */
+    readSource?: SymbolSourceReader;
 }
 
 type Phase = 'off' | 'preparing' | 'ready' | 'counting' | 'generating' | 'removing';
@@ -49,6 +52,14 @@ const EXPLANATION_CACHE_SIZE = 32;
 const initialModel = BROWSER_MODELS.find(model => model.availability === 'available')!;
 const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error);
 const sizeLabel = (bytes: number): string => bytes >= 1_000_000_000 ? `${(bytes / 1_000_000_000).toFixed(2)} GB` : `${Math.ceil(bytes / 1_000_000)} MB`;
+/** Symbol sources read for explanations and questions, newest last. */
+const SOURCE_CACHE_SIZE = 32;
+
+/** The listed facts first, then the model's sentence if it stood the check, then who wrote what (K7). */
+function groundedExplanation(summary: readonly string[], sentence: string | undefined, dropped: boolean): string {
+    const note = sentence ? browserChatText.factsAndSentence : dropped ? browserChatText.sentenceDropped : browserChatText.factsOnly;
+    return [summary.map(line => `- ${line}`).join('\n'), ...sentence ? [sentence] : [], `_${note}_`].join('\n\n');
+}
 
 function Attachment({ attachment, label }: { attachment: BrowserChatAttachment; label?: string }): JSX.Element {
     return <details className="cbm-chat-attachment">
@@ -90,10 +101,11 @@ function AnswerNotes({ shortened, packet, model, historyOmitted }: { shortened?:
     </>;
 }
 
-function PacketSource({ packet, citation }: { packet: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation> }): JSX.Element {
+/** `codeOnly` where the listed facts already stand above it, in the explanation card. */
+function PacketSource({ packet, citation, codeOnly = false }: { packet: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; codeOnly?: boolean }): JSX.Element {
     return <>
         {packet.limitations.map((limit, index) => <p className="cbm-chat-evidence-note" key={index}>{limit}</p>)}
-        {citation ? <pre>{citation.quote}</pre> : packet.evidence.slice(0, 3).map(item => <div key={item.id}>
+        {citation ? <pre>{citation.quote}</pre> : packet.evidence.filter(item => !codeOnly || item.source === 'code').slice(0, 3).map(item => <div key={item.id}>
             {item.location && <small>{item.location.path}:{item.location.startLine}-{item.location.endLine}</small>}<pre>{item.text}</pre>
         </div>)}
     </>;
@@ -122,11 +134,12 @@ function ContextSnapshot({ context }: { context: BrowserChatContext }): JSX.Elem
 }
 
 /** Keep mounted when collapsed: state and worker lifetime are independent of visibility. */
-export default function BrowserChatDock({ proactiveSelection, selectionScope = "", historyKey, proactive = true, onAgentStateChange, onAgentModelChange, settingsRequest = 0, open, onClose, showCollapsed = false, onOpen, attachment, readerContext, context = [], pendingContext, onContextConsumed, onContextRemoved, onAttachmentConsumed, onAttachmentRemoved, createRuntime = createBrowserChatRuntime, removeCache = removeBrowserModelCache }: BrowserChatDockProps): JSX.Element {
+export default function BrowserChatDock({ proactiveSelection, selectionScope = "", historyKey, proactive = true, onAgentStateChange, onAgentModelChange, settingsRequest = 0, open, onClose, showCollapsed = false, onOpen, attachment, readerContext, context = [], pendingContext, onContextConsumed, onContextRemoved, onAttachmentConsumed, onAttachmentRemoved, createRuntime = createBrowserChatRuntime, removeCache = removeBrowserModelCache, readSource }: BrowserChatDockProps): JSX.Element {
     const { preferences, setPreferences } = useAgentPreferences();
     const automatic = preferences.automatic;
     const [explanation, setExplanation] = useState<Explanation>();
     const explanations = useRef(new Map<string, Explanation>());
+    const symbolSources = useRef(new Map<string, Promise<BrowserChatSource | undefined>>());
     const [retryExplanation, setRetryExplanation] = useState(0);
     const autoRun = useRef<{ key: string; cancelled: boolean; settled: Promise<void> } | undefined>(undefined);
     const manualRequest = useRef<{ cancelled: boolean } | undefined>(undefined);
@@ -181,7 +194,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     useEffect(() => {
         if (historyProject.current === historyKey) return;
         historyProject.current = historyKey;
-        explanations.current.clear(); resetProject();
+        explanations.current.clear(); symbolSources.current.clear(); resetProject();
         setSelectedContext([]); setHandledContextId(undefined); setNewExplanation(false);
     }, [historyKey]);
     useEffect(() => {
@@ -260,6 +273,22 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const timer = setTimeout(() => { void explain(snapshot); }, EXPLANATION_DELAY_MS);
         return () => clearTimeout(timer);
     }, [selected?.key, selected?.waiting, selected?.evidence, phase, automatic, proactive, retryExplanation, historyReady]);
+    /** The selection's own source: what the view already read, or the selected symbol read
+     * once through get_code_snippet. A failed read is retried on the next request. */
+    const sourceFor = (context: BrowserChatContext | undefined): Promise<BrowserChatSource | undefined> => {
+        const carried = carriedSource(context);
+        const target = carried ? undefined : sourceTargetOf(context);
+        if (carried || !target || !readSource) return Promise.resolve(carried);
+        const cache = symbolSources.current;
+        let read = cache.get(target.qualifiedName);
+        if (!read) {
+            read = readSource(target.qualifiedName, { maxLines: SYMBOL_SOURCE_LINES }).then(snippet => symbolSource(target, snippet, 'indexed-snippet'),
+                () => { cache.delete(target.qualifiedName); return undefined; });
+            cache.set(target.qualifiedName, read);
+            while (cache.size > SOURCE_CACHE_SIZE) cache.delete(cache.keys().next().value!);
+        }
+        return read;
+    };
     const remember = (entry: Explanation): void => {
         const cache = explanations.current;
         cache.delete(entry.key); cache.set(entry.key, entry);
@@ -276,16 +305,31 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         operationSettled.current = settled;
         const run = { key: snapshot.key, cancelled: false, settled }; autoRun.current = run; lastAttempt.current = snapshot.key;
         const valid = () => epoch.current === ticket && !run.cancelled && !stopRequested.current && selectionRef.current?.key === snapshot.key;
-        setExplanation({ key: snapshot.key, label: snapshot.label, answer: '', status: 'generating' });
+        // Graph selections show their listed facts at once; the model only adds a sentence.
+        const summary = snapshot.reader ? [] : selectionSummary(snapshot.graph);
+        const writing = summary.length ? `${summary.map(line => `- ${line}`).join('\n')}\n\n_${sourceTargetOf(snapshot.graph) || carriedSource(snapshot.graph) ? browserChatText.writingSentence : browserChatText.readingFacts}_` : '';
+        setExplanation({ key: snapshot.key, label: snapshot.label, answer: writing, status: 'generating' });
         setPhase('counting');
         try {
-            let packet = prepareExplanationContext(snapshot.reader, snapshot.graph, 3200);
-            let request = explanationMessages(packet);
+            const symbol = snapshot.reader ? undefined : await sourceFor(snapshot.graph);
+            if (!valid()) return;
+            let packet = prepareExplanationContext(snapshot.reader, snapshot.graph, 3200, symbol);
+            // Without source the model could only restate the facts or guess from names (an area
+            // became "a high-level web framework"): the listed facts are the explanation (K7).
+            if (summary.length && explanationMode(packet) === 'graph') {
+                const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: groundedExplanation(summary, undefined, false), status: 'complete', packet,
+                    ...snapshot.evidence ? { evidence: snapshot.evidence } : {} };
+                remember(complete); setExplanation(complete);
+                if (!followExplanation.current) setNewExplanation(true);
+                return;
+            }
+            const subject = snapshot.reader ? undefined : selectionSubject(snapshot.graph);
+            let request = explanationMessages(packet, subject);
             let count = await currentRuntime.countTokens(request);
             if (!valid()) return;
             for (let budget = 1900; count > autoInput && budget >= 300; budget = Math.floor(budget * .6)) {
-                packet = prepareExplanationContext(snapshot.reader, snapshot.graph, budget);
-                request = explanationMessages(packet);
+                packet = prepareExplanationContext(snapshot.reader, snapshot.graph, budget, symbol);
+                request = explanationMessages(packet, subject);
                 count = await currentRuntime.countTokens(request);
                 if (!valid()) return;
             }
@@ -293,7 +337,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 setExplanation({ key: snapshot.key, label: snapshot.label, answer: '', status: 'error', packet, error: !packet.evidence.length ? 'No source or graph evidence is available for this selection.' : 'This selection is too large for the local agent. Select a smaller code range and try again.' });
                 return;
             }
-            setExplanation({ key: snapshot.key, label: snapshot.label, answer: '', status: 'generating', packet });
+            setExplanation({ key: snapshot.key, label: snapshot.label, answer: writing, status: 'generating', packet });
             setPhase('generating');
             // Keep an explanation together and ignore output from superseded selections.
             let shortened = false;
@@ -302,8 +346,15 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             if (valid()) {
                 const result = parseExplanationResponse(answer, packet);
                 if (!followExplanation.current) setNewExplanation(true);
-                if (result.status === 'generated') {
-                    const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: result.markdown, status: 'complete', mode: 'interpretation', packet, citation: result.citation,
+                // One sentence beside the facts (two for reader code), and none that names what the evidence lacks.
+                const checked = result.status === 'generated' ? explanationSentence(result.markdown, packet) : {};
+                if (summary.length || (result.status === 'generated' && checked.dropped)) {
+                    const markdown = summary.length ? groundedExplanation(summary, checked.sentence, checked.dropped !== undefined) : `_${browserChatText.explanationDropped}_`;
+                    const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: markdown, status: 'complete', mode: 'interpretation', packet,
+                        ...shortened && checked.sentence ? { shortened, limit: { inputTokens: autoInput, outputTokens: autoOutput } } : {}, ...snapshot.evidence ? { evidence: snapshot.evidence } : {} };
+                    remember(complete); setExplanation(complete);
+                } else if (result.status === 'generated') {
+                    const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: checked.sentence ?? result.markdown, status: 'complete', mode: 'interpretation', packet, citation: result.citation,
                         ...shortened ? { shortened, limit: { inputTokens: autoInput, outputTokens: autoOutput } } : {}, ...snapshot.evidence ? { evidence: snapshot.evidence } : {} };
                     remember(complete); setExplanation(complete);
                 } else setExplanation({ key: snapshot.key, label: snapshot.label, answer: '', status: 'error', packet, error: result.reason });
@@ -450,10 +501,13 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const earlier = (ask ? turns.filter(item => item.id !== retry.id) : turns).filter(item => item.topic?.key === topic?.key);
         let history: ChatTurn[] = earlier;
         const makeRequest = () => buildChatMessages(history, prompt, source, extra, reader, currentGraph, packet ? formatExplanationEvidence(packet) : undefined);
-        if (!retry && ((reader?.source?.text.length ?? 0) > 5000 || currentGraph.length)) packet = prepareExplanationContext(reader, currentGraph, chatEvidence);
-        let request = retry && !ask ? retry.request.map(message => ({ ...message })) : makeRequest();
         const queued = { cancelled: false }; manualRequest.current = queued;
         const waitingEpoch = epoch.current;
+        // The selected symbol's source grounds a question as it grounds the explanation (K14).
+        const symbol = !retry && !reader && currentGraph.length ? await sourceFor(currentGraph[0]) : undefined;
+        if (queued.cancelled || manualRequest.current !== queued || epoch.current !== waitingEpoch || runtime.current !== currentRuntime) return;
+        if (!retry && ((reader?.source?.text.length ?? 0) > 5000 || currentGraph.length)) packet = prepareExplanationContext(reader, currentGraph, chatEvidence, symbol);
+        let request = retry && !ask ? retry.request.map(message => ({ ...message })) : makeRequest();
         if (automaticRun) {
             automaticRun.cancelled = true; lastAttempt.current = undefined;
             setQuestionQueued(true); currentRuntime.stop();
@@ -479,7 +533,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 if (epoch.current !== ticket || stopRequested.current) return;
             }
             for (let budget = packet ? Math.floor(chatEvidence * .6) : chatEvidence; !retry && count > limit && (reader?.source || currentGraph.length) && budget >= 300; budget = Math.floor(budget * .6)) {
-                packet = prepareExplanationContext(reader, currentGraph, budget);
+                packet = prepareExplanationContext(reader, currentGraph, budget, symbol);
                 request = makeRequest(); count = await currentRuntime.countTokens(request);
                 if (epoch.current !== ticket || stopRequested.current) return;
             }
@@ -604,7 +658,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         }}>
             {showConversation && !needsEnable && phase !== 'preparing' && phase !== 'removing' && proactive && automatic && selected && <section className="cbm-chat-explanation" aria-label="Current selection explanation">
                 <SourceDisclosure title="Generated explanation; check source for exact behavior.">
-                    {explanation?.key === selected.key && explanation.packet ? <PacketSource packet={explanation.packet} citation={explanation.citation} /> : null}
+                    {explanation?.key === selected.key && explanation.packet ? <PacketSource packet={explanation.packet} citation={explanation.citation} codeOnly={!selected.reader} /> : null}
                 </SourceDisclosure>
                 {explanation?.key === selected.key ? <>
                     <ChatMarkdown text={explanation.answer || (explanation.status === 'generating' ? 'Explaining selection…' : explanation.status === 'stopped' ? 'Explanation stopped.' : '')} />
