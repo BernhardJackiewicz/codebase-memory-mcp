@@ -33,6 +33,30 @@ export function projectOfLocation(search = window.location.search): string {
     return new URLSearchParams(search).get('project') ?? '';
 }
 
+/*
+ * Handtest vom 2026-10-04 (A5): der Wechsel machte aus
+ * "?project=django-demo&workspace=galaxy" die Adresse "?project=cbm", und ein
+ * Neuladen danach konnte einen anderen Arbeitsbereich zeigen. Die Adresse des
+ * neuen Projekts behaelt nun die Parameter der ganzen Seite, die der Aufrufer
+ * nennt (den Arbeitsbereich, die Grenzen des Walks), und nichts, was zum alten
+ * Projekt gehoert.
+ */
+export function projectSwitchHref(project: string, search: string, keep: readonly string[]): string {
+    const from = new URLSearchParams(search);
+    const kept = keep.flatMap(name => { const value = from.get(name); return value === null ? [] : [`&${encodeURIComponent(name)}=${encodeURIComponent(value)}`]; });
+    return `${projectHref(project)}${kept.join('')}`;
+}
+
+/** Haelt einen Parameter der Adresse auf dem Wert, den die Seite zeigt, ohne neuen Eintrag im Verlauf (A5: der Arbeitsbereich). */
+export function useParamInAddress(name: string, value: string): void {
+    useEffect(() => {
+        const url = new URL(window.location.href);
+        if (url.searchParams.get(name) === value) return;
+        url.searchParams.set(name, value);
+        window.history.replaceState(window.history.state, '', url);
+    }, [name, value]);
+}
+
 export interface ProjectWindow<C> {
     /** Wechselt mit jedem Projekt; als React-Schluessel des Fensters gedacht. */
     key: number;
@@ -50,9 +74,11 @@ export interface ProjectWindow<C> {
 
 interface Shown<C> { key: number; project: string; controller: AbortController; carried?: C }
 
-export function ProjectWindows<C>({ children, around = commit => commit() }: {
+export function ProjectWindows<C>({ children, around = commit => commit(), keepParams = [] }: {
     children: (window: ProjectWindow<C>) => ReactNode;
     around?: (commit: () => void) => void;
+    /** Parameter der ganzen Seite, die ein Wechsel in die neue Adresse mitnimmt (A5). */
+    keepParams?: readonly string[];
 }): JSX.Element {
     const [shown, setShown] = useState<Shown<C>>(() => ({ key: 0, project: projectOfLocation(), controller: new AbortController() }));
     const current = useRef(shown); current.current = shown;
@@ -65,9 +91,10 @@ export function ProjectWindows<C>({ children, around = commit => commit() }: {
         around(() => flushSync(() => setShown(next)));
         previous.controller.abort();
     }, [around]);
+    const keep = useRef(keepParams); keep.current = keepParams;
     const open = useCallback((project: string) => {
         if (project === current.current.project) return;
-        window.history.pushState(null, '', projectHref(project));
+        window.history.pushState(null, '', projectSwitchHref(project, window.location.search, keep.current));
         show(project);
     }, [show]);
     const report = useCallback((value: C) => { carry.current = value; }, []);

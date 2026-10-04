@@ -2,7 +2,7 @@
 import { act, useEffect } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ProjectWindows, type ProjectWindow } from './project-windows';
+import { ProjectWindows, useParamInAddress, type ProjectWindow } from './project-windows';
 
 /*
  * K24: a project switch stays in the page. Each project gets a fresh window (fresh state in
@@ -75,6 +75,34 @@ describe('an in-page project switch (K24)', () => {
             window.dispatchEvent(new PopStateEvent('popstate'));
         });
         expect(mounted).toHaveLength(3);
+    });
+
+    /* Hand test 2026-10-04 (A5): the switcher turned "?project=django-demo&workspace=galaxy" into "?project=cbm". */
+    it('keeps the page-wide parameters it is given, the workspace among them, and nothing project specific', async () => {
+        window.history.replaceState(null, '', '/?project=django-demo&workspace=galaxy&codeatlasClosureDepth=4&file=django%2Fshortcuts.py');
+        await act(async () => root.render(<ProjectWindows<Carry> keepParams={['workspace', 'codeatlasClosureDepth', 'codeatlasClosureCap']}>
+            {shown => <Window key={shown.key} window={shown} />}</ProjectWindows>));
+        await act(async () => current!.open('atlas sample'));
+        expect(window.location.search).toBe('?project=atlas%20sample&workspace=galaxy&codeatlasClosureDepth=4');
+        expect(shownProject()).toBe('atlas sample');
+        // Back and Forward of the browser still switch between both projects, each with its own address.
+        const popped = () => new Promise<void>(resolve => window.addEventListener('popstate', () => resolve(), { once: true }));
+        await act(async () => { const done = popped(); window.history.back(); await done; });
+        expect(window.location.search).toBe('?project=django-demo&workspace=galaxy&codeatlasClosureDepth=4&file=django%2Fshortcuts.py');
+        expect(shownProject()).toBe('django-demo');
+        await act(async () => { const done = popped(); window.history.forward(); await done; });
+        expect(shownProject()).toBe('atlas sample');
+    });
+
+    it('writes the workspace in view into the address without a new history entry', async () => {
+        window.history.replaceState(null, '', '/?project=django-demo');
+        const length = window.history.length;
+        function Workspace({ name }: { name: string }) { useParamInAddress('workspace', name); return null; }
+        await act(async () => root.render(<Workspace name="architecture" />));
+        expect(window.location.search).toBe('?project=django-demo&workspace=architecture');
+        await act(async () => root.render(<Workspace name="galaxy" />));
+        expect(window.location.search).toBe('?project=django-demo&workspace=galaxy');
+        expect(window.history.length).toBe(length);
     });
 
     it('commits the switch inside the frame it is given, so the old window is gone and the new one there when it ends', async () => {
