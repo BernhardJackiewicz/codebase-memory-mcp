@@ -42,13 +42,46 @@ const GENERAL = [
 /** Asking for detail: the model answers these as before. */
 const DETAIL = /(?:^| )(?:in details?|detailed|detailliert\S*|ausführlich\S*|line by line|zeile für zeile|step by step|schritt für schritt|genau(?= erklär)|im detail|in depth|thoroughly|every line|jede zeile)(?= |$)/gu;
 
+/** What the current view is called: "die Hierarchie", "this view", "den Graphen" (H1). */
+const VIEW = 'hierarchie|hierarchy|ansicht|view|graph|graphen|graphs|ausschnitt|struktur|structure|darstellung|diagramm|diagram|scope|bild|picture|galaxy|galaxie|layout';
+const VIEW_ADJ = `${ADJ}|gezeigte|gezeigten|angezeigte|angezeigten|shown|displayed`;
+/** The view: "die aktuelle Hierarchie", "this graph", "den Ausschnitt hier", also of the selection ("von .github"). */
+const VIEW_OBJECT = `(?:(?:${DET}) )?(?:(?:${VIEW_ADJ}) )?(?:${VIEW})(?: (?:hier|here|da|there))?(?: (?:von|zu|für|of|for) <name>)?`;
+const VIEW_QUESTIONS = [
+    // German
+    String.raw`^(?:erklär|erkläre|erklären|erklärst|beschreib|beschreibe)(?: (?:mir|uns))?(?: bitte)?(?: mal)?(?: kurz)? ${VIEW_OBJECT}`,
+    String.raw`^(?:kannst|könntest) du (?:(?:mir|uns) )?(?:bitte )?(?:mal )?${VIEW_OBJECT}(?: (?:erklären|beschreiben|zeigen|zusammenfassen))?`,
+    String.raw`^was (?:zeigt|zeigen|bedeutet|bedeuten|ist|enthält) (?:(?:mir|uns) )?${VIEW_OBJECT}`,
+    String.raw`^was (?:sehe ich|sieht man|sehen wir|siehst du)(?: (?:hier|da|gerade|jetzt))*(?: (?:in|auf) ${VIEW_OBJECT})?`,
+    String.raw`^was (?:ist|wird) (?:(?:mir|uns) )?(?:hier|da) (?:zu sehen|dargestellt|gezeigt|angezeigt)`,
+    String.raw`^wie (?:lese|liest|lesen) (?:ich|man|wir) ${VIEW_OBJECT}`,
+    String.raw`^worum geht es (?:in|bei) ${VIEW_OBJECT}`,
+    // English
+    String.raw`^(?:explain|describe|summarize|summarise)(?: to me)? ${VIEW_OBJECT}`,
+    String.raw`^(?:can|could|would) you (?:please )?(?:explain|describe|summarize|summarise)(?: to me)? ${VIEW_OBJECT}`,
+    String.raw`^what (?:does|do) ${VIEW_OBJECT} (?:show|mean|display|contain|tell (?:me|us))`,
+    String.raw`^what (?:is|are) (?:shown|displayed|visible) (?:here|in ${VIEW_OBJECT})`,
+    String.raw`^what is ${VIEW_OBJECT}(?: (?:about|showing))?`,
+    String.raw`^what am i (?:looking at|seeing)(?: (?:here|now))?`,
+    String.raw`^what do (?:i|we) see(?: (?:here|now))?`,
+    String.raw`^how (?:do|should|can) (?:i|we) read ${VIEW_OBJECT}`,
+    String.raw`^tell (?:me|us) about ${VIEW_OBJECT}`,
+    // Only the view: "Hierarchie?"
+    String.raw`^${VIEW_OBJECT}`,
+].map(source => new RegExp(source + END, 'u'));
+
 /** Words a typo is corrected to, as K16 does for "wer ruf": "kansnt" is "kannst". */
 const VOCABULARY = ['kannst', 'könntest', 'sagen', 'macht', 'klasse', 'funktion', 'methode', 'datei', 'erklär', 'erkläre', 'erklären', 'beschreib', 'beschreibe',
     'diese', 'dieser', 'dieses', 'diesen', 'diesem', 'über', 'erzählen', 'explain', 'describe', 'summarize', 'about', 'tell', 'what', 'does', 'this', 'that',
     'code', 'class', 'function', 'method', 'file', 'symbol', 'modul', 'module', 'zusammen', 'bedeutet', 'enthält', 'contain'];
+/** The view as it is mistyped: "heirarchie", "heirachie", "hierachy", "ansciht" (H1). Long words take two typos, as names do. */
+const VIEW_VOCABULARY = ['hierarchie', 'hierarchy', 'ansicht', 'ausschnitt', 'struktur', 'structure', 'graphen', 'darstellung', 'diagramm'];
+/** Real words a typo away from a view word; they are never "corrected" into one. */
+const NOT_VIEW = ['absicht', 'einsicht', 'aussicht', 'gruppen'];
 /** Words of the patterns themselves: never "corrected" into another one ("dies" is no "does"). */
-const OWN = new Set([...[DET, ADJ, KIND, PRONOUN, TAIL].flatMap(list => list.split('|')), ...VOCABULARY, 'was', 'wass', 'tut', 'ist', 'kann', 'man', 'dazu', 'darüber',
-    'steht', 'passiert', 'worum', 'geht', 'bei', 'can', 'could', 'you', 'more', 'do', 'is', 'to', 'how', 'why', 'with', 'from', 'calls', 'call', 'used', 'uses']);
+const OWN = new Set([...[DET, ADJ, KIND, PRONOUN, TAIL, VIEW, VIEW_ADJ].flatMap(list => list.split('|')), ...VOCABULARY, ...NOT_VIEW, 'was', 'wass', 'tut', 'ist', 'kann', 'man', 'dazu', 'darüber',
+    'steht', 'passiert', 'worum', 'geht', 'bei', 'can', 'could', 'you', 'more', 'do', 'is', 'to', 'how', 'why', 'with', 'from', 'calls', 'call', 'used', 'uses',
+    'zeigt', 'zeigen', 'sehe', 'sieht', 'sehen', 'siehst', 'lese', 'liest', 'lesen', 'show', 'shows', 'read', 'see', 'looking', 'seeing', 'visible']);
 const SPELLED = { erklaer: 'erklär', erklaere: 'erkläre', erklaeren: 'erklären', ueber: 'über', fuer: 'für', ausfuehrlich: 'ausführlich', koenntest: 'könntest', enthaelt: 'enthält' } as Record<string, string>;
 
 /** The prompt in lower case, words corrected, the selection's name as `<name>`. */
@@ -62,7 +95,8 @@ function normalize(prompt: string, names: readonly string[]): string {
         if (OWN.has(spelled)) return spelled;
         if (own.some(name => name.length >= 4 && withinEdits(word, name, typoBudget(name)))) return '<name>';
         if (spelled.length < 4) return spelled;
-        return VOCABULARY.find(candidate => withinEdits(spelled, candidate, 1)) ?? spelled;
+        return VOCABULARY.find(candidate => withinEdits(spelled, candidate, 1))
+            ?? VIEW_VOCABULARY.find(candidate => withinEdits(spelled, candidate, candidate.length >= 9 ? 2 : 1)) ?? spelled;
     }).join(' ');
 }
 
@@ -73,6 +107,17 @@ export function generalQuestion(prompt: string, names: readonly string[]): 'gene
     const detail = new RegExp(DETAIL.source, 'u').test(text);
     const asked = detail ? text.replace(DETAIL, ' ').replace(/\s+/g, ' ').trim() : text;
     if (!GENERAL.some(pattern => pattern.test(asked))) return undefined;
+    return detail ? 'detail' : 'general';
+}
+
+/** "general" for a short question about the current view ("erkläre die aktuelle Hierarchie",
+ * "what am I looking at"), "detail" for the same asking for detail, undefined otherwise (H1).
+ * `names` are the selection's: "die Hierarchie von .github" is the view too. */
+export function viewQuestion(prompt: string, names: readonly string[]): 'general' | 'detail' | undefined {
+    const text = normalize(prompt, names);
+    const detail = new RegExp(DETAIL.source, 'u').test(text);
+    const asked = detail ? text.replace(DETAIL, ' ').replace(/\s+/g, ' ').trim() : text;
+    if (!VIEW_QUESTIONS.some(pattern => pattern.test(asked))) return undefined;
     return detail ? 'detail' : 'general';
 }
 

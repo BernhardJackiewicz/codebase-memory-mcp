@@ -3,7 +3,7 @@ import type { BrowserAiProgress } from './browser-ai-controller';
 import { createBrowserChatRuntime, type BrowserChatRuntime } from './browser-ai-runtime';
 import { BROWSER_MODELS, getBrowserModel, isBrowserModelCached, removeBrowserModelCache, type BrowserModel } from './model-policy';
 import { keepAgent, loadProgress, offerAgent, peekAgent, takeAgent, type AgentHandover, type LoadProgress } from './agent-handover';
-import { buildChatMessages, selectionLocation, sentInHistory, snapshotAttachment, snapshotReaderContext, trimChatHistory, type BrowserChatAttachment, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatSource, type BrowserChatTurn } from './chat-model';
+import { buildChatMessages, echoRetryRequest, selectionLocation, sentInHistory, snapshotAttachment, snapshotReaderContext, trimChatHistory, type BrowserChatAttachment, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatSource, type BrowserChatTurn } from './chat-model';
 import { explanationInput, EXPLANATION_DELAY_MS, type ExplanationInput } from './proactive-selection';
 import { prepareExplanationContext, selectionSummary, type PreparedExplanationContext } from './explanation-context';
 import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, citedInterpretation, explanationMode, explanationSentence, namesNotIn, parseExplanationResponse, explanationMessages, formatExplanationEvidence, type DroppedReason } from './explanation-response';
@@ -11,7 +11,7 @@ import { carriedSource, selectionSubject, SYMBOL_SOURCE_LINES, sourceTargetOf, s
 import { codeFacts, codeFactsMarkdown, codeSourceFacts } from './code-facts';
 import { relationshipAnswer, relationshipSuggestion } from './relationship-answer';
 import { clampTokenLimits, tokenLimitBounds, tokenLimitsFor, useAgentPreferences, type TokenLimits } from './agent-preferences';
-import { browserChatText, chatRound3Text, evidenceNote, groundedText, relationshipWords, topicText } from './strings';
+import { browserChatText, chatRound3Text, evidenceNote, groundedText, relationshipWords, topicText, viewText } from './strings';
 import { isGpuRuntimeFailure, BrowserRuntimeFatalError } from './runtime-fault';
 import ChatMarkdown from './ChatMarkdown';
 import AgentSettingsDialog from './AgentSettingsDialog';
@@ -20,7 +20,9 @@ import { chatTopic, contextFreeFollowUp, followedTopic, missingContextAnswer, qu
 import { isDataFile, readerFacts } from './file-facts';
 import { fileOutline } from './file-outline';
 import { readGalaxyEvidence, type GalaxyEvidence } from './galaxy-evidence';
-import { followUpAnswer, generalQuestion, knownNames, noQuestion, noQuestionAnswer, type ExampleSubject } from './question-intent';
+import { followUpAnswer, generalQuestion, knownNames, noQuestion, noQuestionAnswer, viewQuestion, type ExampleSubject } from './question-intent';
+import { viewAnswer } from './view-answer';
+import { echoAnswer } from './echo-answer';
 import './browser-chat.css';
 
 export type { BrowserChatAttachment, BrowserChatContext, BrowserChatReaderContext, BrowserChatSource } from './chat-model';
@@ -89,6 +91,17 @@ function groundedExplanation(summary: readonly string[], sentence: string | unde
     const reason = typeof dropped === 'object' ? dropped : undefined;
     const note = sentence ? words.factsAndSentence : dropped ? words.sentenceDropped(reason) : words.factsOnly;
     return [summary.map(line => `- ${line}`).join('\n'), ...code ? [code] : [], ...sentence ? [sentence] : [], `_${note}_`].join('\n\n');
+}
+/** What a turn says when the model only restated the question: that it gave no answer, then the
+ * facts of the selection or open file the question was about, as a general question lists them (H2). */
+function echoedAnswer(output: string, language: 'en' | 'de', graph: BrowserChatContext | undefined, reader: BrowserChatReaderContext | undefined): string {
+    const text = viewText[language];
+    const echoed = output.replace(/\s+/g, ' ').trim();
+    const shown = echoed.length > 80 ? `${echoed.slice(0, 79)}…` : echoed;
+    const source = reader?.source;
+    const summary = graph ? selectionSummary(graph, language) : source ? isDataFile(source.path) ? readerFacts(reader) : codeSourceFacts(source, language).summary : [];
+    if (!summary.length) return `${text.noAnswer(shown)} ${text.rephrase}`;
+    return `${text.noAnswer(shown)} ${text.factsFollow}\n\n${groundedExplanation(summary, undefined, false, graph ? 'graph' : 'file', language)}`;
 }
 /** The same while the model writes its sentence. */
 const writingExplanation = (summary: readonly string[], note: string, code?: string): string =>
@@ -663,6 +676,17 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const language = questionLanguage(prompt);
         const galaxy = currentGraph[0] ? readGalaxyEvidence(currentGraph[0].text) : undefined;
         const fileSource = reader?.source;
+        // A question about the current view ("erkläre die aktuelle Hierarchie", "what am I looking at")
+        // is answered from the loaded scope: the model only restated it (H1).
+        const view = !retry && !source && !extra.length && galaxy && viewQuestion(prompt, galaxyNames(galaxy)) === 'general' ? viewAnswer(galaxy, language) : undefined;
+        if (view) {
+            const id = `local-turn-${crypto.randomUUID()}`, scope = currentGraph[0];
+            setTurns(previous => [...previous, { id, prompt, context: extra, topic, listedFrom: scope, replyLanguage: language,
+                evidence: prepareExplanationContext(undefined, scope, chatEvidence, knownSource(scope)), modelId: model.id, request: [],
+                answer: view, status: 'complete', answeredFrom: 'graph' }]);
+            consume(); listSource(id, scope);
+            return;
+        }
         // A prompt that asks nothing ("test", "hallo") gets questions it could ask, not an echo of the model (C6).
         const known = knownNames({ galaxy, names: galaxy ? galaxyNames(galaxy) : fileSource ? [fileSource.path] : [],
             texts: [fileSource?.text ?? '', source?.text ?? '', ...currentGraph.filter(() => !galaxy).map(item => item.label), ...extra.map(item => item.label)] });
@@ -726,7 +750,8 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             consume();
             return;
         }
-        let request = grounded ? explanationMessages(packet!, grounded.subject, language) : retry && !ask ? retry.request.map(message => ({ ...message })) : makeRequest();
+        // An echo asked again is told not to restate the question: the same request gets the same echo (H2).
+        let request = grounded ? explanationMessages(packet!, grounded.subject, language) : retry && !ask ? retry.echo ? echoRetryRequest(retry.request) : retry.request.map(message => ({ ...message })) : makeRequest();
         if (automaticRun) {
             automaticRun.cancelled = true; lastAttempt.current = undefined;
             setQuestionQueued(true); currentRuntime.stop();
@@ -791,8 +816,17 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 // One sentence beside the facts, checked like the sentence of the explanation card.
                 const result = parseExplanationResponse(output, packet!);
                 const checked = !stopRequested.current && result.status === 'generated' ? explanationSentence(result.markdown, packet!, request.map(message => message.content).join('\n')) : {};
-                const answer = groundedExplanation(grounded.summary, checked.sentence, checked.reason ?? checked.dropped !== undefined, grounded.from, language, code);
+                // A sentence that only restates the question says nothing beside the facts (H2).
+                const echoed = checked.sentence !== undefined && echoAnswer(checked.sentence, prompt);
+                const answer = groundedExplanation(grounded.summary, echoed ? undefined : checked.sentence, checked.reason ?? (echoed || checked.dropped !== undefined), grounded.from, language, code);
                 setTurns(previous => previous.map(item => item.id === id ? { ...item, answer, status: stopRequested.current ? 'stopped' : 'complete' } : item));
+                return;
+            }
+            // An answer that only restates the question is none: the turn says so, with the facts it was about (H2).
+            if (!stopRequested.current && echoAnswer(output, prompt)) {
+                const about = packetGraph[0] ?? retry?.listedFrom;
+                setTurns(previous => previous.map(item => item.id === id ? { ...item, answer: echoedAnswer(output, language, about, about ? undefined : reader), status: 'complete', echo: true,
+                    replyLanguage: language, ...about ? { listedFrom: about } : {} } : item));
                 return;
             }
             setTurns(previous => previous.map(item => item.id === id ? { ...item, answer: stopRequested.current ? item.answer : output, status: stopRequested.current ? 'stopped' : 'complete',
@@ -933,8 +967,8 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                     </> : null}
                 </SourceDisclosure><div className="cbm-chat-answer-text"><ChatMarkdown text={turn.answer || (turn.status === 'generating' ? 'Thinking…' : turn.status === 'stopped' ? 'Stopped before an answer.' : '')} /></div>
                     {turn.status === 'stopped' && turn.answer && <small>Stopped · partial answer</small>}
-                    {!turn.answeredFrom && turn.answer && (turn.status === 'complete' || turn.status === 'stopped') && <small className="cbm-chat-model-note">{ownWords.modelNote}</small>}
-                    {turn.status !== 'generating' && !turn.answeredFrom && <AnswerNotes shortened={limitNote(turn.shortened, turn.limit)} packet={turn.evidence}
+                    {!turn.answeredFrom && !turn.echo && turn.answer && (turn.status === 'complete' || turn.status === 'stopped') && <small className="cbm-chat-model-note">{ownWords.modelNote}</small>}
+                    {turn.status !== 'generating' && !turn.answeredFrom && !turn.echo && <AnswerNotes shortened={limitNote(turn.shortened, turn.limit)} packet={turn.evidence}
                         unsupported={turn.answer ? namesNotIn(turn.answer, turn.request.map(message => message.content).join('\n')) : []} model={BROWSER_MODELS.find(candidate => candidate.id === turn.modelId)?.displayName ?? turn.modelId} historyOmitted={turn.historyOmitted} />}
                     {turn.status === 'error' && <p className="cbm-chat-turn-error" role="alert">{turn.error}</p>}
                     {index === turns.length - 1 && turn.answeredFrom === 'suggestion' && turn.suggestion && <button type="button" className="cbm-chat-retry"

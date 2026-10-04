@@ -1218,8 +1218,10 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         state: scope.complete ? scope.result?.partial ? 'render-limit-partial' : 'complete-indexed-scope' : scope.loading ? 'loading-partial-preview' : 'partial',
         error: scope.error, exhausted: scope.result?.exhausted,
         ...scope.complete && scope.result?.partial ? { renderLimit: { layer: scope.result.partial.layer, kind: scope.result.partial.limit,
-            limit: scope.result.partial.limit === 'nodes' ? nodeBudget : edgeBudget } } : {} }) : undefined,
-    [project, scope.scope, scope.result, scope.depth, scope.direction, scope.complete, scope.loading, scope.error, traceTypes, props.workspaceExpanded, nodeBudget, edgeBudget]);
+            limit: scope.result.partial.limit === 'nodes' ? nodeBudget : edgeBudget } } : {},
+        // Which picture is shown, so the chat can say how to read it (H1).
+        display: mode }) : undefined,
+    [project, scope.scope, scope.result, scope.depth, scope.direction, scope.complete, scope.loading, scope.error, traceTypes, props.workspaceExpanded, nodeBudget, edgeBudget, mode]);
     useSelectionEvidence(props.onSelectionEvidence, agentEvidence, visible && props.workspaceExpanded === true);
     const toggleKind = useCallback((type: string) => {
         if (props.workspaceExpanded && scope.scope) {

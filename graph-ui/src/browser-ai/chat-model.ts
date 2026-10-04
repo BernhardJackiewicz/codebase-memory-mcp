@@ -64,6 +64,9 @@ export interface BrowserChatTurn {
     /** The model's answer to a question the chat had answered itself ("Ask the model"). It
      * stands below that answer instead of replacing it: the listed facts stay (B1). */
     askedModel?: boolean;
+    /** The model only restated the question: the turn says so and lists the facts of the selection
+     * instead (H2). Asked again, the model is told not to restate it. */
+    echo?: boolean;
 }
 
 export interface BrowserChatContext {
@@ -166,9 +169,19 @@ export function historyAnswer(turn: BrowserChatTurn): string {
 }
 
 /** Whether a turn goes into the history of a later request: an answer, not a suggestion,
- * the chat's own hint or its reply that a question has no context. */
+ * the chat's own hint, its reply that a question has no context, or a restated question (H2). */
 export const sentInHistory = (turn: BrowserChatTurn): boolean => turn.status !== 'error' && turn.status !== 'generating'
-    && turn.answeredFrom !== 'suggestion' && turn.answeredFrom !== 'local' && turn.answeredFrom !== 'hint';
+    && turn.answeredFrom !== 'suggestion' && turn.answeredFrom !== 'local' && turn.answeredFrom !== 'hint' && !turn.echo;
+
+/** Added to a question asked again after the model only restated it: the same request got the same
+ * echo, the model does not sample (H2). */
+export const ECHO_RETRY = 'Your last answer only restated the question. Do not restate the question. Answer it with the facts of the evidence, or name the fact that is missing.';
+/** The request of a question asked again after an echo: the last user message carries ECHO_RETRY once. */
+export function echoRetryRequest(request: readonly BrowserChatMessage[]): BrowserChatMessage[] {
+    const last = request.length - 1;
+    return request.map((message, index) => index === last && message.role === 'user' && !message.content.includes(ECHO_RETRY)
+        ? { ...message, content: `${message.content}\n\n${ECHO_RETRY}` } : { ...message });
+}
 
 export function buildChatMessages(turns: readonly BrowserChatTurn[], prompt: string, attachment?: BrowserChatAttachment, context: readonly BrowserChatContext[] = [], readerContext?: BrowserChatReaderContext, currentContext: readonly BrowserChatContext[] = [], currentEvidence?: string,
     language?: keyof typeof ANSWER_LANGUAGE): BrowserChatMessage[] {

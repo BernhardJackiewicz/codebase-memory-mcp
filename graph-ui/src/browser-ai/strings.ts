@@ -561,3 +561,43 @@ export const chatRound3Text: { en: typeof englishRound3Text; de: typeof englishR
         },
     },
 };
+
+type ViewDirection = 'both' | 'inbound' | 'outbound';
+/** The listed answer to a question about the current Galaxy view (H1), and the note for a model
+ * answer that only restated its question (H2), in the language of the question. */
+const englishViewText = {
+    center: (name: string, kind: string, roots: number) => `${name} (${kind}) is in the middle${roots > 1 ? ` with ${en(roots)} symbols` : ''}`,
+    reach: (hops: string, direction: string, both: boolean) => `the scope reaches ${hops}${both ? ' ' : ', '}${direction}`,
+    selectionOnly: 'the scope shows the selection only',
+    /** The heading of a side; the hierarchy draws incoming on the left and outgoing on the right. */
+    side: (side: 'incoming' | 'outgoing', hierarchy: boolean): string => side === 'incoming' ? hierarchy ? 'Left, incoming:' : 'Incoming:' : hierarchy ? 'Right, outgoing:' : 'Outgoing:',
+    /** How the hierarchy is read, as its hint says it: from two layers on each column is one layer further,
+     * and nodes reached through both directions stand in the dashed band below. */
+    readHierarchy: (direction: ViewDirection, columns: boolean) => direction === 'both'
+        ? `How to read the hierarchy: incoming relationships stand on the left, outgoing on the right${columns ? ', each column one layer further in the same direction' : ''}.`
+            + (columns ? ' Nodes reached through both directions, such as a callee of a caller, stand in the dashed band "Mixed directions" below.' : '')
+        : `How to read the hierarchy: the scope follows ${direction === 'inbound' ? 'incoming' : 'outgoing'} relationships only, so everything stands on the ${direction === 'inbound' ? 'left' : 'right'} of the middle${columns ? ', each column one layer further' : ''}.`,
+    readGalaxy: 'The galaxy view shows this scope as a cloud. "hierarchy" at the top right lays the same scope out in columns: incoming on the left, outgoing on the right.',
+    size: (size: string, types: string, state: string) => `${size}, ${types}; ${state}.`,
+    noAnswer: (echoed: string) => `The model gave no answer; it only restated the question ("${echoed}").`,
+    factsFollow: 'This is what the indexed graph lists for the selection:',
+    rephrase: 'Ask the question in other words, or ask again.',
+};
+export const viewText: { en: typeof englishViewText; de: typeof englishViewText } = {
+    en: englishViewText,
+    de: {
+        center: (name: string, kind: string, roots: number) => `${name} (${kind}) steht${roots > 1 ? ` mit ${de(roots)} Symbolen` : ''} in der Mitte`,
+        reach: (hops: string, direction: string, both: boolean) => `der Ausschnitt geht ${hops}${both ? ' ' : ', '}${direction}`,
+        selectionOnly: 'der Ausschnitt zeigt nur die Auswahl',
+        side: (side: 'incoming' | 'outgoing', hierarchy: boolean) => side === 'incoming' ? hierarchy ? 'Links, eingehend:' : 'Eingehend:' : hierarchy ? 'Rechts, ausgehend:' : 'Ausgehend:',
+        readHierarchy: (direction: ViewDirection, columns: boolean) => direction === 'both'
+            ? `So liest du die Hierarchie: eingehende Beziehungen stehen links, ausgehende rechts${columns ? ', jede Spalte eine Ebene weiter in derselben Richtung' : ''}.`
+                + (columns ? ' Was über beide Richtungen erreicht wird, etwa etwas, das ein Aufrufer sonst noch aufruft, steht im gestrichelten Band „Mixed directions“ darunter.' : '')
+            : `So liest du die Hierarchie: der Ausschnitt folgt nur ${direction === 'inbound' ? 'eingehenden' : 'ausgehenden'} Beziehungen, daher steht alles ${direction === 'inbound' ? 'links' : 'rechts'} der Mitte${columns ? ', jede Spalte eine Ebene weiter' : ''}.`,
+        readGalaxy: 'Die Galaxy-Ansicht zeigt diesen Ausschnitt als Wolke. „hierarchy“ oben rechts ordnet denselben Ausschnitt in Spalten: eingehend links, ausgehend rechts.',
+        size: (size: string, types: string, state: string) => `${size}, ${types}; ${state}.`,
+        noAnswer: (echoed: string) => `Das Modell hat keine Antwort gegeben, es hat nur die Frage wiederholt („${echoed}“).`,
+        factsFollow: 'Das listet der indizierte Graph zur Auswahl:',
+        rephrase: 'Stell die Frage mit anderen Worten oder frag erneut.',
+    },
+};
