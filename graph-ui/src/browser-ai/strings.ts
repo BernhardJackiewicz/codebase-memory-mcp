@@ -50,11 +50,12 @@ const GERMAN_KINDS: Readonly<Record<string, readonly [string, string, 'f' | 'm' 
     test: ['Test', 'Tests', 'm'], channel: ['Kanal', 'Kanäle', 'm'], node: ['Knoten', 'Knoten', 'm'], symbol: ['Symbol', 'Symbole', 'n'],
     branch: ['Branch-Knoten', 'Branch-Knoten', 'm'],
 };
-/** The Branch node in the words of the answer: "django-demo · detached HEAD", "django-demo · losgelöster HEAD" (round 4, N1). */
+/** The Branch node in the words of the answer: "django-demo · detached HEAD" (round 4, N1). A German
+ * answer keeps the words of the Galaxy label, so the node it names can be found in the picture. */
 const englishNodeNames: BranchNameWords = galaxyNodeNameText;
 const germanNodeNames: BranchNameWords = {
-    detached: 'losgelöster HEAD',
-    workingTree: 'Arbeitsverzeichnis',
+    detached: galaxyNodeNameText.detached,
+    workingTree: galaxyNodeNameText.workingTree,
     branch: (name: string) => `Branch ${name}`,
     inProject: (project: string, what: string) => `${project} · ${what}`,
 };

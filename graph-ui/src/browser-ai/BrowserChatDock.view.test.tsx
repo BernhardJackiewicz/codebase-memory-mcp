@@ -16,7 +16,7 @@ describe('questions about the current view are answered from the loaded scope (H
             await dock.ask(question);
             const answer = dock.answerOf(dock.last()).replace(/\s+/g, ' ');
             expect(answer).toContain('.github (Ordner) steht in der Mitte; der Ausschnitt geht 1 Schritt in beide Richtungen.');
-            expect(answer).toContain('Links, eingehend: CONTAINS_FOLDER (1): django-demo · losgelöster HEAD');
+            expect(answer).toContain('Links, eingehend: CONTAINS_FOLDER (1): django-demo · detached HEAD');
             expect(answer).toContain('Rechts, ausgehend: CONTAINS_FILE (4): CODE_OF_CONDUCT.md, FUNDING.yml, pull_request_template.md, SECURITY.md CONTAINS_FOLDER (1): workflows');
             expect(answer).toContain('So liest du die Hierarchie: eingehende Beziehungen stehen links, ausgehende rechts.');
             expect(answer).toContain('Aus dem indizierten Graphen gelistet, nicht vom Modell erzeugt.');

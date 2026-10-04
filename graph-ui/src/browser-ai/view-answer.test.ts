@@ -44,7 +44,7 @@ describe('the listed answer about the current view (H1)', () => {
         expect(answer.split('\n\n')).toEqual([
             '`.github` (Ordner) steht in der Mitte; der Ausschnitt geht 1 Schritt in beide Richtungen.',
             // The branch node is named as the Galaxy names it, not by its bare "DETACHED" (K47).
-            'Links, eingehend:\n- **CONTAINS_FOLDER (1):** `django-demo · losgelöster HEAD`',
+            'Links, eingehend:\n- **CONTAINS_FOLDER (1):** `django-demo · detached HEAD`',
             'Rechts, ausgehend:\n- **CONTAINS_FILE (4):** `CODE_OF_CONDUCT.md`, `FUNDING.yml`, `pull_request_template.md`, `SECURITY.md`\n- **CONTAINS_FOLDER (1):** `workflows`',
             'So liest du die Hierarchie: eingehende Beziehungen stehen links, ausgehende rechts.',
             '7 Symbole und 6 Beziehungen, alle Beziehungstypen; vollständig geladen.',

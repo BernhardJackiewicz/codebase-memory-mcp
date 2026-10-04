@@ -29,7 +29,7 @@ it('N1: the related Branch node of .github is listed by its shown name, in Engli
     const evidence = readGalaxyEvidence(githubContext().text)!;
     const [group] = evidence.relationships.incoming;
     expect(relationshipLine(group!, 'incoming', Infinity, relationshipWords.en, true).text).toBe('- **CONTAINS_FOLDER (1):** `django-demo · detached HEAD` (Branch)');
-    expect(relationshipLine(group!, 'incoming', Infinity, relationshipWords.de, true).text).toBe('- **CONTAINS_FOLDER (1):** `django-demo · losgelöster HEAD` (Branch-Knoten)');
+    expect(relationshipLine(group!, 'incoming', Infinity, relationshipWords.de, true).text).toBe('- **CONTAINS_FOLDER (1):** `django-demo · detached HEAD` (Branch-Knoten)');
 });
 
 it('N1: a selected Branch node is named for what it is in the evidence, the topic and the listed answer', () => {
@@ -40,20 +40,21 @@ it('N1: a selected Branch node is named for what it is in the evidence, the topi
     expect(evidence.label).toBe('DETACHED');
     expect(evidence.roots[0]).toMatchObject({ name: 'DETACHED', kind: 'Branch', qualifiedName: 'django-demo.__branch__.detached' });
     expect(selectionSentence(evidence, relationshipWords.en)).toEqual(['Selected: django-demo · detached HEAD (Branch).']);
-    expect(selectionSentence(evidence, relationshipWords.de)).toEqual(['Ausgewählt: django-demo · losgelöster HEAD (Branch-Knoten).']);
+    expect(selectionSentence(evidence, relationshipWords.de)).toEqual(['Ausgewählt: django-demo · detached HEAD (Branch-Knoten).']);
     expect(chatTopic('django-demo:galaxy', { graph })?.label).toBe('django-demo · detached HEAD');
     // A typed "DETACHED" still names the selection; the answer names it as the Galaxy does.
     const english = relationshipAnswer('Who calls DETACHED?', [graph])!;
     expect(english.markdown).toContain('No CALLS edge reaches `django-demo · detached HEAD` in this scope.');
     expect(english.markdown).not.toContain('`DETACHED`');
     const german = relationshipAnswer('Wer ruft DETACHED auf?', [graph])!;
-    expect(german.markdown).toContain('`django-demo · losgelöster HEAD`');
+    expect(german.markdown).toContain('`django-demo · detached HEAD`');
     expect(german.markdown).not.toContain('`DETACHED`');
 });
 
 it('N1: the working tree of cbm and a named branch read the same way', () => {
     const words = relationshipWords.de.nodeNames;
-    expect(words.workingTree).toBe('Arbeitsverzeichnis');
+    // The German answer names the node as the Galaxy label does, so it can be found in the picture.
+    expect(words.workingTree).toBe('working tree');
     expect(words.branch('main')).toBe('Branch main');
     expect(relationshipWords.en.nodeNames.workingTree).toBe('working tree');
 });
