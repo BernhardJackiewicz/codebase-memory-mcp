@@ -25,13 +25,21 @@ export function jsonbAggScope(): { nodes: GraphNode[]; edges: GraphEdge[]; roots
 }
 
 /** The context GalaxyPanel publishes for that scope, with optional scope overrides. */
-export function jsonbAggEvidence(overrides: { depth?: number; direction?: string; state?: GalaxyScope['state']; edges?: GraphEdge[]; nodes?: GraphNode[] } = {}): BrowserChatContext {
+export function jsonbAggEvidence(overrides: { depth?: number; direction?: string; state?: GalaxyScope['state']; edges?: GraphEdge[]; nodes?: GraphNode[];
+    renderLimit?: GalaxyScope['renderLimit'] } = {}): BrowserChatContext {
     const scope = jsonbAggScope();
     const [root] = scope.nodes;
     return selectionEvidenceContext(galaxyScopeEvidence({ project: 'django-demo', identity: { kind: 'symbol', qualifiedName: root.qualified_name!, name: 'JSONBAgg' },
         nodes: [...scope.nodes, ...overrides.nodes ?? []], edges: overrides.edges ?? scope.edges, roots: scope.roots,
         depth: overrides.depth ?? 1, direction: overrides.direction ?? 'both', edgeTypes: 'all',
-        state: overrides.state ?? 'complete-indexed-scope', exhausted: false }));
+        state: overrides.state ?? 'complete-indexed-scope', exhausted: false, ...overrides.renderLimit ? { renderLimit: overrides.renderLimit } : {} }));
+}
+
+/** JSONBAgg after Expand +1 twice in the hand test of 2026-10-04: layer 3 stopped at the render limit (C1). */
+export function jsonbAggRenderLimited(): BrowserChatContext {
+    const further = Array.from({ length: 5533 }, (_, index) => node(50_000 + index, `further_${index}`, 'Function', 'django/db/models/further.py'));
+    const beyond = Array.from({ length: 15_648 }, (_, index) => ({ source: further[index % further.length].id, target: further[(index * 7 + 1) % further.length].id, type: 'CALLS' }));
+    return jsonbAggEvidence({ depth: 3, state: 'render-limit-partial', renderLimit: { layer: 3, kind: 'nodes', limit: 5000 }, nodes: further, edges: [...jsonbAggScope().edges, ...beyond] });
 }
 
 /** A folder of 40 documented symbols with five incoming and five outgoing edge types of 30 symbols each. */

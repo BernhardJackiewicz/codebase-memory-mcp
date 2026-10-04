@@ -16,7 +16,10 @@ export interface GalaxyEvidence {
     edgeTypes: 'all' | string[];
     nodes: number;
     edges: number;
-    state: 'complete' | 'loading' | 'partial';
+    /** `limited`: loaded, but a layer stopped at the render limit (C1). */
+    state: 'complete' | 'loading' | 'partial' | 'limited';
+    /** Where a `limited` scope stopped. */
+    renderLimit?: { layer: number; kind: 'nodes' | 'edges'; limit: number };
     error?: string;
     exhausted: boolean;
     /** Distinct related symbols per side; undefined when the snapshot lost the total. */
@@ -65,7 +68,11 @@ export function readGalaxyEvidence(snapshot: string): GalaxyEvidence | undefined
     const total = (value: unknown) => typeof value === 'number' ? count(value) : undefined;
     const direction = scope.direction === 'inbound' || scope.direction === 'outbound' ? scope.direction : 'both';
     const edgeTypes = Array.isArray(scope.edgeTypes) ? scope.edgeTypes.flatMap(type => text(type, 60) ?? []) : 'all';
-    const state = limits?.state === 'complete-indexed-scope' ? 'complete' : limits?.state === 'loading-partial-preview' ? 'loading' : 'partial';
+    const stopped = record(limits?.renderLimit);
+    const renderLimit = stopped && line(stopped.layer) && line(stopped.limit) && (stopped.kind === 'nodes' || stopped.kind === 'edges')
+        ? { layer: stopped.layer as number, kind: stopped.kind as 'nodes' | 'edges', limit: stopped.limit as number } : undefined;
+    const state = limits?.state === 'complete-indexed-scope' ? 'complete' : limits?.state === 'loading-partial-preview' ? 'loading'
+        : limits?.state === 'render-limit-partial' && renderLimit ? 'limited' : 'partial';
     const roots = records(selected?.roots).flatMap(root => {
         const name = text(root.name, 120);
         return name ? [{ name, kind: text(root.kind, 40), qualifiedName: text(root.qualifiedName, 400), filePath: text(root.filePath, 240), startLine: line(root.startLine),
@@ -76,7 +83,7 @@ export function readGalaxyEvidence(snapshot: string): GalaxyEvidence | undefined
         identity, selectionKind: text(identity.kind, 20) ?? 'node',
         roots, rootCount: Math.max(count(selected?.rootCount), roots.length),
         depth: count(scope.depth), direction, edgeTypes, nodes: count(scope.nodes), edges: count(scope.edges),
-        state, error: text(limits?.error, 200), exhausted: limits?.exhausted === true,
+        state, ...state === 'limited' ? { renderLimit } : {}, error: text(limits?.error, 200), exhausted: limits?.exhausted === true,
         relationships: { incoming: groups(relationships?.incoming), incomingSymbols: total(relationships?.incomingSymbols),
             outgoing: groups(relationships?.outgoing), outgoingSymbols: total(relationships?.outgoingSymbols),
             internal: totals(relationships?.internal), beyond: totals(relationships?.beyond) },
@@ -128,7 +135,9 @@ export function relationshipLine(group: RelationshipGroup, side: 'incoming' | 'o
 export function scopeSentence(evidence: GalaxyEvidence, words: RelationshipWords): string {
     const direction = evidence.direction === 'inbound' ? words.inbound : evidence.direction === 'outbound' ? words.outbound : words.both;
     const types = evidence.edgeTypes === 'all' ? words.allTypes : words.onlyTypes(evidence.edgeTypes);
-    const state = evidence.state === 'complete' ? words.complete : evidence.state === 'loading' ? words.loading : words.partial(evidence.error);
+    const state = evidence.state === 'complete' ? words.complete : evidence.state === 'loading' ? words.loading
+        : evidence.state === 'limited' && evidence.renderLimit ? words.renderLimited(evidence.renderLimit.layer, evidence.renderLimit.limit, evidence.renderLimit.kind)
+            : words.partial(evidence.error);
     const notes = [state, ...evidence.state === 'complete' && evidence.exhausted ? [words.exhausted] : [], ...evidence.truncated ? [words.truncated] : []];
     return words.scope(`${words.hops(evidence.depth)} ${direction}, ${types}`, words.size(evidence.nodes, evidence.edges), notes.join('; '));
 }

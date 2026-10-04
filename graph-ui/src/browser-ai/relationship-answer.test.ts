@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { selectionEvidenceContext } from '../galaxy/selection-evidence';
-import { JSONB_AGG_CALLERS, jsonbAggEvidence, largeFolderScope } from './galaxy-evidence.fixture';
+import { JSONB_AGG_CALLERS, jsonbAggEvidence, jsonbAggRenderLimited, largeFolderScope } from './galaxy-evidence.fixture';
 import { correctRelationWords, relationshipAnswer, relationshipQuestion, relationshipSuggestion } from './relationship-answer';
 
 const line = (markdown: string, type: string) => markdown.split('\n').find(item => item.startsWith(`- **${type}** `)) ?? '';
@@ -78,6 +78,15 @@ describe('listed relationship answers', () => {
         expect(answer.markdown).toContain('Aufrufer von `JSONBAgg` im geladenen Graphen. Eingehende Beziehungen: 23 von 12 Symbolen.');
         expect(line(answer.markdown, 'CALLS')).toMatch(/^- \*\*CALLS\*\* von 11: /);
         expect(answer.markdown).toContain('Ausschnitt: 1 Schritt in beide Richtungen');
+    });
+
+    it('says in the language of the question that a scope stopped at the render limit, with numbers written in that language (C1)', () => {
+        expect(relationshipAnswer('Who calls JSONBAgg?', [jsonbAggRenderLimited()])!.markdown).toContain('Scope: 3 hops in both directions, all relationship types; '
+            + '5,548 symbols and 15,673 relationships; partial: layer 3 stopped at the render limit of 5,000 nodes, so counts and names further out can be incomplete.');
+        const german = relationshipAnswer('Wer ruft JSONBAgg auf?', [jsonbAggRenderLimited()])!.markdown;
+        expect(german).toContain('Ausschnitt: 3 Schritte in beide Richtungen, alle Beziehungstypen; 5.548 Symbole und 15.673 Beziehungen; '
+            + 'unvollständig: Ebene 3 hielt am Darstellungslimit von 5.000 Knoten an, Anzahlen und Namen weiter außen können daher fehlen.');
+        expect(german).not.toContain('vollständig für den indizierten Graphen');
     });
 
     it('never reports "no callers" for a side the scope did not load or while it is still loading', () => {

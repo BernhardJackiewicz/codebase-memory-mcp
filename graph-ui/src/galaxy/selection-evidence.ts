@@ -115,9 +115,12 @@ export interface GalaxyScope {
     depth: number;
     direction: string;
     edgeTypes: readonly string[] | 'all';
-    state: 'complete-indexed-scope' | 'loading-partial-preview' | 'partial';
+    /** `render-limit-partial`: loading finished, but a layer stopped at the render limit (C1). */
+    state: 'complete-indexed-scope' | 'loading-partial-preview' | 'partial' | 'render-limit-partial';
     error?: string;
     exhausted?: boolean;
+    /** The layer that stopped and the limit it stopped at. */
+    renderLimit?: { layer: number; kind: 'nodes' | 'edges'; limit: number };
 }
 
 /** Every scope edge is classified against the roots first; only the names are
@@ -129,7 +132,7 @@ export function galaxyScopeEvidence(scope: GalaxyScope): SelectionEvidence {
             documentation: root.documentation?.slice(0, ROOT_DOCUMENTATION_CHARACTERS) })), omittedRoots: Math.max(0, roots.length - ROOTS_LISTED) },
         scope: { depth: scope.depth, direction: scope.direction, edgeTypes: scope.edgeTypes, nodes: scope.nodes.length, edges: scope.edges.length },
         relationships: scopeRelationships(scope.nodes, scope.edges, scope.roots),
-        limitations: { state: scope.state, error: scope.error, exhausted: scope.exhausted, indexCoverage: 'unavailable',
+        limitations: { state: scope.state, error: scope.error, exhausted: scope.exhausted, ...scope.renderLimit ? { renderLimit: scope.renderLimit } : {}, indexCoverage: 'unavailable',
             interpretation: 'Static indexed relationships, not runtime activity. Scope completeness is relative to the indexed graph and selected depth/types.' } };
 }
 

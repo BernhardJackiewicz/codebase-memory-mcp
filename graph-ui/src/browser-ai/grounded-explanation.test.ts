@@ -3,7 +3,7 @@ import { selectionEvidenceContext } from '../galaxy/selection-evidence';
 import { behaviorMainEvidence, djangoAreaEvidence } from './architecture-evidence.fixture';
 import { prepareExplanationContext, selectionSummary } from './explanation-context';
 import { explanationMessages, explanationSentence, formatExplanationEvidence } from './explanation-response';
-import { jsonbAggEvidence, largeFolderScope } from './galaxy-evidence.fixture';
+import { jsonbAggEvidence, jsonbAggRenderLimited, largeFolderScope } from './galaxy-evidence.fixture';
 import { carriedSource, sourceTargetOf, symbolSource } from './symbol-source';
 
 describe('Architecture selections as readable facts (K7)', () => {
@@ -112,5 +112,13 @@ describe('the selected symbol source in a Galaxy explanation (K14)', () => {
             'Scope: 1 hop in both directions, all relationship types; 15 symbols and 25 relationships; complete for the indexed graph.',
         ]);
         expect(selectionSummary(djangoAreaEvidence())[0]).toBe('Selected source area: `django` (2310 files · 15299 indexed nodes).');
+    });
+
+    it('says that a scope stopped at the render limit is partial, in the card and in the prompt (C1)', () => {
+        const partial = 'Scope: 3 hops in both directions, all relationship types; 5,548 symbols and 15,673 relationships; '
+            + 'partial: layer 3 stopped at the render limit of 5,000 nodes, so counts and names further out can be incomplete.';
+        expect(selectionSummary(jsonbAggRenderLimited()).at(-1)).toBe(partial);
+        expect(formatExplanationEvidence(prepareExplanationContext(undefined, jsonbAggRenderLimited(), 3200))).toContain(partial);
+        expect(selectionSummary(jsonbAggRenderLimited()).join('\n')).not.toContain('complete for the indexed graph');
     });
 });

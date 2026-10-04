@@ -32,29 +32,35 @@ export const browserAiText = {
 };
 
 /** Words for graph facts in the prompt (always English) and for the listed
- * relationship answer, which follows the language of the question. */
+ * relationship answer, which follows the language of the question. Numbers are
+ * written as the language writes them: 5,548 and 5.548 (C1). */
+const en = (value: number) => value.toLocaleString('en-US');
+const de = (value: number) => value.toLocaleString('de-DE');
 const englishRelationshipWords = {
     from: 'from', to: 'to',
-    more: (count: number) => `+${count} more`,
+    more: (count: number) => `+${en(count)} more`,
     hops: (depth: number) => depth === 0 ? 'the selection only' : depth === 1 ? '1 hop' : `${depth} hops`,
     both: 'in both directions', inbound: 'incoming only', outbound: 'outgoing only',
     allTypes: 'all relationship types',
     onlyTypes: (types: readonly string[]) => types.length ? `only ${types.join(', ')}` : 'no relationship types',
-    size: (nodes: number, edges: number) => `${nodes} ${nodes === 1 ? 'symbol' : 'symbols'} and ${edges} ${edges === 1 ? 'relationship' : 'relationships'}`,
+    size: (nodes: number, edges: number) => `${en(nodes)} ${nodes === 1 ? 'symbol' : 'symbols'} and ${en(edges)} ${edges === 1 ? 'relationship' : 'relationships'}`,
     complete: 'complete for the indexed graph',
     loading: 'still loading, so this is a partial preview',
     partial: (error?: string) => `incomplete${error ? `: ${error}` : ''}`,
+    /** A layer stopped at the render limit: the layers inside it are whole, it and those further out are not (C1). */
+    renderLimited: (layer: number, limit: number, kind: 'nodes' | 'edges') => `partial: layer ${layer} stopped at the render limit of ${en(limit)} ${kind}, `
+        + (layer > 1 ? 'so counts and names further out can be incomplete' : 'so counts and names can be incomplete, the direct relationships included'),
     exhausted: 'nothing further beyond this depth',
     scope: (shape: string, size: string, state: string) => `Scope: ${shape}; ${size}; ${state}.`,
-    incoming: (total: number, symbols?: number) => `Incoming relationships: ${total}${symbols === undefined ? '' : ` from ${symbols} ${symbols === 1 ? 'symbol' : 'symbols'}`}.`,
-    outgoing: (total: number, symbols?: number) => `Outgoing relationships: ${total}${symbols === undefined ? '' : ` to ${symbols} ${symbols === 1 ? 'symbol' : 'symbols'}`}.`,
+    incoming: (total: number, symbols?: number) => `Incoming relationships: ${en(total)}${symbols === undefined ? '' : ` from ${en(symbols)} ${symbols === 1 ? 'symbol' : 'symbols'}`}.`,
+    outgoing: (total: number, symbols?: number) => `Outgoing relationships: ${en(total)}${symbols === undefined ? '' : ` to ${en(symbols)} ${symbols === 1 ? 'symbol' : 'symbols'}`}.`,
     noIncoming: 'Incoming relationships: none in this scope.',
     noOutgoing: 'Outgoing relationships: none in this scope.',
     incomingNotLoaded: 'Incoming relationships: not loaded; the scope does not follow incoming edges.',
     outgoingNotLoaded: 'Outgoing relationships: not loaded; the scope does not follow outgoing edges.',
     cut: (side: 'incoming' | 'outgoing') => `${side === 'incoming' ? 'Incoming' : 'Outgoing'} relationships: left out of this snapshot.`,
     truncated: 'the snapshot left part of its relationships out, so counts and names can be incomplete',
-    moreTypes: (count: number) => `+${count} more relationship ${count === 1 ? 'type' : 'types'}`,
+    moreTypes: (count: number) => `+${en(count)} more relationship ${count === 1 ? 'type' : 'types'}`,
     internal: (summary: string) => `Between the selected symbols: ${summary}.`,
     beyond: (summary: string) => `Further out in the scope: ${summary}.`,
     callersOf: (name: string) => `Callers of ${name} in the loaded graph`,
@@ -83,26 +89,28 @@ export const relationshipWords: { en: RelationshipWords; de: RelationshipWords }
     en: englishRelationshipWords,
     de: {
         from: 'von', to: 'zu',
-        more: (count: number) => `+${count} weitere`,
+        more: (count: number) => `+${de(count)} weitere`,
         hops: (depth: number) => depth === 0 ? 'nur die Auswahl' : depth === 1 ? '1 Schritt' : `${depth} Schritte`,
         both: 'in beide Richtungen', inbound: 'nur eingehend', outbound: 'nur ausgehend',
         allTypes: 'alle Beziehungstypen',
         onlyTypes: (types: readonly string[]) => types.length ? `nur ${types.join(', ')}` : 'keine Beziehungstypen',
-        size: (nodes: number, edges: number) => `${nodes} ${nodes === 1 ? 'Symbol' : 'Symbole'} und ${edges} ${edges === 1 ? 'Beziehung' : 'Beziehungen'}`,
+        size: (nodes: number, edges: number) => `${de(nodes)} ${nodes === 1 ? 'Symbol' : 'Symbole'} und ${de(edges)} ${edges === 1 ? 'Beziehung' : 'Beziehungen'}`,
         complete: 'vollständig für den indizierten Graphen',
         loading: 'lädt noch, das ist eine Vorschau',
         partial: (error?: string) => `unvollständig${error ? `: ${error}` : ''}`,
+        renderLimited: (layer: number, limit: number, kind: 'nodes' | 'edges') => `unvollständig: Ebene ${layer} hielt am Darstellungslimit von ${de(limit)} ${kind === 'nodes' ? 'Knoten' : 'Kanten'} an, `
+            + (layer > 1 ? 'Anzahlen und Namen weiter außen können daher fehlen' : 'Anzahlen und Namen können daher fehlen, auch bei den direkten Beziehungen'),
         exhausted: 'dahinter folgt nichts mehr',
         scope: (shape: string, size: string, state: string) => `Ausschnitt: ${shape}; ${size}; ${state}.`,
-        incoming: (total: number, symbols?: number) => `Eingehende Beziehungen: ${total}${symbols === undefined ? '' : ` von ${symbols} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
-        outgoing: (total: number, symbols?: number) => `Ausgehende Beziehungen: ${total}${symbols === undefined ? '' : ` zu ${symbols} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
+        incoming: (total: number, symbols?: number) => `Eingehende Beziehungen: ${de(total)}${symbols === undefined ? '' : ` von ${de(symbols)} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
+        outgoing: (total: number, symbols?: number) => `Ausgehende Beziehungen: ${de(total)}${symbols === undefined ? '' : ` zu ${de(symbols)} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
         noIncoming: 'Eingehende Beziehungen: keine in diesem Ausschnitt.',
         noOutgoing: 'Ausgehende Beziehungen: keine in diesem Ausschnitt.',
         incomingNotLoaded: 'Eingehende Beziehungen: nicht geladen; der Ausschnitt folgt keinen eingehenden Kanten.',
         outgoingNotLoaded: 'Ausgehende Beziehungen: nicht geladen; der Ausschnitt folgt keinen ausgehenden Kanten.',
         cut: (side: 'incoming' | 'outgoing') => `${side === 'incoming' ? 'Eingehende' : 'Ausgehende'} Beziehungen: in diesem Schnappschuss ausgelassen.`,
         truncated: 'der Schnappschuss hat einen Teil der Beziehungen ausgelassen, Anzahlen und Namen können unvollständig sein',
-        moreTypes: (count: number) => `+${count} weitere ${count === 1 ? 'Beziehungstyp' : 'Beziehungstypen'}`,
+        moreTypes: (count: number) => `+${de(count)} weitere ${count === 1 ? 'Beziehungstyp' : 'Beziehungstypen'}`,
         internal: (summary: string) => `Zwischen den ausgewählten Symbolen: ${summary}.`,
         beyond: (summary: string) => `Weiter außen im Ausschnitt: ${summary}.`,
         callersOf: (name: string) => `Aufrufer von ${name} im geladenen Graphen`,

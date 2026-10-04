@@ -28,7 +28,9 @@ export function explanationInput(scope: string, reader?: BrowserChatReaderContex
     if (galaxy) {
         // The selection and how its scope is drawn; counts and loading state change while it loads.
         const key = JSON.stringify([scope, 'galaxy', galaxy.identity, galaxy.direction, galaxy.edgeTypes, galaxy.depth]);
-        return { key, label: graph.label, graph: { ...graph }, ...galaxy.state === 'complete' ? { evidence: graph.id } : { waiting: galaxy.state } };
+        // A layer stopped at the render limit is settled: explained, with facts that say it is partial (C1).
+        const settled = galaxy.state === 'complete' || galaxy.state === 'limited';
+        return { key, label: graph.label, graph: { ...graph }, ...settled ? { evidence: graph.id } : { waiting: galaxy.state === 'loading' ? 'loading' : 'partial' } };
     }
     return { key: JSON.stringify([scope, graph.label, graph.text]), label: graph.label, graph: { ...graph } };
 }
