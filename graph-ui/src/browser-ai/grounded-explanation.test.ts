@@ -121,4 +121,25 @@ describe('the selected symbol source in a Galaxy explanation (K14)', () => {
         expect(formatExplanationEvidence(prepareExplanationContext(undefined, jsonbAggRenderLimited(), 3200))).toContain(partial);
         expect(selectionSummary(jsonbAggRenderLimited()).join('\n')).not.toContain('complete for the indexed graph');
     });
+
+    it('checks a German sentence for the same unsupported claims and asks for it in German (C5)', () => {
+        const source = symbolSource(sourceTargetOf(jsonbAggEvidence())!, snippet, 'g1')!;
+        const packet = prepareExplanationContext(undefined, jsonbAggEvidence(), 3200, source);
+        for (const sentence of ['JSONBAgg gibt eine Liste von Werten zurück.', 'Die Rückgabe ist ein JSON-Objekt.', 'JSONBAgg nimmt Parameter entgegen.',
+            'Die Argumente werden aggregiert.', 'Die Eingabe sind Zeilen.', 'Die Ausgabe ist JSON.', 'Der Datentyp ist JSONB.', 'Sie wird mit einer Liste von Feldern aufgerufen.']) {
+            expect(explanationSentence(sentence, packet)).toEqual({ dropped: 'unsupported' });
+        }
+        expect(explanationSentence('JSONBAgg setzt `function` auf "JSONB_AGG" und erlaubt distinct.', packet)).toEqual({ sentence: 'JSONBAgg setzt `function` auf "JSONB_AGG" und erlaubt distinct.' });
+        const german = explanationMessages(packet, { name: 'JSONBAgg', kind: 'Class' }, 'de');
+        expect(german[1].content.endsWith('Describe this class in one short sentence that starts with `JSONBAgg`. Answer in German.')).toBe(true);
+    });
+
+    it('summarizes the selection in German for a German question (C5)', () => {
+        expect(selectionSummary(jsonbAggEvidence(), 'de')).toEqual([
+            'Ausgewählt: JSONBAgg (Class) in django/contrib/postgres/aggregates/general.py:50-54.',
+            'Eingehende Beziehungen: 23 aus 12 Symbolen (CALLS 11, TESTS 11, DEFINES 1).',
+            'Ausgehende Beziehungen: 2 zu 2 Symbolen (INHERITS 2).',
+            'Ausschnitt: 1 Schritt in beide Richtungen, alle Beziehungstypen; 15 Symbole und 25 Beziehungen; vollständig für den indizierten Graphen.',
+        ]);
+    });
 });

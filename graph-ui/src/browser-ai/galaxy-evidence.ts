@@ -148,16 +148,16 @@ export function sideLoaded(evidence: GalaxyEvidence, side: 'incoming' | 'outgoin
     return evidence.depth > 0 && evidence.direction !== (side === 'incoming' ? 'outbound' : 'inbound');
 }
 
-export function selectionSentence(evidence: GalaxyEvidence): string[] {
+/** What is selected, in the words of the prompt (English) or of a question (C5). */
+export function selectionSentence(evidence: GalaxyEvidence, words: RelationshipWords): string[] {
     const [first] = evidence.roots;
     const range = (root: GalaxyEvidence['roots'][number]) => root.filePath
         ? ` in ${root.filePath}${root.startLine ? `:${root.startLine}${root.endLine && root.endLine !== root.startLine ? `-${root.endLine}` : ''}` : ''}` : '';
     if (evidence.rootCount <= 1 && first) {
-        return [`Selected: ${first.name}${first.kind ? ` (${first.kind})` : ''}${range(first)}.`,
-            ...first.documentation ? [`Documentation: ${first.documentation}`] : []];
+        return [words.selected(`${first.name}${first.kind ? ` (${first.kind})` : ''}${range(first)}`),
+            ...first.documentation ? [words.documentation(first.documentation)] : []];
     }
-    if (!first) return [`Selected: ${evidence.label} (${evidence.selectionKind}); its symbols are not in the loaded scope yet.`];
+    if (!first) return [words.notInScope(evidence.label, evidence.selectionKind)];
     const listed = evidence.roots.map(root => `${root.name}${root.kind ? ` (${root.kind})` : ''}`).join(', ');
-    const omitted = evidence.rootCount - evidence.roots.length;
-    return [`Selected ${evidence.selectionKind}: ${evidence.label} with ${evidence.rootCount} symbols: ${listed}${omitted > 0 ? `; +${omitted} more` : ''}.`];
+    return [words.selectedGroup(evidence.selectionKind, evidence.label, evidence.rootCount, listed, evidence.rootCount - evidence.roots.length)];
 }

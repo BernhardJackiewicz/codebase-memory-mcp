@@ -83,7 +83,7 @@ const OWN_WORDS = new Set(['falls', 'fall', 'cells', 'cell', 'halls', 'hall', 'w
     'aufrufen', 'rufen', 'gerufen', 'cache', 'caches']);
 
 /** Optimal string alignment distance of at most `limit`. */
-function withinEdits(left: string, right: string, limit: number): boolean {
+export function withinEdits(left: string, right: string, limit: number): boolean {
     if (Math.abs(left.length - right.length) > limit) return false;
     const rows = [Array.from({ length: right.length + 1 }, (_, index) => index)];
     for (let i = 1; i <= left.length; i++) {
@@ -137,7 +137,7 @@ const selectionNames = (evidence: GalaxyEvidence): string[] => [...new Set([evid
 const neighbourNames = (evidence: GalaxyEvidence): Set<string> => new Set([...evidence.relationships.incoming, ...evidence.relationships.outgoing]
     .flatMap(group => group.files.flatMap(file => file.symbols.map(symbol => symbol.name.toLowerCase()))));
 /** How many typos a name of this length may carry and still mean it: two from seven letters on, one from four. */
-const typoBudget = (name: string) => name.length >= 7 ? 2 : name.length >= 4 ? 1 : 0;
+export const typoBudget = (name: string) => name.length >= 7 ? 2 : name.length >= 4 ? 1 : 0;
 /** "jsonbgg", "JSONBAg": the selection's name with up to two typos, in any case (K16). An exact
  * name of another symbol in the scope is that symbol. */
 function nearSelection(word: string, evidence: GalaxyEvidence): boolean {

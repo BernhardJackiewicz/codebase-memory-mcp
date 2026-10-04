@@ -42,7 +42,7 @@ export function topicHistory<T extends BrowserChatTurn>(turns: readonly T[], top
 export function followedTopic(turns: readonly BrowserChatTurn[], scope: string): ChatTopic | undefined {
     for (let index = turns.length - 1; index >= 0; index--) {
         const topic = turns[index].topic;
-        if (!topic || turns[index].answeredFrom === 'local') continue;
+        if (!topic || turns[index].answeredFrom === 'local' || turns[index].answeredFrom === 'hint') continue;
         // Stored history is data: a damaged key ends the follow-up instead of the send.
         let turnScope: unknown;
         try { [turnScope] = JSON.parse(topic.key) as unknown[]; } catch { return undefined; }

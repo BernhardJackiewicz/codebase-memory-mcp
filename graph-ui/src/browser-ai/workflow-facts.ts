@@ -1,5 +1,5 @@
 import { isGithubWorkflow } from './file-kind';
-import { workflowWords as words } from './strings';
+import { workflowWords as englishWorkflowWords, type WorkflowWords } from './strings';
 
 /** A GitHub Actions workflow as facts counted from its keys. The small model answered
  * "Es gibt 3 Jobs" for a file with one, and read the trigger type "opened" as a branch
@@ -84,6 +84,45 @@ export function yamlOutline(text: string): { key: string; keys: string[]; items:
     });
 }
 
+/** A YAML value as the block layout writes it: text, a list or a mapping (C7). */
+export type YamlValue = { kind: 'scalar'; value: string } | { kind: 'list'; items: YamlValue[] } | { kind: 'map'; entries: [string, YamlValue][] };
+
+/** "[a, b]" is a list, "{}" an empty mapping, "|" and ">" start a text block. */
+function scalarOf(value: string): YamlValue {
+    if (/^\[.*\]$/.test(value)) return { kind: 'list', items: flow(value).map(item => ({ kind: 'scalar', value: item })) };
+    if (value === '{}') return { kind: 'map', entries: [] };
+    return { kind: 'scalar', value };
+}
+/** The lines `indexes` as one value: a list when it starts with "- ", a mapping otherwise. */
+function valueOf(lines: readonly Line[], indexes: readonly number[]): YamlValue {
+    if (!indexes.length) return { kind: 'scalar', value: '' };
+    const first = lines[indexes[0]];
+    if (first.dash) {
+        const starts = indexes.filter(index => lines[index].dash && lines[index].indent === first.indent);
+        return { kind: 'list', items: starts.map((start, at) => {
+            const body = indexes.filter(index => index > start && index < (starts[at + 1] ?? Infinity));
+            const line = lines[start];
+            if (line.key === undefined) return body.length && !line.value ? valueOf(lines, body) : scalarOf(line.value);
+            return mappingOf(lines, [start, ...body], line.keyIndent);
+        }) };
+    }
+    return mappingOf(lines, indexes, Math.min(...indexes.map(index => lines[index].keyIndent)));
+}
+/** The keys at `level`, each with the lines below it as its value; an item's own "- key" line leads. */
+function mappingOf(lines: readonly Line[], indexes: readonly number[], level: number): YamlValue {
+    const keys = indexes.filter((index, at) => lines[index].keyIndent === level && lines[index].key !== undefined && (at === 0 || !lines[index].dash));
+    return { kind: 'map', entries: keys.map((key, at): [string, YamlValue] => {
+        const body = indexes.filter(index => index > key && index < (keys[at + 1] ?? Infinity));
+        const line = lines[key];
+        return [line.key!, line.value ? scalarOf(line.value) : valueOf(lines, body)];
+    }) };
+}
+/** The whole file as values, for an outline read from it (C7). */
+export function yamlTree(text: string): YamlValue | undefined {
+    const lines = linesOf(text);
+    return lines.length ? valueOf(lines, lines.map((_, index) => index)) : undefined;
+}
+
 export function workflowFacts(text: string): WorkflowFacts | undefined {
     const lines = linesOf(text);
     if (!lines.length) return undefined;
@@ -113,8 +152,9 @@ export function workflowFacts(text: string): WorkflowFacts | undefined {
 const quote = (value: string) => `\`${value.replace(/`/g, "'").slice(0, 120)}\``;
 const LISTED = 8;
 
-/** The facts of a workflow file as sentences; nothing for other files. */
-export function workflowFactLines(path: string, text: string): string[] {
+/** The facts of a workflow file as sentences; nothing for other files. The prompt and the
+ * card use the English words, an outline asked for in German the German ones (C7). */
+export function workflowFactLines(path: string, text: string, words: WorkflowWords = englishWorkflowWords): string[] {
     const facts = isGithubWorkflow(path) ? workflowFacts(text) : undefined;
     if (!facts) return [];
     const lines: string[] = [];

@@ -46,8 +46,10 @@ export interface BrowserChatTurn {
     /** The limits that answer ran into. */
     limit?: { inputTokens: number; outputTokens: number };
     /** Listed from the loaded graph without the model, a suggestion to list it, or the chat's
-     * own reply that a question has no context to answer from. */
-    answeredFrom?: 'graph' | 'suggestion' | 'local';
+     * own reply that a question has no context to answer from. `grounded`: the facts of a
+     * selection with one checked model sentence (C5); `file`: an outline read from the file (C7);
+     * `hint`: example questions for a prompt that asks nothing (C6). */
+    answeredFrom?: 'graph' | 'suggestion' | 'local' | 'grounded' | 'file' | 'hint';
     /** The listed question a suggestion offers, with the graph evidence it lists from. */
     suggestion?: { question: string; context: BrowserChatContext };
     /** The graph evidence a listed answer was listed from: asking the model about it reads
@@ -151,7 +153,7 @@ export function buildChatMessages(turns: readonly BrowserChatTurn[], prompt: str
             + JSON.stringify(currentContext.map(({ label, text }) => ({ label, text }))) + '\n--- END CURRENT GRAPH DATA ---' : '') }];
     for (const turn of turns) {
         // A suggestion is a question back to the reader, not an answer the model should build on.
-        if (turn.status === 'error' || turn.status === 'generating' || turn.answeredFrom === 'suggestion' || turn.answeredFrom === 'local') continue;
+        if (turn.status === 'error' || turn.status === 'generating' || turn.answeredFrom === 'suggestion' || turn.answeredFrom === 'local' || turn.answeredFrom === 'hint') continue;
         messages.push({ role: 'user', content: userMessage(turn.prompt, reader || turn.readerContext ? undefined : turn.attachment, turn.context) });
         if (turn.answer) messages.push({ role: 'assistant', content: turn.answer });
     }

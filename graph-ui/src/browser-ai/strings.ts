@@ -63,6 +63,11 @@ const englishRelationshipWords = {
     moreTypes: (count: number) => `+${en(count)} more relationship ${count === 1 ? 'type' : 'types'}`,
     internal: (summary: string) => `Between the selected symbols: ${summary}.`,
     beyond: (summary: string) => `Further out in the scope: ${summary}.`,
+    selected: (what: string) => `Selected: ${what}.`,
+    documentation: (text: string) => `Documentation: ${text}`,
+    notInScope: (label: string, kind: string) => `Selected: ${label} (${kind}); its symbols are not in the loaded scope yet.`,
+    selectedGroup: (kind: string, label: string, count: number, listed: string, omitted: number) =>
+        `Selected ${kind}: ${label} with ${en(count)} symbols: ${listed}${omitted > 0 ? `; +${en(omitted)} more` : ''}.`,
     callersOf: (name: string) => `Callers of ${name} in the loaded graph`,
     calleesOf: (name: string) => `What ${name} calls in the loaded graph`,
     /** The total of a listed answer: "23 incoming relationships from 12 symbols", never "23 from 12" (C2). */
@@ -120,6 +125,11 @@ export const relationshipWords: { en: RelationshipWords; de: RelationshipWords }
         moreTypes: (count: number) => `+${de(count)} weitere ${count === 1 ? 'Beziehungstyp' : 'Beziehungstypen'}`,
         internal: (summary: string) => `Zwischen den ausgewählten Symbolen: ${summary}.`,
         beyond: (summary: string) => `Weiter außen im Ausschnitt: ${summary}.`,
+        selected: (what: string) => `Ausgewählt: ${what}.`,
+        documentation: (text: string) => `Dokumentation: ${text}`,
+        notInScope: (label: string, kind: string) => `Ausgewählt: ${label} (${kind}); seine Symbole sind noch nicht im geladenen Ausschnitt.`,
+        selectedGroup: (kind: string, label: string, count: number, listed: string, omitted: number) =>
+            `Ausgewählt (${kind}): ${label} mit ${de(count)} Symbolen: ${listed}${omitted > 0 ? `; +${de(omitted)} weitere` : ''}.`,
         callersOf: (name: string) => `Aufrufer von ${name} im geladenen Graphen`,
         calleesOf: (name: string) => `Was ${name} im geladenen Graphen aufruft`,
         total: (side: 'incoming' | 'outgoing', total: number, symbols?: number) => `${de(total)} ${side === 'incoming' ? 'eingehende' : 'ausgehende'} ${total === 1 ? 'Beziehung' : 'Beziehungen'}`
@@ -195,6 +205,42 @@ export const browserChatText = {
     limitsNote: (input: number, output: number) => `Stored in this browser for each model. Automatic explanations use at most ${input.toLocaleString('en-US')} input and ${output.toLocaleString('en-US')} output tokens.`,
 };
 
+/** Who wrote which part of the answer to a general question about a selection, in its language (C5). */
+export const groundedText = {
+    en: { factsAndSentence: browserChatText.factsAndSentence, factsOnly: browserChatText.factsOnly, sentenceDropped: browserChatText.sentenceDropped,
+        writingSentence: browserChatText.writingSentence },
+    de: {
+        factsAndSentence: 'Fakten aus dem indizierten Graphen gelistet; der letzte Satz ist vom Modell erzeugt.',
+        factsOnly: 'Aus dem indizierten Graphen gelistet, nicht vom Modell erzeugt.',
+        sentenceDropped: 'Aus dem indizierten Graphen gelistet. Der Satz des Modells nannte etwas, das die Fakten nicht zeigen, und wurde weggelassen.',
+        writingSentence: 'Der Quelltext wird gelesen; das Modell fügt einen Satz hinzu…',
+    },
+};
+
+/** The reply to a prompt that asks nothing ("test", "hallo"): questions it could ask (C6). */
+export const noQuestionText = {
+    en: {
+        heading: (typed: string) => `No question was recognized in "${typed}". You can ask, for example:`,
+        note: 'Answered without the model.',
+        whatDoes: (name: string) => `What does ${name} do?`,
+        whoCalls: (name: string) => `Who calls ${name}?`,
+        whatCalls: (name: string) => `What does ${name} call?`,
+        inDetail: (name: string) => `Explain ${name} in detail.`,
+        markedDoes: 'What does the marked code do?',
+        markedInDetail: 'Explain the marked code line by line.',
+    },
+    de: {
+        heading: (typed: string) => `In "${typed}" wurde keine Frage erkannt. Frage zum Beispiel:`,
+        note: 'Ohne das Modell beantwortet.',
+        whatDoes: (name: string) => `Was macht ${name}?`,
+        whoCalls: (name: string) => `Wer ruft ${name} auf?`,
+        whatCalls: (name: string) => `Was ruft ${name} auf?`,
+        inDetail: (name: string) => `Erklär ${name} ausführlich.`,
+        markedDoes: 'Was macht der markierte Code?',
+        markedInDetail: 'Erklär den markierten Code Zeile für Zeile.',
+    },
+};
+
 /** The chat's own reply when a question has no code or graph context (K11), in the language of the question. */
 export const browserChatContextText = {
     en: {
@@ -260,6 +306,7 @@ export const architectureWords = {
 };
 
 const counted = (value: number, one: string, many: string) => `${value.toLocaleString('en-US')} ${value === 1 ? one : many}`;
+const gezaehlt = (value: number, one: string, many: string) => `${value.toLocaleString('de-DE')} ${value === 1 ? one : many}`;
 /** A GitHub Actions workflow as facts counted from its keys: for the prompt and the explanation card (K12). */
 export const workflowWords = {
     heading: 'Facts read from the file (counted, not guessed):',
@@ -270,6 +317,45 @@ export const workflowWords = {
     job: (id: string, name: string | undefined, runsOn: string | undefined, steps: number) =>
         `${id} (${[name ? `"${name}"` : '', runsOn ? `runs on ${runsOn}` : '', counted(steps, 'step', 'steps')].filter(Boolean).join(', ')})`,
     uses: (items: readonly string[]) => `Actions used: ${items.join(', ')}.`,
+};
+export type WorkflowWords = typeof workflowWords;
+/** The same facts for an outline asked for in German (C7). */
+export const germanWorkflowWords: WorkflowWords = {
+    heading: 'Aus der Datei gelesene Fakten (gezählt, nicht geraten):',
+    name: (name: string) => `Name des Workflows: ${name}.`,
+    triggers: (items: readonly string[]) => `Auslöser: ${items.join(', ')}.`,
+    trigger: (event: string, types: readonly string[]) => `${event}${types.length ? ` (Typen: ${types.join(', ')})` : ''}`,
+    jobs: (total: number, items: readonly string[]) => `${gezaehlt(total, 'Job', 'Jobs')}: ${items.join('; ')}${total > items.length ? `; +${(total - items.length).toLocaleString('de-DE')} weitere` : ''}.`,
+    job: (id: string, name: string | undefined, runsOn: string | undefined, steps: number) =>
+        `${id} (${[name ? `"${name}"` : '', runsOn ? `läuft auf ${runsOn}` : '', gezaehlt(steps, 'Schritt', 'Schritte')].filter(Boolean).join(', ')})`,
+    uses: (items: readonly string[]) => `Verwendete Actions: ${items.join(', ')}.`,
+};
+
+/** The outline of a configuration file, answered from the file instead of the model (C7). */
+const englishOutlineWords = {
+    heading: (name: string, kind: string, lines: number) => `${name}: ${kind}, ${counted(lines, 'line', 'lines')}. Read from the file:`,
+    kinds: { yaml: 'YAML configuration', json: 'JSON data', toml: 'TOML configuration', workflow: 'GitHub Actions workflow' },
+    list: (total: number) => `list of ${total.toLocaleString('en-US')}`,
+    keys: (total: number) => counted(total, 'key', 'keys'),
+    empty: 'empty',
+    text: 'text block',
+    more: (total: number) => `+${total.toLocaleString('en-US')} more`,
+    cut: 'The rest of the file is left out here.',
+    note: 'Read from the file; not generated by the model.',
+};
+export const fileOutlineWords: { en: typeof englishOutlineWords; de: typeof englishOutlineWords } = {
+    en: englishOutlineWords,
+    de: {
+        heading: (name: string, kind: string, lines: number) => `${name}: ${kind}, ${gezaehlt(lines, 'Zeile', 'Zeilen')}. Aus der Datei gelesen:`,
+        kinds: { yaml: 'YAML-Konfiguration', json: 'JSON-Daten', toml: 'TOML-Konfiguration', workflow: 'GitHub-Actions-Workflow' },
+        list: (total: number) => `Liste mit ${gezaehlt(total, 'Eintrag', 'Einträgen')}`,
+        keys: (total: number) => gezaehlt(total, 'Schlüssel', 'Schlüssel'),
+        empty: 'leer',
+        text: 'Textblock',
+        more: (total: number) => `+${total.toLocaleString('de-DE')} weitere`,
+        cut: 'Der Rest der Datei ist hier ausgelassen.',
+        note: 'Aus der Datei gelesen, nicht vom Modell erzeugt.',
+    },
 };
 
 const listed = (items: readonly string[], total: number) => `${items.join(', ')}${total > items.length ? `, +${(total - items.length).toLocaleString('en-US')} more` : ''}`;
