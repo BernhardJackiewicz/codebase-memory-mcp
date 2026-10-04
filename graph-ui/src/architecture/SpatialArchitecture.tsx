@@ -184,7 +184,7 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
         <div className="spatial-heading"><div><span className="spatial-eyebrow">Repository atlas / {view === 'entryPoints' ? 'entry points' : view}</span><h2>{model.title}</h2><p>{viewNotes[view]}</p></div>
             <div className="spatial-camera-controls" role="group" aria-label="Map camera">
                 <button aria-pressed={!planar} onClick={() => changePlace({ planar: false })}>3D</button><button aria-pressed={planar} onClick={() => changePlace({ planar: true })}>Plan</button>
-                <button onClick={() => setResetKey(value => value + 1)}>Fit map</button>
+                <button onClick={() => setResetKey(value => value + 1)}>{text.fitMap}</button>
             </div>
         </div>
         <div className="spatial-controls">

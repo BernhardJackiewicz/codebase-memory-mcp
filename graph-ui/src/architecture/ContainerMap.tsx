@@ -149,7 +149,7 @@ export default function ContainerMap({ project, generation, active, filter, onNa
         <header className="spatial-heading"><div><span className="spatial-eyebrow">Routes / Services</span><h2>How the services connect</h2>
             <p>One square per declared service. Follow a connection to see the configuration and code behind it.</p></div>
             <div className="spatial-camera-controls"><button aria-pressed={!planar} onClick={() => setPlanar(false)}>3D</button><button aria-pressed={planar} onClick={() => setPlanar(true)}>Plan</button>
-                <button onClick={() => setResetKey(value => value + 1)}>Fit map</button><RefreshControl labels={text.refreshFeedback.services} feedback={refresh.feedback} onRefresh={() => {
+                <button onClick={() => setResetKey(value => value + 1)}>{text.fitMap}</button><RefreshControl labels={text.refreshFeedback.services} feedback={refresh.feedback} onRefresh={() => {
                     refresh.begin();
                     setRevision(value => value + 1);
                     if (!selections.length || !selections[0].inventory.manifests.length) setDiscoveryRevision(value => value + 1);

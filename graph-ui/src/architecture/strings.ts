@@ -119,6 +119,8 @@ export const architectureText = {
         line: (place: string, line: number) => `${place}:${line}`,
         ordinal: (index: number, count: number) => ` (${index} of ${count})`,
     },
+    /** The camera button of the maps: back to the whole map. */
+    fitMap: 'Fit map',
     /** Each Refresh button says what it did (hand test 2026-10-04, A3): busy while it runs, then when, and whether anything changed. */
     refreshFeedback: {
         routes: { idle: 'Refresh connections', busy: 'Refreshing connections…', done: (time: string) => `Connections refreshed at ${time}` },
