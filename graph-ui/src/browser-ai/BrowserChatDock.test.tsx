@@ -1429,8 +1429,8 @@ describe('grounded automatic explanations (K14, K7)', () => {
         await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence(), readSource }); await click('Download & load'); await settle();
         expect(runtime.chat).toHaveBeenCalledOnce();
         expect(card().textContent).toContain('Selected: JSONBAgg (Class) in django/contrib/postgres/aggregates/general.py:50-54.');
-        expect(card().textContent).not.toContain('flake8');
-        expect(card().textContent).toContain("The model's sentence named something the evidence does not show and was left out.");
+        expect(card().textContent).not.toContain('checked by the flake8 linter');
+        expect(card().textContent).toContain("The model's sentence named something that is in neither the source nor the facts (here: flake8) and was left out.");
     });
 
     it('does not show a prompt capacity note on a card whose facts are listed in full', async () => {
@@ -1502,8 +1502,8 @@ describe('grounded automatic explanations (K14, K7)', () => {
         await click('Download & load'); await settle();
         await act(async () => [...card().querySelectorAll('button')].find(item => item.textContent === 'Ask the model')!.click()); await settle();
         expect(runtime.chat).toHaveBeenCalledOnce();
-        expect(card().textContent).not.toContain('flake8');
-        expect(card().textContent).toContain("Read from the file. The model's text named something the file does not show and was left out.");
+        expect(card().textContent).not.toContain('configures flake8');
+        expect(card().textContent).toContain("Read from the file. The model's text named something the file does not show (here: flake8) and was left out.");
     });
 
     it('explains an Architecture area from readable facts without reading source', async () => {
@@ -1562,7 +1562,7 @@ describe('general questions, prompts without a question and configuration files 
         await type('was kansnt du mir über den code sagen'); await click('Send ↑');
         expect(answer()).toContain('Ausgewählt: JSONBAgg (Class)');
         expect(answer()).not.toContain('gibt eine Liste');
-        expect(answer()).toContain('Der Satz des Modells nannte etwas, das die Fakten nicht zeigen, und wurde weggelassen.');
+        expect(answer()).toContain('Der Satz des Modells behauptete etwas, das der Quelltext nicht zeigt (hier: „gibt … zurück“), und wurde weggelassen.');
     });
 
     it('lists only the facts without source and sends detail questions to the model as before (C5)', async () => {

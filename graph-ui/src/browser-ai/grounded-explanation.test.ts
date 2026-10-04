@@ -95,12 +95,12 @@ describe('the selected symbol source in a Galaxy explanation (K14)', () => {
         const packet = prepareExplanationContext(undefined, jsonbAggEvidence(), 3200, source);
         expect(explanationSentence('`JSONBAgg` sets `function` to "JSONB_AGG" and allows distinct values. It is used by many tests.', packet))
             .toEqual({ sentence: '`JSONBAgg` sets `function` to "JSONB_AGG" and allows distinct values.' });
-        expect(explanationSentence('It is checked by the flake8 linter.', packet)).toEqual({ dropped: 'unsupported' });
-        expect(explanationSentence('It wraps `json_agg_helper` around the query.', packet)).toEqual({ dropped: 'unsupported' });
+        expect(explanationSentence('It is checked by the flake8 linter.', packet)).toMatchObject({ dropped: 'unsupported' });
+        expect(explanationSentence('It wraps `json_agg_helper` around the query.', packet)).toMatchObject({ dropped: 'unsupported' });
         // With source, an input or output claim must be one the code shows.
-        expect(explanationSentence('JSONBAgg is a class that aggregates a list of values.', packet)).toEqual({ dropped: 'unsupported' });
+        expect(explanationSentence('JSONBAgg is a class that aggregates a list of values.', packet)).toMatchObject({ dropped: 'unsupported' });
         const graphOnly = prepareExplanationContext(undefined, jsonbAggEvidence(), 3200);
-        expect(explanationSentence('The test_jsonb_agg test calls it on a list of integers and the output is a list of strings.', graphOnly)).toEqual({ dropped: 'unsupported' });
+        expect(explanationSentence('The test_jsonb_agg test calls it on a list of integers and the output is a list of strings.', graphOnly)).toMatchObject({ dropped: 'unsupported' });
         expect(explanationSentence('JSONBAgg is called by 11 tests.', graphOnly)).toEqual({ sentence: 'JSONBAgg is called by 11 tests.' });
     });
 
@@ -128,7 +128,7 @@ describe('the selected symbol source in a Galaxy explanation (K14)', () => {
         const packet = prepareExplanationContext(undefined, jsonbAggEvidence(), 3200, source);
         for (const sentence of ['JSONBAgg gibt eine Liste von Werten zurück.', 'Die Rückgabe ist ein JSON-Objekt.', 'JSONBAgg nimmt Parameter entgegen.',
             'Die Argumente werden aggregiert.', 'Die Eingabe sind Zeilen.', 'Die Ausgabe ist JSON.', 'Der Datentyp ist JSONB.', 'Sie wird mit einer Liste von Feldern aufgerufen.']) {
-            expect(explanationSentence(sentence, packet)).toEqual({ dropped: 'unsupported' });
+            expect(explanationSentence(sentence, packet)).toMatchObject({ dropped: 'unsupported' });
         }
         expect(explanationSentence('JSONBAgg setzt `function` auf "JSONB_AGG" und erlaubt distinct.', packet)).toEqual({ sentence: 'JSONBAgg setzt `function` auf "JSONB_AGG" und erlaubt distinct.' });
         const german = explanationMessages(packet, { name: 'JSONBAgg', kind: 'Class' }, 'de');

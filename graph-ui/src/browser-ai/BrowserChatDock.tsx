@@ -6,7 +6,7 @@ import { keepAgent, loadProgress, offerAgent, peekAgent, takeAgent, type AgentHa
 import { buildChatMessages, selectionLocation, snapshotAttachment, snapshotReaderContext, trimChatHistory, type BrowserChatAttachment, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatSource, type BrowserChatTurn } from './chat-model';
 import { explanationInput, EXPLANATION_DELAY_MS, type ExplanationInput } from './proactive-selection';
 import { prepareExplanationContext, selectionSummary, type PreparedExplanationContext } from './explanation-context';
-import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, citedInterpretation, explanationMode, explanationSentence, namesNotIn, parseExplanationResponse, explanationMessages, formatExplanationEvidence } from './explanation-response';
+import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, citedInterpretation, explanationMode, explanationSentence, namesNotIn, parseExplanationResponse, explanationMessages, formatExplanationEvidence, type DroppedReason } from './explanation-response';
 import { carriedSource, selectionSubject, SYMBOL_SOURCE_LINES, sourceTargetOf, symbolSource, type SymbolSourceReader } from './symbol-source';
 import { relationshipAnswer, relationshipSuggestion } from './relationship-answer';
 import { clampTokenLimits, tokenLimitBounds, tokenLimitsFor, useAgentPreferences, type TokenLimits } from './agent-preferences';
@@ -73,10 +73,12 @@ const SOURCE_CACHE_SIZE = 32;
 /** The listed facts first, then the model's sentence if it stood the check, then who wrote what (K7).
  * The facts come from the indexed graph, or for an open workflow from the file itself (K12). The
  * answer to a general question says it in the language of that question (C5). */
-function groundedExplanation(summary: readonly string[], sentence: string | undefined, dropped: boolean, from: 'graph' | 'file' = 'graph', language: 'en' | 'de' = 'en'): string {
+function groundedExplanation(summary: readonly string[], sentence: string | undefined, dropped: boolean | DroppedReason, from: 'graph' | 'file' = 'graph', language: 'en' | 'de' = 'en'): string {
     const words = groundedText[language];
-    const note = from === 'file' ? sentence ? browserChatText.fileFactsAndSentence : dropped ? browserChatText.fileSentenceDropped : browserChatText.fileFactsOnly
-        : sentence ? words.factsAndSentence : dropped ? words.sentenceDropped : words.factsOnly;
+    // The note names what the left out sentence claimed or named, where the check says it (W5).
+    const reason = typeof dropped === 'object' ? dropped : undefined;
+    const note = from === 'file' ? sentence ? browserChatText.fileFactsAndSentence : dropped ? browserChatText.fileSentenceDropped(reason) : browserChatText.fileFactsOnly
+        : sentence ? words.factsAndSentence : dropped ? words.sentenceDropped(reason) : words.factsOnly;
     return [summary.map(line => `- ${line}`).join('\n'), ...sentence ? [sentence] : [], `_${note}_`].join('\n\n');
 }
 
@@ -439,7 +441,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 // One sentence beside the facts (two for reader code), and none that names what the evidence lacks.
                 const checked = result.status === 'generated' ? explanationSentence(result.markdown, packet, request.map(message => message.content).join('\n')) : {};
                 if (summary.length || (result.status === 'generated' && checked.dropped)) {
-                    const markdown = summary.length ? groundedExplanation(summary, checked.sentence, checked.dropped !== undefined, from) : `_${browserChatText.explanationDropped}_`;
+                    const markdown = summary.length ? groundedExplanation(summary, checked.sentence, checked.reason ?? checked.dropped !== undefined, from) : `_${browserChatText.explanationDropped(checked.reason)}_`;
                     const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: markdown, status: 'complete', mode: 'interpretation', packet, grounded: summary.length > 0,
                         ...shortened && checked.sentence ? { shortened, limit: { inputTokens: autoInput, outputTokens: autoOutput } } : {}, ...snapshot.evidence ? { evidence: snapshot.evidence } : {} };
                     remember(complete); setExplanation(complete);
@@ -749,7 +751,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 // One sentence beside the facts, checked like the sentence of the explanation card.
                 const result = parseExplanationResponse(output, packet!);
                 const checked = !stopRequested.current && result.status === 'generated' ? explanationSentence(result.markdown, packet!, request.map(message => message.content).join('\n')) : {};
-                const answer = groundedExplanation(grounded.summary, checked.sentence, checked.dropped !== undefined, 'graph', language);
+                const answer = groundedExplanation(grounded.summary, checked.sentence, checked.reason ?? checked.dropped !== undefined, 'graph', language);
                 setTurns(previous => previous.map(item => item.id === id ? { ...item, answer, status: stopRequested.current ? 'stopped' : 'complete' } : item));
                 return;
             }

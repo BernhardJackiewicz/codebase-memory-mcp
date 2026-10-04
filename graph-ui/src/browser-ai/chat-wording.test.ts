@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { prepareExplanationContext, selectionSummary } from './explanation-context';
-import { formatExplanationEvidence } from './explanation-response';
+import { explanationSentence, formatExplanationEvidence } from './explanation-response';
 import { jsonbAggEvidence, jsonbAggRenderLimited } from './galaxy-evidence.fixture';
 import { relationshipAnswer } from './relationship-answer';
+import { browserChatText, groundedText } from './strings';
+import { sourceTargetOf, symbolSource } from './symbol-source';
 
 /* Wording of the chat texts after the third review of the hand test (2026-10-04, W1 to W10). */
 
@@ -120,5 +122,40 @@ describe('the heading of a listed caller or callee answer (W3)', () => {
         expect(answer('Was ruft JSONBAgg auf?', jsonbAggEvidence({ direction: 'inbound' })).split('\n')[0]).toMatch(/^Was `JSONBAgg` aufruft, lässt sich aus diesem Ausschnitt nicht auflisten\. /);
         expect(answer('Who calls JSONBAgg?', jsonbAggEvidence({ edges: [] })).split('\n')[0]).toBe('`JSONBAgg` has no callers and no other incoming relationships in this scope.');
         expect(answer('Was ruft JSONBAgg auf?', jsonbAggEvidence({ edges: [] })).split('\n')[0]).toBe('`JSONBAgg` ruft in diesem Ausschnitt nichts auf und hat keine anderen ausgehenden Beziehungen.');
+    });
+});
+
+describe('why the model sentence was left out (W5)', () => {
+    const snippet = { source: 'class JSONBAgg(OrderableAggMixin, Aggregate):\n    function = "JSONB_AGG"\n    allow_distinct = True\n',
+        file_path: '/abs/django/contrib/postgres/aggregates/general.py', start_line: 50, end_line: 52, source_mode: 'full' };
+    const packet = () => prepareExplanationContext(undefined, jsonbAggEvidence(), 3200, symbolSource(sourceTargetOf(jsonbAggEvidence())!, snippet, 'g1')!);
+
+    it('returns the claim word or the unknown name with the dropped sentence, as the sentence wrote it', () => {
+        expect(explanationSentence('This method tests the aggregation of JSONB data using a predefined model and expected output.', packet()))
+            .toEqual({ dropped: 'unsupported', reason: { kind: 'claim', text: 'output' } });
+        expect(explanationSentence('JSON-BAgg ist eine Aggregation, die die Zeilen in einen JSON-Array umwandelt.', packet()))
+            .toEqual({ dropped: 'unsupported', reason: { kind: 'claim', text: 'Array' } });
+        expect(explanationSentence('JSONBAgg gibt eine Liste von JSON-Daten zurück.', packet()))
+            .toEqual({ dropped: 'unsupported', reason: { kind: 'claim', text: 'gibt … zurück' } });
+        expect(explanationSentence('It wraps `json_agg_helper` around the query.', packet()))
+            .toEqual({ dropped: 'unsupported', reason: { kind: 'name', text: 'json_agg_helper' } });
+        expect(explanationSentence('`JSONBAgg` sets `function` to "JSONB_AGG".', packet())).toEqual({ sentence: '`JSONBAgg` sets `function` to "JSONB_AGG".' });
+    });
+
+    it('says in the note what was claimed or named and what it was checked against, in both languages', () => {
+        expect(groundedText.en.sentenceDropped({ kind: 'claim', text: 'output' }))
+            .toBe('Listed from the indexed graph. The model\'s sentence claimed something the source does not show (here: "output") and was left out.');
+        expect(groundedText.de.sentenceDropped({ kind: 'claim', text: 'Array' }))
+            .toBe('Aus dem indizierten Graphen gelistet. Der Satz des Modells behauptete etwas, das der Quelltext nicht zeigt (hier: „Array“), und wurde weggelassen.');
+        expect(groundedText.en.sentenceDropped({ kind: 'name', text: 'flake8' }))
+            .toBe('Listed from the indexed graph. The model\'s sentence named something that is in neither the source nor the facts (here: `flake8`) and was left out.');
+        expect(groundedText.de.sentenceDropped({ kind: 'name', text: 'flake8' }))
+            .toBe('Aus dem indizierten Graphen gelistet. Der Satz des Modells nannte etwas, das weder im Quelltext noch in den Fakten steht (hier: `flake8`), und wurde weggelassen.');
+        expect(browserChatText.fileSentenceDropped({ kind: 'name', text: 'flake8' }))
+            .toBe('Read from the file. The model\'s text named something the file does not show (here: `flake8`) and was left out.');
+        expect(browserChatText.explanationDropped({ kind: 'name', text: 'flake8' }))
+            .toBe('The model\'s explanation named something the source does not show (here: `flake8`) and was left out. Ask a question about the code instead.');
+        // Without a known reason the note claims none.
+        expect(groundedText.de.sentenceDropped()).not.toMatch(/hier:|Fakten nicht zeigen/);
     });
 });
