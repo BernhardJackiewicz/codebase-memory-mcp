@@ -15,6 +15,7 @@ import type { CoverageIndex } from '../app/tree-model';
 import { buildHotspotGraph, collectHotspots, hotspotsForNode, hotspotSignals, hotspotIdentity } from './hotspot-map';
 import { hotspotAreas } from './hotspot-areas';
 import { useViewPreferences } from '../settings/view-preferences';
+import { RefreshControl, useRefreshFeedback } from './refresh-feedback';
 import './spatial-architecture.css';
 
 interface Props {
@@ -67,29 +68,36 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
     const [inventoryLimit, setInventoryLimit] = useState(24);
     const [resetKey, setResetKey] = useState(0);
     const [selection, setSelection] = useState<{ scope: string; node?: string; edge?: string }>();
-    const [routeReading, setRouteReading] = useState<{ key: string; snapshot?: RouteGraphSnapshot; error?: string }>();
+    const [routeReading, setRouteReading] = useState<{ key: string; base?: string; snapshot?: RouteGraphSnapshot; error?: string; refreshing?: boolean }>();
     const [routeRevision, setRouteRevision] = useState(0);
     const [memberLimit, setMemberLimit] = useState(5);
     const [includeTestRoutes, setIncludeTestRoutes] = useState(false);
     // A reindex clears the hotspot area; a view that mounts again keeps the place it is handed.
     useOnIdentityChange(`${project}:${generation ?? ''}`, () => { if (place.hotspotArea) changePlace({ hotspotArea: undefined }, true); });
-    const routeKey = `${project}:${generation ?? ''}:${routeRevision}`;
+    const routeBase = `${project}:${generation ?? ''}`;
+    const routeKey = `${routeBase}:${routeRevision}`;
     useEffect(() => {
         if (view !== 'routes' || !active) return;
         const controller = new AbortController();
-        setRouteReading({ key: routeKey });
+        // A refresh of the same index keeps the connections on screen until the new ones arrive (hand test 2026-10-04, A3).
+        const kept = (current?: typeof routeReading) => current?.base === routeBase && current.snapshot ? { snapshot: current.snapshot } : {};
+        setRouteReading(current => ({ key: routeKey, base: routeBase, ...kept(current), refreshing: true }));
         void loadRouteGraph(project, { signal: controller.signal }).then(snapshot => {
-            if (!controller.signal.aborted) setRouteReading({ key: routeKey, snapshot });
+            if (!controller.signal.aborted) setRouteReading({ key: routeKey, base: routeBase, snapshot });
         }).catch((error: unknown) => {
-            if (!controller.signal.aborted) setRouteReading({ key: routeKey, error: error instanceof Error ? error.message : String(error) });
+            const message = error instanceof Error ? error.message : String(error);
+            if (!controller.signal.aborted) setRouteReading(current => ({ key: routeKey, base: routeBase, ...kept(current), error: message }));
         });
         return () => controller.abort();
-    }, [project, routeKey, view, active]);
+    }, [project, routeKey, routeBase, view, active]);
+    const routeRefresh = useRefreshFeedback({ key: routeKey, settled: routeReading?.key === routeKey && !routeReading.refreshing,
+        value: routeReading?.key === routeKey ? routeReading.snapshot : undefined, error: routeReading?.key === routeKey ? routeReading.error : undefined });
     const entries = useMemo(() => semanticEntryPoints(graph, overview.entryPoints.flatMap(entry => entry.qualifiedName ? [entry.qualifiedName] : [])), [graph, overview.entryPoints]);
     const currentEntry = entries.find(node => entryChoice?.node.qualified_name
         ? node.qualified_name === entryChoice.node.qualified_name && node.file_path === entryChoice.node.file_path
         : entryChoice?.generation === generation && node.id === entryChoice?.node.id && node.file_path === entryChoice.node.file_path) ?? entries[0];
-    const routeSnapshot = routeReading?.key === routeKey ? routeReading.snapshot : undefined;
+    // A refresh of the same index shows the earlier connections until its own arrive.
+    const routeSnapshot = routeReading?.base === routeBase ? routeReading.snapshot : undefined;
     // Which routes are test code is decided by their registration, handler and caller evidence.
     const routesChecking = view === 'routes' && !routeSnapshot && !(routeReading?.key === routeKey && routeReading.error);
     const knownFiles = useMemo(() => [...new Set([...overview.files, ...[...(coverage?.records.values() ?? [])].filter(record => record.kind === 'file').map(record => record.path)])], [overview.files, coverage]);
@@ -188,7 +196,8 @@ export default function SpatialArchitecture({ project, generation, graph, overvi
                 {!entries.length && <option value="">No indexed entry points</option>}{entries.map(node => <option key={node.id} value={node.id}>{node.name} · {node.file_path}</option>)}
             </select></label><label>Call depth <select aria-label="Call depth" value={depth} onChange={event => setDepth(Number(event.target.value))}>{[1, 2, 3, 4].map(value => <option key={value}>{value}</option>)}</select></label></>}
             {view === 'hotspots' && hotspotArea && <nav aria-label="Hotspot area"><button onClick={clearScope}>All hotspots</button><span>/ {hotspotArea}</span></nav>}
-            {view === 'routes' && <button onClick={() => setRouteRevision(value => value + 1)}>Refresh connections</button>}
+            {view === 'routes' && <RefreshControl labels={text.refreshFeedback.routes} feedback={routeRefresh.feedback}
+                onRefresh={() => { routeRefresh.begin(); setRouteRevision(value => value + 1); }} />}
             {view === 'routes' && <label className="spatial-gravity-toggle"><input type="checkbox" checked={includeTestRoutes} onChange={event => { setIncludeTestRoutes(event.target.checked); setSelection(undefined); }} />{routesChecking ? text.includeTestRoutesChecking : text.includeTestRoutes(model.hiddenRoutes ?? 0)}</label>}
             {filePath && (view === 'overview' || view === 'dependencies') && <button onClick={() => onNavigate(filePath, 1)}>Read this file</button>}
             {(view === 'overview' || view === 'dependencies') && <div className="spatial-relations" role="group" aria-label="Relationship types">

@@ -9,6 +9,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ArchitecturePanel, { type ArchitecturePanelProps } from './ArchitecturePanel';
+import { fitToolbar } from '../galaxy/toolbar-fit';
 import type { ArchitectureSceneProps } from './ArchitectureScene';
 import type { ArchitectureOverviewDto } from '../core/intelligence-provider';
 import type { GraphData, GraphNode } from '../galaxy/types';
@@ -126,8 +127,8 @@ const filter = () => container.querySelector<HTMLInputElement>('input[type="sear
 const focus = () => container.querySelector('[data-testid="system-scene"]')?.getAttribute('data-focus');
 const heading = () => container.querySelector('.behavior-heading h2')?.textContent;
 const sceneLabels = () => [...container.querySelectorAll('[data-testid="scene"] [data-node]')].map(item => item.textContent);
-/** The "← Back" System structure and Behavior had in their own toolbars before K27. */
-const inViewBack = () => buttons().find(button => button.textContent === '← Back');
+/** The "← Back" System structure and Behavior had in their own toolbars before K27; the shared one carries the same words. */
+const inViewBack = () => buttons().find(button => button.textContent === '← Back' && !history()?.contains(button));
 const systemCamera = () => container.querySelector('[aria-label="System camera"] button[aria-pressed="true"]')?.textContent;
 const behaviorCamera = () => container.querySelector('[aria-label="Behavior camera"] button[aria-pressed="true"]')?.textContent;
 const chainPosition = () => container.querySelector('[aria-label="Walk the call chain"] span')?.textContent;
@@ -493,5 +494,63 @@ describe('Architecture back and forward (K27)', () => {
         expect(back()?.disabled).toBe(true);
         expect(forward()?.disabled).toBe(true);
         expect(container.querySelector('details.atlas-arch-recent')).toBeNull();
+    });
+});
+
+/*
+ * Hand test 2026-10-04: Back, Forward and Recent stood as bare arrows at the right end of the subtab row,
+ * while Galaxy has "← Back", "Forward →" and "▾" at the start of its toolbar (A1), and the Recent menu stayed
+ * open over the content through several steps (A2).
+ */
+describe('Architecture history controls as in Galaxy (hand test 2026-10-04)', () => {
+    const recentMenu = () => container.querySelector<HTMLDetailsElement>('details.atlas-arch-recent');
+    async function withRecent(): Promise<HTMLDetailsElement> {
+        await render();
+        await press(container.querySelector<HTMLButtonElement>('[data-view="routes"]'));
+        await press(container.querySelector<HTMLButtonElement>('[data-view="hotspots"]'));
+        const menu = recentMenu();
+        expect(menu).not.toBeNull();
+        await act(async () => { menu!.open = true; });
+        return menu!;
+    }
+
+    it('A1: puts Back, Forward and Recent at the start of the subtab row, worded as in Galaxy', async () => {
+        await render();
+        await press(container.querySelector<HTMLButtonElement>('[data-view="routes"]'));
+        const row = container.querySelector<HTMLElement>('.atlas-arch-tabrow')!;
+        expect([...row.children].map(item => item.getAttribute('aria-label'))).toEqual(['Architecture history', 'Architecture views']);
+        expect(back()?.textContent).toBe('← Back');
+        expect(back()?.querySelector('.atlas-fit-narrow')?.getAttribute('data-label')).toBe('←');
+        expect(forward()?.textContent).toBe('Forward →');
+        expect(forward()?.querySelector('.atlas-fit-narrow')?.getAttribute('data-label')).toBe('→');
+        expect(back()?.title).toBe('Back to Overview (Alt+Left)');
+        expect(recentMenu()?.querySelector('summary')?.textContent).toBe('▾');
+        // The row measures itself like Galaxy's toolbar: words while the tabs fit, the glyphs once they would scroll.
+        expect(row.dataset.fit).toBe('full');
+        const tabs = row.querySelector<HTMLElement>('nav')!;
+        Object.defineProperties(tabs, { clientWidth: { configurable: true, value: 300 }, scrollWidth: { configurable: true, value: 520 } });
+        expect(fitToolbar(row)).toBe('compact');
+    });
+
+    it('A2: closes the Recent menu on a press elsewhere and on Escape, which stays with the menu', async () => {
+        const menu = await withRecent();
+        await act(async () => { container.querySelector('.atlas-arch-tabs')!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })); });
+        expect(menu.open).toBe(false);
+        await act(async () => { menu.open = true; });
+        expect(key({ key: 'Escape' }, menu.querySelector('summary')!).defaultPrevented).toBe(true);
+        expect(menu.open).toBe(false);
+        expect(view()).toBe('hotspots');
+    });
+
+    it('A2: closes the Recent menu when Back or Alt+Right change the place', async () => {
+        const menu = await withRecent();
+        await goBack();
+        expect(view()).toBe('routes');
+        expect(menu.open).toBe(false);
+        await act(async () => { menu.open = true; });
+        expect(key({ key: 'ArrowRight', altKey: true }).defaultPrevented).toBe(true);
+        await settle();
+        expect(view()).toBe('hotspots');
+        expect(menu.open).toBe(false);
     });
 });

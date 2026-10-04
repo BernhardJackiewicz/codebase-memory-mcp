@@ -311,7 +311,7 @@ import type { SettingsMeasurement } from './settings/SettingsPanel';
 import AddProjectIndexDialog from './projects/AddProjectIndexDialog';
 import ProjectSwitcher from './projects/ProjectSwitcher';
 import type { ProjectsSource } from './projects/ProjectsPanel';
-import { ProjectWindows, type ProjectWindow } from './app/project-windows';
+import { ProjectWindows, useParamInAddress, type ProjectWindow } from './app/project-windows';
 import { MODEL_SUGGESTIONS, fetchCommand } from './settings/model-catalog';
 import { modelKey, readModelPreference, recordModelPreference } from './settings/model-preference';
 import {
@@ -758,10 +758,12 @@ interface WindowCarry {
 /**
  * Jedes Projekt bekommt ein frisches Fenster in derselben Seite (K24, Kopf von
  * src/app/project-windows.tsx). Der Agent reicht beim Wechsel sein geladenes
- * Modell an das Fenster des neuen Projekts weiter.
+ * Modell an das Fenster des neuen Projekts weiter. Die Adresse behaelt dabei
+ * den Arbeitsbereich und die Grenzen des Walks, nichts vom alten Projekt (A5).
  */
+const PAGE_PARAMS = ['workspace', CLOSURE_DEPTH_PARAM, CLOSURE_CAP_PARAM] as const;
 export default function App(): JSX.Element {
-    return <ProjectWindows<WindowCarry> around={switchKeepingAgent}>
+    return <ProjectWindows<WindowCarry> around={switchKeepingAgent} keepParams={PAGE_PARAMS}>
         {shown => <ProjectWindowView key={shown.key} projectWindow={shown} />}
     </ProjectWindows>;
 }
@@ -783,11 +785,10 @@ function ProjectWindowView({ projectWindow }: { projectWindow: ProjectWindow<Win
             setProactiveSelection(undefined); setChatGraphSelection(undefined); setChatAttachment(undefined);
         }
         setWorkspace(value);
-        const url = new URL(window.location.href);
-        url.searchParams.set('workspace', value);
-        window.history.replaceState(window.history.state, '', url);
         try { localStorage.setItem('cbm.workspace', value); } catch { /* Session-only preference. */ }
     };
+    // The address always names the workspace in view, also one carried over a project switch, so a reload keeps it (A5).
+    useParamInAddress('workspace', workspace);
     const [welcomeOpen, setWelcomeOpen] = useState(() => {
         try { return localStorage.getItem('cbm.workspace.setup') !== 'done'; } catch { return false; }
     });

@@ -207,6 +207,27 @@ it('K2: the recent list jumps straight to an earlier root with its last depth', 
     expect(named('Back')?.title).toBe('Back to n5 · 1 layer (Alt+Left)');
 });
 
+/* Handtest 2026-10-04 (A2): die Liste blieb ueber der Szene offen, Schritt um Schritt. */
+it('A2: the recent list closes on a press elsewhere, on Escape without leaving the scope, and when Back changes the root', async () => {
+    await openScope();
+    await act(async () => { seam().clickNode('sample.n2'); });
+    await settle(() => expect(scopeName()).toBe('n2'));
+    const recent = host.querySelector<HTMLDetailsElement>('details.atlas-graph-recent')!;
+    await act(async () => { recent.open = true; });
+    await act(async () => { button('Empty canvas')!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })); });
+    expect(recent.open).toBe(false);
+
+    await act(async () => { recent.open = true; });
+    expect(key({ key: 'Escape' }, recent.querySelector('summary')!).defaultPrevented).toBe(true);
+    expect(recent.open).toBe(false);
+    expect(scopeName()).toBe('n2');
+
+    await act(async () => { recent.open = true; });
+    await act(async () => named('Back')!.click());
+    await settle(() => expect(scopeName()).toBe('n1'));
+    expect(recent.open).toBe(false);
+});
+
 /*
  * Wie App.tsx: die Auswahl lebt ausserhalb des Panels, "Selection details"
  * steht nur, solange sie besteht, und `onClearSelection` loescht sie.

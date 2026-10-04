@@ -143,6 +143,7 @@ import { galaxyHierarchyText, galaxyHistoryText, galaxyLayerText, galaxyPathText
 import { HierarchyBandLabel, HierarchyEdgeLabels } from './HierarchyEdgeLabels';
 import { FitLabel, useToolbarFit } from './toolbar-fit';
 import { emptyNavigationHistory, moveNavigation, peekNavigation, pushNavigation } from '../graph/navigation-history';
+import { useDismissibleMenu } from '../graph/use-dismissible-menu';
 import { galaxyHistoryOptions, historyEntryDetail, historyEntryLabel, scopeIdentity, type GalaxyHistoryEntry, type ScopeTrail } from './scope-history';
 import { useOrganicLayout } from './use-organic-layout';
 import RenderProgress from './RenderProgress';
@@ -2033,6 +2034,8 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [props.workspaceExpanded, scope.scope, trailView, escapeTaken, leaveScope]);
+    /* Handtest 2026-10-04 (A2): die Liste schliesst bei einem Klick daneben, mit Escape und mit jedem neuen Ort. */
+    const recentMenu = useDismissibleMenu(historyKey);
     const historyControls = props.workspaceExpanded ? <span className="atlas-graph-history" role="group" aria-label={galaxyHistoryText.group}>
         <button type="button" aria-label={galaxyHistoryText.back} disabled={!historyBack} onClick={() => goHistory(-1)}
             title={historyBack ? galaxyHistoryText.backTo(historyEntryLabel(historyBack)) : galaxyHistoryText.noBack}>
@@ -2040,16 +2043,13 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         <button type="button" aria-label={galaxyHistoryText.forward} disabled={!historyForward} onClick={() => goHistory(1)}
             title={historyForward ? galaxyHistoryText.forwardTo(historyEntryLabel(historyForward)) : galaxyHistoryText.noForward}>
             <FitLabel wide={galaxyHistoryText.forwardWide} narrow={galaxyHistoryText.forwardGlyph} /></button>
-        {history.recent.length > 1 && <details className="atlas-graph-recent" onKeyDown={event => {
-            if (event.key === 'Escape') { event.stopPropagation(); event.currentTarget.open = false; }
-        }}>
+        {history.recent.length > 1 && <details className="atlas-graph-recent" ref={recentMenu.ref}>
             <summary title={galaxyHistoryText.recentTitle} aria-label={galaxyHistoryText.recent}>{galaxyHistoryText.recentGlyph}</summary>
             <ul className="atlas-graph-recent-menu" aria-label={galaxyHistoryText.recentList}>{history.recent.map((entry) => {
                 const current = galaxyHistoryOptions.recentKey?.(entry) === (scope.scope ? scopeIdentity(scope.scope) : undefined);
                 return <li key={galaxyHistoryOptions.recentKey?.(entry)}>
-                    <button type="button" disabled={current} aria-current={current ? 'true' : undefined} onClick={(event) => {
-                        const details = event.currentTarget.closest('details');
-                        if (details) details.open = false;
+                    <button type="button" disabled={current} aria-current={current ? 'true' : undefined} onClick={() => {
+                        recentMenu.close();
                         jumpToRecent(entry);
                     }}><strong>{entry.scope?.name}</strong><span>{historyEntryDetail(entry)}</span></button>
                 </li>;

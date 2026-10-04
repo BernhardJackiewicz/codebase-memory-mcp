@@ -100,6 +100,32 @@ export const architectureText = {
     openedFile: 'Opened file',
     scopeMeasure: (files: number, lines?: number) => `${files.toLocaleString()} files · ${lines === undefined ? 'unknown' : lines.toLocaleString()} indexed lines`,
     openedScopeHint: 'Select a part or connection to inspect it. The location above leads back to the repository.',
+    /** Behavior "Start": suggestions first, then every operation alphabetically, with a filter (hand test 2026-10-04, A4). */
+    behaviorStart: {
+        label: 'Start',
+        field: 'Behavior entry point',
+        choose: 'Choose an operation…',
+        filter: 'Filter operations',
+        filterPlaceholder: 'Filter operations…',
+        suggested: 'Suggested',
+        all: (total: number) => `All operations · ${total.toLocaleString()}`,
+        matching: (shown: number, total: number) => `Matching operations · ${shown.toLocaleString()} of ${total.toLocaleString()}`,
+        none: (query: string) => `No operation matches "${query}"`,
+        option: (name: string, place: string) => `${name} · ${place}`,
+        /** The name stays first, so the list still reads alphabetically: "database_backwards (CreateModel)". */
+        qualified: (qualifier: string, name: string) => `${name} (${qualifier})`,
+        line: (place: string, line: number) => `${place}:${line}`,
+        ordinal: (index: number, count: number) => ` (${index} of ${count})`,
+    },
+    /** Each Refresh button says what it did (hand test 2026-10-04, A3): busy while it runs, then when, and whether anything changed. */
+    refreshFeedback: {
+        routes: { idle: 'Refresh connections', busy: 'Refreshing connections…', done: (time: string) => `Connections refreshed at ${time}` },
+        services: { idle: 'Refresh', busy: 'Refreshing…', done: (time: string) => `Service map refreshed at ${time}` },
+        structure: { idle: 'Refresh analysis', busy: 'Refreshing analysis…', done: (time: string) => `Analysis refreshed at ${time}` },
+        behavior: { idle: 'Refresh', busy: 'Refreshing…', done: (time: string) => `Journey refreshed at ${time}` },
+        unchanged: (time: string) => `Up to date at ${time}: no changes since the last load`,
+        failed: (time: string, error: string) => `Refresh failed at ${time}: ${error}`,
+    },
 };
 
 /**
@@ -114,6 +140,9 @@ export const architectureHistoryText = {
     forward: 'Forward',
     backGlyph: '←',
     forwardGlyph: '→',
+    /** The words while the subtab row has room, as in Galaxy; the glyphs alone once the tabs would scroll. */
+    backWide: '← Back',
+    forwardWide: 'Forward →',
     backTo: (label: string) => `Back to ${label} (Alt+Left)`,
     forwardTo: (label: string) => `Forward to ${label} (Alt+Right)`,
     noBack: 'Nothing to go back to yet',

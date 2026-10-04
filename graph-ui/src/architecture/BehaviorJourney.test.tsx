@@ -182,3 +182,46 @@ describe('behavior journeys', () => {
         expect(compact.edges.map(edge => edge.pathEdge!.id)).toEqual([14, 15]);
     });
 });
+
+/* Hand test 2026-10-04 (A4): the "Start" list had no recognizable order, and "handle · …/loaddata.py" could not be found. */
+describe('Behavior start field', () => {
+    const LOADDATA = 'django/core/management/commands/loaddata.py';
+    const entries = [symbol(1), { ...symbol(21), name: 'handle', file_path: 'django/core/management/commands/makemigrations.py' },
+        { ...symbol(22), name: 'handle', file_path: LOADDATA }, { ...symbol(23), name: 'as_sql', file_path: 'django/db/models/fields/json.py' }];
+    const select = () => container.querySelector<HTMLSelectElement>('select[aria-label="Behavior entry point"]')!;
+    const filterField = () => container.querySelector<HTMLInputElement>('input[aria-label="Filter operations"]')!;
+    const group = (index: number) => [...select().querySelectorAll('optgroup')][index];
+    const options = (index: number) => [...group(index).querySelectorAll('option')].map(option => option.textContent);
+    async function type(value: string) {
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(filterField(), value);
+            filterField().dispatchEvent(new Event('input', { bubbles: true }));
+        });
+    }
+
+    it('A4: offers the suggestions first, then every operation alphabetically, behind a filter field', async () => {
+        await render(fixture(), { entries, suggestedEntries: [1, 22] });
+        expect(filterField().placeholder).toBe('Filter operations…');
+        expect(filterField().compareDocumentPosition(select()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect([...select().querySelectorAll('optgroup')].map(item => item.label)).toEqual(['Suggested', 'All operations · 4']);
+        expect(options(0)).toEqual(['operation1 · src/part1.ts', `handle · ${LOADDATA}`]);
+        expect(options(1)).toEqual(['as_sql · django/db/models/fields/json.py', `handle · ${LOADDATA}`,
+            'handle · django/core/management/commands/makemigrations.py', 'operation1 · src/part1.ts']);
+        expect(select().value).toBe('1');
+        expect(select().selectedOptions[0]?.textContent).toBe('operation1 · src/part1.ts');
+    });
+
+    it('A4: narrows the list to what the filter names, keeps the chosen start, and starts the operation picked there', async () => {
+        const props = await render(fixture(), { entries, suggestedEntries: [1, 21] });
+        await type('loaddata');
+        expect(group(1).label).toBe('Matching operations · 1 of 4');
+        expect(options(1)).toEqual([`handle · ${LOADDATA}`, 'operation1 · src/part1.ts']);
+        expect(options(0)).toEqual(['operation1 · src/part1.ts']);
+        expect(select().value).toBe('1');
+        await act(async () => { select().value = '22'; select().dispatchEvent(new Event('change', { bubbles: true })); });
+        expect(props.onRequest).toHaveBeenLastCalledWith(expect.objectContaining({ id: 22, file_path: LOADDATA }), undefined, {});
+        await type('no such operation');
+        expect(options(1)).toEqual(['operation1 · src/part1.ts', 'No operation matches "no such operation"']);
+        expect(group(1).querySelector('option:last-child')?.hasAttribute('disabled')).toBe(true);
+    });
+});

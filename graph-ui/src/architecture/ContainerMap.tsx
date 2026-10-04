@@ -7,6 +7,7 @@ import { loadContainerInventory, loadContainerTopology, type ContainerReading, t
 import type { ServiceEvidence } from './container-topology';
 import { useSelectionEvidence, type SelectionEvidenceListener } from '../galaxy/selection-evidence';
 import { architectureText as text } from './strings';
+import { RefreshControl, useRefreshFeedback } from './refresh-feedback';
 import './spatial-architecture.css';
 import './container-map.css';
 
@@ -32,6 +33,8 @@ export default function ContainerMap({ project, generation, active, filter, onNa
     const [available, setAvailable] = useState<ProjectEntry[]>([]);
     const [selections, setSelections] = useState<ContainerSelection[]>([]);
     const [discovery, setDiscovery] = useState<Discovery>('reading');
+    /** The `discoveryRevision` the current `discovery` answers, so a refresh can tell its own answer from the earlier one. */
+    const [discovered, setDiscovered] = useState<number>();
     const [reading, setReading] = useState<{ key: string; result?: ContainerReading; error?: string }>();
     const [revision, setRevision] = useState(0);
     const [discoveryRevision, setDiscoveryRevision] = useState(0);
@@ -55,12 +58,21 @@ export default function ContainerMap({ project, generation, active, filter, onNa
             const inventory = await loadContainerInventory(current, client);
             if (controller.signal.aborted) return;
             setAvailable(projects); setSelections([{ inventory, manifest: inventory.manifests[0] ?? '' }]);
-            setDiscovery(inventory.manifests.length ? undefined : 'none');
-        }).catch(() => { if (!controller.signal.aborted) setDiscovery('failed'); });
+            setDiscovery(inventory.manifests.length ? undefined : 'none'); setDiscovered(discoveryRevision);
+        }).catch(() => { if (!controller.signal.aborted) { setDiscovery('failed'); setDiscovered(discoveryRevision); } });
         return () => controller.abort();
     }, [project, active, generation, discoveryRevision]);
     const selectionKey = JSON.stringify(selections.map(item => [item.inventory.project, item.manifest]));
     const key = `${project}:${generation ?? ''}:${selectionKey}:${revision}`;
+    // Settled once the inventory answered this revision and, when a Compose file is chosen, its services were read.
+    const readsTopology = selections.some(item => item.manifest);
+    const topologyReading = reading?.key === key ? reading : undefined;
+    const shownTopology = topologyReading?.result?.topology;
+    const shown = useMemo(() => [discovery, shownTopology], [discovery, shownTopology]);
+    const refresh = useRefreshFeedback({ key: `${key}:${discoveryRevision}`,
+        settled: discovered === discoveryRevision && discovery !== 'reading' && (!readsTopology || Boolean(topologyReading?.result || topologyReading?.error)),
+        value: shown,
+        error: discovery === 'failed' ? text.serviceMap.failed : topologyReading?.error });
     useEffect(() => {
         if (!active || !selections.length || selections[0].inventory.project !== project || !selections.some(item => item.manifest)) return;
         const controller = new AbortController(), client = new RpcIntelligenceClient({ signal: controller.signal });
@@ -137,10 +149,11 @@ export default function ContainerMap({ project, generation, active, filter, onNa
         <header className="spatial-heading"><div><span className="spatial-eyebrow">Routes / Services</span><h2>How the services connect</h2>
             <p>One square per declared service. Follow a connection to see the configuration and code behind it.</p></div>
             <div className="spatial-camera-controls"><button aria-pressed={!planar} onClick={() => setPlanar(false)}>3D</button><button aria-pressed={planar} onClick={() => setPlanar(true)}>Plan</button>
-                <button onClick={() => setResetKey(value => value + 1)}>Fit map</button><button onClick={() => {
+                <button onClick={() => setResetKey(value => value + 1)}>Fit map</button><RefreshControl labels={text.refreshFeedback.services} feedback={refresh.feedback} onRefresh={() => {
+                    refresh.begin();
                     setRevision(value => value + 1);
                     if (!selections.length || !selections[0].inventory.manifests.length) setDiscoveryRevision(value => value + 1);
-                }}>Refresh</button></div></header>
+                }} /></div></header>
         <div className="container-projects" aria-label="Deployment sources">{selections.map((selection, index) => <label key={selection.inventory.project}><span>{selection.inventory.project}</span>
             <select aria-label={`Compose file for ${selection.inventory.project}`} value={selection.manifest} onChange={event => setSelections(current => current.map((item, i) => i === index ? { ...item, manifest: event.target.value } : item))}>
                 <option value="">Source only</option>{selection.inventory.manifests.map(path => <option key={path}>{path}</option>)}</select>
