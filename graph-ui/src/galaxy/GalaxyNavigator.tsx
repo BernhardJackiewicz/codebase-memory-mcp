@@ -32,6 +32,12 @@ export function choicesFromSearchHits(hits: readonly SearchGraphHit[]): Choice[]
     }
     return [...choices.values()];
 }
+/** Exact names first, then names that start with the search word, then folders and files, then the rest.
+ * The name in the index counts like the shown one: "cbm · working tree" is "working-tree" there. */
+export function searchPriority(choice: Choice, needle: string): number {
+    const names = [choice.name, 'name' in choice.scope ? choice.scope.name : undefined].filter((name): name is string => Boolean(name)).map(name => name.toLocaleLowerCase());
+    return names.includes(needle) ? 0 : names.some(name => name.startsWith(needle)) ? 1 : choice.kind === 'Folder' || choice.kind === 'File' ? 2 : 3;
+}
 /** One search for graph symbols and file/folder clusters, including unloaded symbols. */
 export default function GalaxyNavigator({ nodes, onSelect, onSelectScope, project, fetch: fetchImpl, embedded = false }: {
     nodes: readonly GraphNode[]; onSelect: (node: GraphNode) => void; onSelectScope?: (scope: GraphScope) => void;
@@ -97,8 +103,7 @@ export default function GalaxyNavigator({ nodes, onSelect, onSelectScope, projec
             choices.push({ key: path, name: path, detail: `${count.toLocaleString()} loaded nodes`, kind: folder ? 'Folder' : 'File',
                 scope: { kind: folder ? 'folder' : 'file', path: path.replace(/\/$/, ''), name: path } });
         }
-        const priority = (choice: Choice) => choice.name.toLocaleLowerCase() === needle ? 0
-            : choice.name.toLocaleLowerCase().startsWith(needle) ? 1 : choice.kind === 'Folder' || choice.kind === 'File' ? 2 : 3;
+        const priority = (choice: Choice) => searchPriority(choice, needle);
         const unique = new Map(choices.map(choice => [choice.key, choice]));
         for (const choice of remote) if (!unique.has(choice.key)) unique.set(choice.key, choice);
         return [...unique.values()].sort((a, b) => priority(a) - priority(b) || a.name.localeCompare(b.name)).slice(0, 12);
