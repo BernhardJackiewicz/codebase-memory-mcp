@@ -487,7 +487,7 @@ async function k7(page) {
     let card = await explanationText(page);
     outputs.push({ selection: 'JSONBAgg incoming CALLS', card, model: (await answersSince(page, from))[0]?.output, prompt: promptText(request) });
     await shot(page, 'K7', 'galaxy-incoming-calls', 'JSONBAgg, incoming, CALLS only: listed facts, at most one model sentence, no "list of integers / list of strings".');
-    const galaxyOk = Boolean(request) && /Incoming relationships: 11 from 11 symbols \(CALLS 11\)/.test(card) && !/list of (?:integers|strings)|output is/i.test(card)
+    const galaxyOk = Boolean(request) && /Incoming: 11 relationships from 11 symbols \(CALLS 11\)/.test(card) && !/list of (?:integers|strings)|output is/i.test(card)
         && /Never state types, parameters, inputs, outputs/.test(promptText(request)) && /class JSONBAgg\(OrderableAggMixin, Aggregate\)/.test(promptText(request));
     // Architecture, Overview: the django area (hand test 17:53).
     await tab(page, 'architecture');

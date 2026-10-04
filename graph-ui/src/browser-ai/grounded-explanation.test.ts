@@ -63,7 +63,7 @@ describe('the selected symbol source in a Galaxy explanation (K14)', () => {
         const packet = prepareExplanationContext(undefined, jsonbAggEvidence(), 3200, source);
         const prompt = formatExplanationEvidence(packet);
         expect(prompt).toContain('Source django/contrib/postgres/aggregates/general.py:50-52, a Python source file:\nclass JSONBAgg(OrderableAggMixin, Aggregate):');
-        expect(prompt).toContain('Incoming relationships: 23 from 12 symbols.');
+        expect(prompt).toContain('Incoming: 23 relationships from 12 symbols.');
         expect(packet.limitations.join('\n')).not.toContain('Source unavailable');
         expect(prepareExplanationContext(undefined, jsonbAggEvidence(), 3200).limitations.join('\n')).toContain('Source unavailable');
     });
@@ -107,8 +107,8 @@ describe('the selected symbol source in a Galaxy explanation (K14)', () => {
     it('summarizes the selection from the graph: what it is and its relationships by direction and type', () => {
         expect(selectionSummary(jsonbAggEvidence())).toEqual([
             'Selected: JSONBAgg (Class) in django/contrib/postgres/aggregates/general.py:50-54.',
-            'Incoming relationships: 23 from 12 symbols (CALLS 11, TESTS 11, DEFINES 1).',
-            'Outgoing relationships: 2 to 2 symbols (INHERITS 2).',
+            'Incoming: 23 relationships from 12 symbols (CALLS 11, TESTS 11, DEFINES 1).',
+            'Outgoing: 2 relationships to 2 symbols (INHERITS 2).',
             'Scope: 1 hop in both directions, all relationship types; 15 symbols and 25 relationships; fully loaded.',
         ]);
         expect(selectionSummary(djangoAreaEvidence())[0]).toBe('Selected source area: `django` (2310 files · 15299 indexed nodes).');
@@ -138,8 +138,8 @@ describe('the selected symbol source in a Galaxy explanation (K14)', () => {
     it('summarizes the selection in German for a German question (C5)', () => {
         expect(selectionSummary(jsonbAggEvidence(), 'de')).toEqual([
             'Ausgewählt: JSONBAgg (Class) in django/contrib/postgres/aggregates/general.py:50-54.',
-            'Eingehende Beziehungen: 23 aus 12 Symbolen (CALLS 11, TESTS 11, DEFINES 1).',
-            'Ausgehende Beziehungen: 2 zu 2 Symbolen (INHERITS 2).',
+            'Eingehend: 23 Beziehungen von 12 Symbolen (CALLS 11, TESTS 11, DEFINES 1).',
+            'Ausgehend: 2 Beziehungen zu 2 Symbolen (INHERITS 2).',
             'Ausschnitt: 1 Schritt in beide Richtungen, alle Beziehungstypen; 15 Symbole und 25 Beziehungen; vollständig geladen.',
         ]);
     });

@@ -52,3 +52,33 @@ describe('a scope that finished loading (W4)', () => {
         expect(listed).toContain('vollständig geladen.');
     });
 });
+
+describe('relationship counts that read as counts, not as a score (W2)', () => {
+    it('names the unit beside each number in the summary, in English and German', () => {
+        expect(selectionSummary(jsonbAggEvidence()).slice(1, 3)).toEqual([
+            'Incoming: 23 relationships from 12 symbols (CALLS 11, TESTS 11, DEFINES 1).',
+            'Outgoing: 2 relationships to 2 symbols (INHERITS 2).',
+        ]);
+        expect(selectionSummary(jsonbAggEvidence(), 'de').slice(1, 3)).toEqual([
+            'Eingehend: 23 Beziehungen von 12 Symbolen (CALLS 11, TESTS 11, DEFINES 1).',
+            'Ausgehend: 2 Beziehungen zu 2 Symbolen (INHERITS 2).',
+        ]);
+    });
+
+    it('heads each edge type of the prompt with its count in parentheses, so the model has no "CALLS from 11" to repeat', () => {
+        const prompt = formatExplanationEvidence(prepareExplanationContext(undefined, jsonbAggEvidence(), 3200));
+        expect(prompt).toContain('Incoming: 23 relationships from 12 symbols.');
+        expect(prompt).toContain('Outgoing: 2 relationships to 2 symbols.');
+        expect(prompt).toMatch(/^- CALLS \(11\): test_default_argument/m);
+        expect(prompt).toMatch(/^- INHERITS \(2\): OrderableAggMixin/m);
+        expect(prompt).not.toMatch(/\b(?:CALLS|TESTS|DEFINES|INHERITS) (?:from|to) \d/);
+    });
+
+    it('uses the same words where a side has nothing, was not loaded or was cut', () => {
+        expect(selectionSummary(jsonbAggEvidence({ direction: 'outbound' }))[1]).toBe('Incoming: not loaded; the scope does not follow incoming edges.');
+        expect(selectionSummary(jsonbAggEvidence({ direction: 'outbound' }), 'de')[1]).toBe('Eingehend: nicht geladen; der Ausschnitt folgt keinen eingehenden Kanten.');
+        const lonely = jsonbAggEvidence({ edges: [] });
+        expect(selectionSummary(lonely).slice(1, 3)).toEqual(['Incoming: no relationships in this scope.', 'Outgoing: no relationships in this scope.']);
+        expect(selectionSummary(lonely, 'de').slice(1, 3)).toEqual(['Eingehend: keine Beziehungen in diesem Ausschnitt.', 'Ausgehend: keine Beziehungen in diesem Ausschnitt.']);
+    });
+});

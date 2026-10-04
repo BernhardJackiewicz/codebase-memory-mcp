@@ -119,6 +119,6 @@ describe('evidence sections in the prompt', () => {
         expect(prompt).not.toMatch(/\[(?:graph|source)-\d+\]/);
         expect(prompt).not.toMatch(/\b(?:graph|source)[- ]\d+\b/i);
         expect(formatExplanationEvidence(packet)).toMatch(/^Source django\/contrib\/postgres\/aggregates\/general\.py:50-51, a Python source file:$/m);
-        expect(formatExplanationEvidence(packet)).toContain('Incoming relationships: 23 from 12 symbols.');
+        expect(formatExplanationEvidence(packet)).toContain('Incoming: 23 relationships from 12 symbols.');
     });
 });

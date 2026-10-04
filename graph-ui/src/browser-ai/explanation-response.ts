@@ -9,7 +9,7 @@ export const AUTO_OUTPUT_TOKENS = 128;
 export const CHAT_INPUT_TOKENS = 2048;
 
 /** Code sections are headed by where they come from; graph facts already begin with
- * their own words ("Selected:", "Incoming relationships:"). Numbered ids such as
+ * their own words ("Selected:", "Incoming:"). Numbered ids such as
  * "[graph-1]" stay out: a small model repeats them as "Graph 1" in its answer. */
 export function formatExplanationEvidence(packet: PreparedExplanationContext): string {
     const kind = (path: string) => { const name = fileKind(path); return name ? `, a ${name}` : ''; };

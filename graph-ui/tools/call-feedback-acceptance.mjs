@@ -457,7 +457,7 @@ async function chatChecks(page) {
     const callers = [...new Set(truth.filter((row) => row.type === 'CALLS').map((row) => row.source))];
     const byType = truth.reduce((acc, row) => { acc[row.type] = (acc[row.type] ?? 0) + 1; return acc; }, {});
     const card = await page.locator('.cbm-chat-explanation').innerText().catch(() => '');
-    const factsInCard = Object.entries(byType).every(([type, count]) => card.includes(`${type} ${count}`)) && card.includes(`Incoming relationships: ${truth.length}`);
+    const factsInCard = Object.entries(byType).every(([type, count]) => card.includes(`${type} ${count}`)) && card.includes(`Incoming: ${truth.length} relationship`);
     const sourceInPrompt = autoPrompt.includes('class JSONBAgg(');
     check('C1', 'Erklaerung: Fakten aus dem Index fest in der Karte, Prompt mit Quelltext und ohne interne Feldnamen', autoPrompt.length > 0 && forbidden.length === 0 && sourceInPrompt && factsInCard,
         { forbiddenFound: forbidden, sourceInPrompt, factsInCard, truthByType: byType, callers: callers.length, cardStart: card.slice(0, 400), promptStart: autoPrompt.slice(0, 300) }, [explanationImage]);

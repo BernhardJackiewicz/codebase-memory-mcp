@@ -37,7 +37,6 @@ export const browserAiText = {
 const en = (value: number) => value.toLocaleString('en-US');
 const de = (value: number) => value.toLocaleString('de-DE');
 const englishRelationshipWords = {
-    from: 'from', to: 'to',
     more: (count: number) => `+${en(count)} more`,
     hops: (depth: number) => depth === 0 ? 'the selection only' : depth === 1 ? '1 hop' : `${depth} hops`,
     both: 'in both directions', inbound: 'incoming only', outbound: 'outgoing only',
@@ -56,13 +55,16 @@ const englishRelationshipWords = {
         + (layer > 1 ? 'so counts and names further out can be incomplete' : 'so counts and names can be incomplete, the direct relationships included'),
     exhausted: 'nothing further beyond this depth',
     scope: (shape: string, size: string, state: string) => `Scope: ${shape}; ${size}; ${state}.`,
-    incoming: (total: number, symbols?: number) => `Incoming relationships: ${en(total)}${symbols === undefined ? '' : ` from ${en(symbols)} ${symbols === 1 ? 'symbol' : 'symbols'}`}.`,
-    outgoing: (total: number, symbols?: number) => `Outgoing relationships: ${en(total)}${symbols === undefined ? '' : ` to ${en(symbols)} ${symbols === 1 ? 'symbol' : 'symbols'}`}.`,
-    noIncoming: 'Incoming relationships: none in this scope.',
-    noOutgoing: 'Outgoing relationships: none in this scope.',
-    incomingNotLoaded: 'Incoming relationships: not loaded; the scope does not follow incoming edges.',
-    outgoingNotLoaded: 'Outgoing relationships: not loaded; the scope does not follow outgoing edges.',
-    cut: (side: 'incoming' | 'outgoing') => `${side === 'incoming' ? 'Incoming' : 'Outgoing'} relationships: left out of this snapshot.`,
+    /** Each number with its unit: "Incoming: 23 relationships from 12 symbols", never "23 from 12", which reads like a score (W2). */
+    incoming: (total: number, symbols?: number) => `Incoming: ${en(total)} ${total === 1 ? 'relationship' : 'relationships'}`
+        + `${symbols === undefined ? '' : ` from ${en(symbols)} ${symbols === 1 ? 'symbol' : 'symbols'}`}.`,
+    outgoing: (total: number, symbols?: number) => `Outgoing: ${en(total)} ${total === 1 ? 'relationship' : 'relationships'}`
+        + `${symbols === undefined ? '' : ` to ${en(symbols)} ${symbols === 1 ? 'symbol' : 'symbols'}`}.`,
+    noIncoming: 'Incoming: no relationships in this scope.',
+    noOutgoing: 'Outgoing: no relationships in this scope.',
+    incomingNotLoaded: 'Incoming: not loaded; the scope does not follow incoming edges.',
+    outgoingNotLoaded: 'Outgoing: not loaded; the scope does not follow outgoing edges.',
+    cut: (side: 'incoming' | 'outgoing') => `${side === 'incoming' ? 'Incoming' : 'Outgoing'}: relationships left out of this snapshot.`,
     truncated: 'the snapshot left part of its relationships out, so counts and names can be incomplete',
     moreTypes: (count: number) => `+${en(count)} more relationship ${count === 1 ? 'type' : 'types'}`,
     internal: (summary: string) => `Between the selected symbols: ${summary}.`,
@@ -104,7 +106,6 @@ export type RelationshipWords = typeof englishRelationshipWords;
 export const relationshipWords: { en: RelationshipWords; de: RelationshipWords } = {
     en: englishRelationshipWords,
     de: {
-        from: 'von', to: 'zu',
         more: (count: number) => `+${de(count)} weitere`,
         hops: (depth: number) => depth === 0 ? 'nur die Auswahl' : depth === 1 ? '1 Schritt' : `${depth} Schritte`,
         both: 'in beide Richtungen', inbound: 'nur eingehend', outbound: 'nur ausgehend',
@@ -122,13 +123,15 @@ export const relationshipWords: { en: RelationshipWords; de: RelationshipWords }
         },
         exhausted: 'dahinter folgt nichts mehr',
         scope: (shape: string, size: string, state: string) => `Ausschnitt: ${shape}; ${size}; ${state}.`,
-        incoming: (total: number, symbols?: number) => `Eingehende Beziehungen: ${de(total)}${symbols === undefined ? '' : ` aus ${de(symbols)} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
-        outgoing: (total: number, symbols?: number) => `Ausgehende Beziehungen: ${de(total)}${symbols === undefined ? '' : ` zu ${de(symbols)} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
-        noIncoming: 'Eingehende Beziehungen: keine in diesem Ausschnitt.',
-        noOutgoing: 'Ausgehende Beziehungen: keine in diesem Ausschnitt.',
-        incomingNotLoaded: 'Eingehende Beziehungen: nicht geladen; der Ausschnitt folgt keinen eingehenden Kanten.',
-        outgoingNotLoaded: 'Ausgehende Beziehungen: nicht geladen; der Ausschnitt folgt keinen ausgehenden Kanten.',
-        cut: (side: 'incoming' | 'outgoing') => `${side === 'incoming' ? 'Eingehende' : 'Ausgehende'} Beziehungen: in diesem Schnappschuss ausgelassen.`,
+        incoming: (total: number, symbols?: number) => `Eingehend: ${de(total)} ${total === 1 ? 'Beziehung' : 'Beziehungen'}`
+            + `${symbols === undefined ? '' : ` von ${de(symbols)} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
+        outgoing: (total: number, symbols?: number) => `Ausgehend: ${de(total)} ${total === 1 ? 'Beziehung' : 'Beziehungen'}`
+            + `${symbols === undefined ? '' : ` zu ${de(symbols)} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
+        noIncoming: 'Eingehend: keine Beziehungen in diesem Ausschnitt.',
+        noOutgoing: 'Ausgehend: keine Beziehungen in diesem Ausschnitt.',
+        incomingNotLoaded: 'Eingehend: nicht geladen; der Ausschnitt folgt keinen eingehenden Kanten.',
+        outgoingNotLoaded: 'Ausgehend: nicht geladen; der Ausschnitt folgt keinen ausgehenden Kanten.',
+        cut: (side: 'incoming' | 'outgoing') => `${side === 'incoming' ? 'Eingehend' : 'Ausgehend'}: Beziehungen in diesem Schnappschuss ausgelassen.`,
         truncated: 'der Schnappschuss hat einen Teil der Beziehungen ausgelassen, Anzahlen und Namen können unvollständig sein',
         moreTypes: (count: number) => `+${de(count)} weitere ${count === 1 ? 'Beziehungstyp' : 'Beziehungstypen'}`,
         internal: (summary: string) => `Zwischen den ausgewählten Symbolen: ${summary}.`,

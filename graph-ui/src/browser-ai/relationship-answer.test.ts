@@ -129,7 +129,7 @@ describe('listed relationship answers', () => {
         const markdown = relationshipAnswer('What does postgres call?', [cut])!.markdown;
         expect(markdown).not.toMatch(/to 0 symbols/);
         expect(markdown).toContain('the snapshot left part of its relationships out, so counts and names can be incomplete');
-        expect(markdown).toMatch(/Outgoing relationships: left out of this snapshot\.|\d+ outgoing relationships?\./);
+        expect(markdown).toMatch(/Outgoing: relationships left out of this snapshot\.|\d+ outgoing relationships?\./);
     });
 
     it('leaves questions about another symbol, attached non-Galaxy evidence and other questions to the model', () => {
