@@ -282,3 +282,16 @@ All items G1 to G7, C1 to C6, A1 to A4, the backend parts of A2 and A3 and the s
 - The listed caller answer is produced in the chat, which needs the browser model to be loaded before a question can be sent.
 - Explanations are still worded by the local 0.5B model. The facts it receives are now complete and readable, but the wording quality is bounded by the model.
 
+## Hand test round (3 and 4 October 2026)
+
+Bernhard tested the branch by hand and recorded 28 findings (K1 to K28) in a German correction plan: graph-ui/verification/call-feedback-2026-10-02/KORREKTURPLAN.md (local, not committed), forwarded separately. All 28 are implemented on this branch, each test-first and checked in a headless browser with screenshots. An independent completeness check compared every item with the wanted behaviour; the four gaps it found (K5, K12, K16, K24) were closed in a second round.
+
+Highlights:
+- Galaxy: Back/Forward with a bounded shared history (25 steps, recent list, Alt+arrows), empty clicks keep the scope, deep layers load in a few large requests with progress and cancel, a truthful hierarchy (incoming left, outgoing right, mixed directions in their own band), Selection details from the loaded scope.
+- Chat: automatic explanations list the indexed facts and send the model only the source; caller questions are answered from the graph, also with typos; configuration files get facts only; earlier answers on another topic are not resent; the model stays loaded across reloads (cached) and project switches (in-page switch).
+- Architecture: Back/Forward on the same history model; one green scheme for all scenes; labels clear of each other; Behavior start list, names and counts; honest Service map and route messages.
+
+Browser checks on the final tree: graph-ui/tools/handtest-fixes-galaxy.mjs 29/29, handtest-fixes-architecture.mjs 25/25, handtest-fixes-chat.mjs 19/19 (real model), call-feedback-acceptance.mjs 19/19, handtest-fixes-k27.mjs 55/55. scripts/ci/test-ui.sh green (262 files, 3,570 tests, style gate, promise scan, 203 acceptance checks, build).
+
+Known limits: the 0.5B model can still word things loosely next to the listed facts (its text is labelled, unknown names are flagged); Behavior resolves os.environ.setdefault in manage.py-tpl to a QueryDict method (index call resolution, not frontend); with the chat open the Galaxy toolbar wraps to two rows below about 1,440 px.
+
