@@ -1,6 +1,7 @@
 import { RpcIntelligenceClient } from '../provider/rpc-client';
 import { escapeLiteral } from '../provider/cypher';
 import type { QueryGraphResult } from '../provider/rpc-schemas';
+import { graphNodeName, nodeFilePath } from './node-names';
 import { readerGraphFocus, type SourceFocusRange } from './reader-graph-focus';
 import type { GraphData, GraphEdge, GraphNode } from './types';
 import type { GraphNeighborhoodTransaction } from './graph-neighborhood-cache';
@@ -77,9 +78,11 @@ export async function readGraphPages(client: GraphQueryClient, project: string, 
 const languageColors: Record<string, string> = { ts: '#6ea6be', tsx: '#6ea6be', js: '#c3b775', jsx: '#c3b775', c: '#92a8b4', h: '#92a8b4', cpp: '#b28da6', py: '#8daf88', go: '#77b2b4', rs: '#bd947c', java: '#bd9281', cs: '#a392bb', rb: '#b78288', swift: '#bf9b85', kt: '#af97ba' };
 function readNode(row: Record<string, string>, prefix: string, layout: Map<number, GraphNode>): GraphNode {
     const identity = id(row[`${prefix}id`]), known = layout.get(identity);
-    const path = row[`${prefix}file`] || undefined;
-    return { ...known, id: identity, name: row[`${prefix}name`] || String(identity), label: row[`${prefix}label`] || known?.label || '',
-        qualified_name: row[`${prefix}qn`] || undefined, file_path: path,
+    const name = row[`${prefix}name`] || String(identity), label = row[`${prefix}label`] || known?.label || '', qualifiedName = row[`${prefix}qn`] || undefined;
+    // A Branch node answers with the file "{}": no file (round 4, N1).
+    const path = nodeFilePath({ name, label, qualified_name: qualifiedName, file_path: row[`${prefix}file`] || undefined });
+    return { ...known, id: identity, name, label,
+        qualified_name: qualifiedName, file_path: path,
         start_line: number(row[`${prefix}start_line`]), end_line: number(row[`${prefix}end_line`]),
         x: known?.x ?? 0, y: known?.y ?? 0, z: known?.z ?? 0,
         size: known?.size ?? 2.8, color: known?.color ?? languageColors[path?.split('.').pop() ?? ''] ?? '#97a6ad' };
@@ -472,7 +475,8 @@ export function scopedHierarchy(scope: ScopedGraph, name: string): import('./hie
     const block = new Map(keys.map(key => {
         const entries = columns.get(key)!;
         const cols = !named(key) && entries.length > SCOPED_HIERARCHY_WRAP_AT ? Math.ceil(Math.sqrt(entries.length)) : 1;
-        const label = named(key) ? Math.max(...entries.map(node => hierarchyLabelWidth(node.name))) : 0;
+        // The width of the name that is drawn: "django-demo · detached HEAD" for a Branch node (round 4, N1).
+        const label = named(key) ? Math.max(...entries.map(node => hierarchyLabelWidth(graphNodeName(node)))) : 0;
         const gapX = named(key) ? label + LABEL_GUTTER : SCOPED_HIERARCHY_ROW_GAP * 1.25;
         return [key, { entries, cols, rows: Math.ceil(entries.length / cols), gapX, width: (cols - 1) * gapX, label }] as const;
     }));
@@ -529,7 +533,7 @@ export function scopedHierarchy(scope: ScopedGraph, name: string): import('./hie
         const bandNamed = names === 'all';
         const rows = bandNamed ? Math.min(band.length, Math.max(BAND_MIN_ROWS, Math.ceil(Math.sqrt(band.length * 2)))) : Math.ceil(Math.sqrt(band.length));
         const groups = Array.from({ length: Math.ceil(band.length / rows) }, (_, at) => band.slice(at * rows, at * rows + rows));
-        const widths = groups.map(group => (bandNamed ? Math.max(...group.map(node => hierarchyLabelWidth(node.name))) : 0));
+        const widths = groups.map(group => (bandNamed ? Math.max(...group.map(node => hierarchyLabelWidth(graphNodeName(node)))) : 0));
         const xs: number[] = [];
         groups.forEach((_, at) => xs.push(at === 0 ? 0 : xs[at - 1]! + (bandNamed ? (widths[at - 1]! + widths[at]!) / 2 + LABEL_GUTTER : SCOPED_HIERARCHY_ROW_GAP * 1.25)));
         const shift = -xs.at(-1)! / 2;

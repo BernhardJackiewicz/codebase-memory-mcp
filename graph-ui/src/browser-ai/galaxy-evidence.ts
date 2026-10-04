@@ -1,3 +1,4 @@
+import { nodeDisplayName } from '../galaxy/node-names';
 import type { RelationshipGroup, ScopeRelationships } from '../galaxy/selection-evidence';
 import type { RelationshipWords } from './strings';
 
@@ -39,12 +40,16 @@ function text(value: unknown, limit: number): string | undefined {
     return clean.length <= limit ? clean : `${clean.slice(0, limit - 1)}…`;
 }
 
-function groups(value: unknown): RelationshipGroup[] {
+/* A related Branch node carries the project of the snapshot, so a listed answer can name it "django-demo · detached HEAD" (round 4, N1). */
+function groups(value: unknown, project: string | undefined): RelationshipGroup[] {
     return records(value).flatMap(group => {
         const type = text(group.type, 60);
         if (!type) return [];
         const files = records(group.files).map(file => ({ path: text(file.path, 240) ?? '', symbols: records(file.symbols)
-            .flatMap(symbol => { const name = text(symbol.name, 120); return name ? [{ name, kind: text(symbol.kind, 40) }] : []; }) }))
+            .flatMap(symbol => {
+                const name = text(symbol.name, 120), kind = text(symbol.kind, 40);
+                return name ? [{ name, kind, ...kind === 'Branch' && project ? { project } : {} }] : [];
+            }) }))
             .filter(file => file.symbols.length);
         const listed = files.reduce((sum, file) => sum + file.symbols.length, 0);
         return [{ type, count: Math.max(count(group.count), listed), files }];
@@ -78,14 +83,15 @@ export function readGalaxyEvidence(snapshot: string): GalaxyEvidence | undefined
         return name ? [{ name, kind: text(root.kind, 40), qualifiedName: text(root.qualifiedName, 400), filePath: text(root.filePath, 240), startLine: line(root.startLine),
             endLine: line(root.endLine), documentation: text(root.documentation, 300) }] : [];
     });
+    const project = text(evidence.project, 120);
     return {
-        project: text(evidence.project, 120) ?? '', label: text(identity.name, 120) ?? roots[0]?.name ?? 'selection',
+        project: project ?? '', label: text(identity.name, 120) ?? roots[0]?.name ?? 'selection',
         identity, selectionKind: text(identity.kind, 20) ?? 'node',
         roots, rootCount: Math.max(count(selected?.rootCount), roots.length),
         depth: count(scope.depth), direction, edgeTypes, nodes: count(scope.nodes), edges: count(scope.edges),
         state, ...state === 'limited' ? { renderLimit } : {}, error: text(limits?.error, 200), exhausted: limits?.exhausted === true,
-        relationships: { incoming: groups(relationships?.incoming), incomingSymbols: total(relationships?.incomingSymbols),
-            outgoing: groups(relationships?.outgoing), outgoingSymbols: total(relationships?.outgoingSymbols),
+        relationships: { incoming: groups(relationships?.incoming, project), incomingSymbols: total(relationships?.incomingSymbols),
+            outgoing: groups(relationships?.outgoing, project), outgoingSymbols: total(relationships?.outgoingSymbols),
             internal: totals(relationships?.internal), beyond: totals(relationships?.beyond) },
         truncated,
     };
@@ -121,7 +127,7 @@ export function relationshipLine(group: RelationshipGroup, _side: 'incoming' | '
         const suffix = where ? ` (${where})` : '';
         let chunk = '';
         for (const symbol of file.symbols) {
-            const next = `${chunk ? `${chunk}, ` : body ? '; ' : ''}${quote(symbol.name)}`;
+            const next = `${chunk ? `${chunk}, ` : body ? '; ' : ''}${quote(nodeDisplayName(symbol, words.nodeNames))}`;
             const shown = listed + 1;
             const after = group.count > shown ? `; ${words.more(group.count - shown)}` : '';
             if (head.length + body.length + next.length + suffix.length + after.length > budget) {
@@ -151,6 +157,21 @@ export function sideLoaded(evidence: GalaxyEvidence, side: 'incoming' | 'outgoin
     return evidence.depth > 0 && evidence.direction !== (side === 'incoming' ? 'outbound' : 'inbound');
 }
 
+/** A root as the answer names it: a Branch node "django-demo · detached HEAD", every other by its name (round 4, N1). */
+const rootName = (root: GalaxyEvidence['roots'][number], words: RelationshipWords) => nodeDisplayName(root, words.nodeNames);
+
+/**
+ * The selection as the answer names it. The label stays the name of the
+ * index, because the chat matches typed names against it; what is written
+ * names a Branch node for what it is, in the language of the answer.
+ */
+export function selectionName(evidence: GalaxyEvidence, words: RelationshipWords): string {
+    const [first] = evidence.roots;
+    if (evidence.rootCount <= 1 && first && first.name === evidence.label) return rootName(first, words);
+    const identity = record(evidence.identity);
+    return nodeDisplayName({ name: evidence.label, qualifiedName: typeof identity?.qualifiedName === 'string' ? identity.qualifiedName : undefined }, words.nodeNames);
+}
+
 /** What is selected, in the words of the prompt (English) or of a question (C5). */
 export function selectionSentence(evidence: GalaxyEvidence, words: RelationshipWords): string[] {
     const [first] = evidence.roots;
@@ -159,10 +180,10 @@ export function selectionSentence(evidence: GalaxyEvidence, words: RelationshipW
     // Kinds in the words of the answer: "(Klasse)" in a German one (W8).
     const kind = (root: GalaxyEvidence['roots'][number]) => root.kind ? ` (${words.kindName(root.kind)})` : '';
     if (evidence.rootCount <= 1 && first) {
-        return [words.selected(`${first.name}${kind(first)}${range(first)}`),
+        return [words.selected(`${rootName(first, words)}${kind(first)}${range(first)}`),
             ...first.documentation ? [words.documentation(first.documentation)] : []];
     }
-    if (!first) return [words.notInScope(evidence.label, words.kindName(evidence.selectionKind))];
-    const listed = evidence.roots.map(root => `${root.name}${kind(root)}`).join(', ');
-    return [words.selectedGroup(words.kindName(evidence.selectionKind), evidence.label, evidence.rootCount, listed, evidence.rootCount - evidence.roots.length)];
+    if (!first) return [words.notInScope(selectionName(evidence, words), words.kindName(evidence.selectionKind))];
+    const listed = evidence.roots.map(root => `${rootName(root, words)}${kind(root)}`).join(', ');
+    return [words.selectedGroup(words.kindName(evidence.selectionKind), selectionName(evidence, words), evidence.rootCount, listed, evidence.rootCount - evidence.roots.length)];
 }

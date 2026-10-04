@@ -12,6 +12,7 @@
 import type { NavigationHistoryOptions } from '../graph/navigation-history';
 import type { GraphScope, TraceDirection } from './graph-scope';
 import { galaxyHistoryText as text } from './galaxy-strings';
+import { scopeDisplayName } from './node-names';
 
 export type ScopeTrail = { kind: 'path'; target: number; name: string } | { kind: 'calls' };
 
@@ -45,7 +46,7 @@ export const galaxyHistoryOptions: NavigationHistoryOptions<GalaxyHistoryEntry> 
 
 /** Wie ein Eintrag in einem Tooltip heisst: "n1 · 2 layers · path to n4". */
 export function historyEntryLabel(entry: GalaxyHistoryEntry): string {
-    return entry.scope ? `${entry.scope.name} · ${historyEntryDetail(entry)}` : text.allGraph;
+    return entry.scope ? `${scopeDisplayName(entry.scope)} · ${historyEntryDetail(entry)}` : text.allGraph;
 }
 
 /** Dasselbe ohne den Namen, fuer die Zeile unter dem Namen in der Liste der letzten Wurzeln. */

@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { galaxyPathText as text } from './galaxy-strings';
+import { graphNodeName, graphNodeTitle, nodeFilePath } from './node-names';
 import type { ScopePathStep } from './scope-path';
 import type { GraphNode } from './types';
 import { FitLabel } from './toolbar-fit';
@@ -20,13 +21,14 @@ export function PathPicker({ nodes, onPick }: { nodes: readonly GraphNode[]; onP
     const matches = useMemo(() => {
         const needle = query.trim().toLocaleLowerCase();
         // Name matches first, as in the node search: exact, prefix, anywhere, then path or qualified name.
-        const rank = (node: GraphNode) => {
-            const name = node.name.toLocaleLowerCase();
+        // A Branch node is found by its shown name and by its name in the index (round 4, N1).
+        const rank = (node: GraphNode) => Math.min(...[graphNodeName(node), node.name].map(value => {
+            const name = value.toLocaleLowerCase();
             return name === needle ? 0 : name.startsWith(needle) ? 1 : name.includes(needle) ? 2 : 3;
-        };
-        return nodes.filter(node => !needle || [node.name, node.qualified_name, node.file_path]
+        }));
+        return nodes.filter(node => !needle || [graphNodeName(node), node.name, node.qualified_name, nodeFilePath(node)]
             .some(value => value?.toLocaleLowerCase().includes(needle)))
-            .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name) || a.id - b.id);
+            .sort((a, b) => rank(a) - rank(b) || graphNodeName(a).localeCompare(graphNodeName(b)) || a.id - b.id);
     }, [nodes, query]);
     return <details ref={details} className="atlas-graph-path-picker" onKeyDown={closeOnEscape}>
         <summary title={text.pathToTitle}><FitLabel wide={text.pathTo} narrow={text.pathToNarrow} /></summary>
@@ -37,7 +39,7 @@ export function PathPicker({ nodes, onPick }: { nodes: readonly GraphNode[]; onP
                 <button type="button" onClick={() => {
                     onPick(node);
                     if (details.current) details.current.open = false;
-                }}><strong>{node.name}</strong><span>{node.file_path ?? node.qualified_name ?? node.label}</span></button>
+                }} title={graphNodeTitle(node)}><strong>{graphNodeName(node)}</strong><span>{nodeFilePath(node) ?? node.qualified_name ?? node.label}</span></button>
             </li>)}</ul>
             {matches.length === 0 && <small>{text.pathNoMatch}</small>}
             {matches.length > PICKER_LIMIT && <small>{text.pathMore(matches.length - PICKER_LIMIT)}</small>}

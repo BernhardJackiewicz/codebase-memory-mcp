@@ -1,4 +1,5 @@
 import type { DroppedReason } from './explanation-response';
+import { galaxyNodeNameText, type BranchNameWords } from '../galaxy/galaxy-strings';
 
 export const browserAiText = {
     title: 'Browser AI',
@@ -47,6 +48,15 @@ const GERMAN_KINDS: Readonly<Record<string, readonly [string, string, 'f' | 'm' 
     struct: ['Struktur', 'Strukturen', 'f'], trait: ['Trait', 'Traits', 'm'], macro: ['Makro', 'Makros', 'n'], constant: ['Konstante', 'Konstanten', 'f'],
     namespace: ['Namensraum', 'Namensräume', 'm'], property: ['Eigenschaft', 'Eigenschaften', 'f'], decorator: ['Dekorator', 'Dekoratoren', 'm'],
     test: ['Test', 'Tests', 'm'], channel: ['Kanal', 'Kanäle', 'm'], node: ['Knoten', 'Knoten', 'm'], symbol: ['Symbol', 'Symbole', 'n'],
+    branch: ['Branch-Knoten', 'Branch-Knoten', 'm'],
+};
+/** The Branch node in the words of the answer: "django-demo · detached HEAD", "django-demo · losgelöster HEAD" (round 4, N1). */
+const englishNodeNames: BranchNameWords = galaxyNodeNameText;
+const germanNodeNames: BranchNameWords = {
+    detached: 'losgelöster HEAD',
+    workingTree: 'Arbeitsverzeichnis',
+    branch: (name: string) => `Branch ${name}`,
+    inProject: (project: string, what: string) => `${project} · ${what}`,
 };
 const englishRelationshipWords = {
     more: (count: number) => `+${en(count)} more`,
@@ -68,6 +78,8 @@ const englishRelationshipWords = {
     exhausted: 'nothing further beyond this depth',
     /** A node kind as the answer's language writes it: "Class", "Klasse" (W8). */
     kindName: (kind: string) => kind,
+    /** How a Branch node is named (round 4, N1). */
+    nodeNames: englishNodeNames,
     scope: (shape: string, size: string, state: string) => `Scope: ${shape}; ${size}; ${state}.`,
     /** Each number with its unit: "Incoming: 23 relationships from 12 symbols", never "23 from 12", which reads like a score (W2). */
     incoming: (total: number, symbols?: number) => `Incoming: ${en(total)} ${total === 1 ? 'relationship' : 'relationships'}`
@@ -148,6 +160,7 @@ export const relationshipWords: { en: RelationshipWords; de: RelationshipWords }
         },
         exhausted: 'dahinter folgt nichts mehr',
         kindName: (kind: string) => GERMAN_KINDS[kind.toLowerCase()]?.[0] ?? kind,
+        nodeNames: germanNodeNames,
         scope: (shape: string, size: string, state: string) => `Ausschnitt: ${shape}; ${size}; ${state}.`,
         incoming: (total: number, symbols?: number) => `Eingehend: ${de(total)} ${total === 1 ? 'Beziehung' : 'Beziehungen'}`
             + `${symbols === undefined ? '' : ` von ${de(symbols)} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
