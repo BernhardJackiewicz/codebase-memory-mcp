@@ -65,7 +65,7 @@ const englishRelationshipWords = {
     beyond: (summary: string) => `Further out in the scope: ${summary}.`,
     selected: (what: string) => `Selected: ${what}.`,
     documentation: (text: string) => `Documentation: ${text}`,
-    notInScope: (label: string, kind: string) => `Selected: ${label} (${kind}); its symbols are not in the loaded scope yet.`,
+    notInScope: (label: string, kind: string) => `Selected: ${label} (${kind}); its symbols are not in the loaded scope.`,
     selectedGroup: (kind: string, label: string, count: number, listed: string, omitted: number) =>
         `Selected ${kind}: ${label} with ${en(count)} symbols: ${listed}${omitted > 0 ? `; +${en(omitted)} more` : ''}.`,
     callersOf: (name: string) => `Callers of ${name} in the loaded graph`,
@@ -127,7 +127,7 @@ export const relationshipWords: { en: RelationshipWords; de: RelationshipWords }
         beyond: (summary: string) => `Weiter außen im Ausschnitt: ${summary}.`,
         selected: (what: string) => `Ausgewählt: ${what}.`,
         documentation: (text: string) => `Dokumentation: ${text}`,
-        notInScope: (label: string, kind: string) => `Ausgewählt: ${label} (${kind}); seine Symbole sind noch nicht im geladenen Ausschnitt.`,
+        notInScope: (label: string, kind: string) => `Ausgewählt: ${label} (${kind}); seine Symbole sind nicht im geladenen Ausschnitt.`,
         selectedGroup: (kind: string, label: string, count: number, listed: string, omitted: number) =>
             `Ausgewählt (${kind}): ${label} mit ${de(count)} Symbolen: ${listed}${omitted > 0 ? `; +${de(omitted)} weitere` : ''}.`,
         callersOf: (name: string) => `Aufrufer von ${name} im geladenen Graphen`,
