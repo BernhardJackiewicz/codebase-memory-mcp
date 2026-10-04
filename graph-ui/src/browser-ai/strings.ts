@@ -47,8 +47,11 @@ const englishRelationshipWords = {
     complete: 'complete for the indexed graph',
     loading: 'still loading, so this is a partial preview',
     partial: (error?: string) => `incomplete${error ? `: ${error}` : ''}`,
-    /** A layer stopped at the render limit: the layers inside it are whole, it and those further out are not (C1). */
-    renderLimited: (layer: number, limit: number, kind: 'nodes' | 'edges') => `partial: layer ${layer} stopped at the render limit of ${en(limit)} ${kind}, `
+    /** A layer stopped at the render limit: the layers inside it are whole, it and those further out are not (C1). As the
+     * Galaxy tooltip says it, loading stops after the request that passes the limit (5,548 of 5,000), and the scene draws up
+     * to the limit. The limit gets a sentence of its own, so nodes never stand beside the symbols of the scope size (W1). */
+    renderLimited: (layer: number, limit: number, kind: 'nodes' | 'edges') => `partial. Layer ${layer} stopped loading after the request that took it past `
+        + `the render limit of ${en(limit)} ${kind}; the scene draws at most ${en(limit)} ${kind}, `
         + (layer > 1 ? 'so counts and names further out can be incomplete' : 'so counts and names can be incomplete, the direct relationships included'),
     exhausted: 'nothing further beyond this depth',
     scope: (shape: string, size: string, state: string) => `Scope: ${shape}; ${size}; ${state}.`,
@@ -110,8 +113,12 @@ export const relationshipWords: { en: RelationshipWords; de: RelationshipWords }
         complete: 'vollständig für den indizierten Graphen',
         loading: 'lädt noch, das ist eine Vorschau',
         partial: (error?: string) => `unvollständig${error ? `: ${error}` : ''}`,
-        renderLimited: (layer: number, limit: number, kind: 'nodes' | 'edges') => `unvollständig: Ebene ${layer} hielt am Darstellungslimit von ${de(limit)} ${kind === 'nodes' ? 'Knoten' : 'Kanten'} an, `
-            + (layer > 1 ? 'Anzahlen und Namen weiter außen können daher fehlen' : 'Anzahlen und Namen können daher fehlen, auch bei den direkten Beziehungen'),
+        renderLimited: (layer: number, limit: number, kind: 'nodes' | 'edges') => {
+            const unit = kind === 'nodes' ? 'Knoten' : 'Kanten';
+            return `unvollständig. Ebene ${layer} hörte nach der Anfrage auf zu laden, die sie über das Darstellungslimit von ${de(limit)} ${unit} brachte; `
+                + `die Szene zeichnet höchstens ${de(limit)} ${unit}, `
+                + (layer > 1 ? 'daher können Anzahlen und Namen weiter außen fehlen' : 'daher können Anzahlen und Namen fehlen, auch bei den direkten Beziehungen');
+        },
         exhausted: 'dahinter folgt nichts mehr',
         scope: (shape: string, size: string, state: string) => `Ausschnitt: ${shape}; ${size}; ${state}.`,
         incoming: (total: number, symbols?: number) => `Eingehende Beziehungen: ${de(total)}${symbols === undefined ? '' : ` aus ${de(symbols)} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,

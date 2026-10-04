@@ -93,10 +93,12 @@ describe('listed relationship answers', () => {
 
     it('says in the language of the question that a scope stopped at the render limit, with numbers written in that language (C1)', () => {
         expect(relationshipAnswer('Who calls JSONBAgg?', [jsonbAggRenderLimited()])!.markdown).toContain('Scope: 3 hops in both directions, all relationship types; '
-            + '5,548 symbols and 15,673 relationships; partial: layer 3 stopped at the render limit of 5,000 nodes, so counts and names further out can be incomplete.');
+            + '5,548 symbols and 15,673 relationships; partial. Layer 3 stopped loading after the request that took it past the render limit of 5,000 nodes; '
+            + 'the scene draws at most 5,000 nodes, so counts and names further out can be incomplete.');
         const german = relationshipAnswer('Wer ruft JSONBAgg auf?', [jsonbAggRenderLimited()])!.markdown;
         expect(german).toContain('Ausschnitt: 3 Schritte in beide Richtungen, alle Beziehungstypen; 5.548 Symbole und 15.673 Beziehungen; '
-            + 'unvollständig: Ebene 3 hielt am Darstellungslimit von 5.000 Knoten an, Anzahlen und Namen weiter außen können daher fehlen.');
+            + 'unvollständig. Ebene 3 hörte nach der Anfrage auf zu laden, die sie über das Darstellungslimit von 5.000 Knoten brachte; '
+            + 'die Szene zeichnet höchstens 5.000 Knoten, daher können Anzahlen und Namen weiter außen fehlen.');
         expect(german).not.toContain('vollständig für den indizierten Graphen');
     });
 

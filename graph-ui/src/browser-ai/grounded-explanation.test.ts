@@ -116,7 +116,8 @@ describe('the selected symbol source in a Galaxy explanation (K14)', () => {
 
     it('says that a scope stopped at the render limit is partial, in the card and in the prompt (C1)', () => {
         const partial = 'Scope: 3 hops in both directions, all relationship types; 5,548 symbols and 15,673 relationships; '
-            + 'partial: layer 3 stopped at the render limit of 5,000 nodes, so counts and names further out can be incomplete.';
+            + 'partial. Layer 3 stopped loading after the request that took it past the render limit of 5,000 nodes; the scene draws at most 5,000 nodes, '
+            + 'so counts and names further out can be incomplete.';
         expect(selectionSummary(jsonbAggRenderLimited()).at(-1)).toBe(partial);
         expect(formatExplanationEvidence(prepareExplanationContext(undefined, jsonbAggRenderLimited(), 3200))).toContain(partial);
         expect(selectionSummary(jsonbAggRenderLimited()).join('\n')).not.toContain('complete for the indexed graph');
