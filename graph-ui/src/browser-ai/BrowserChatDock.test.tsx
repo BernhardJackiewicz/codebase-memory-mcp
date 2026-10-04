@@ -1611,7 +1611,7 @@ describe('general questions, prompts without a question and configuration files 
         await render({ ...props, selectionScope: 'django-demo:explore', readerContext: reader(text, 'file', '.pre-commit-config.yaml') }); await click('Download & load');
         for (const question of ['was macht diese datei?', 'erklär mir die datei detailliert']) {
             await type(question); await click('Send ↑');
-            expect(answer()).toContain('.pre-commit-config.yaml: YAML-Konfiguration, 9 Zeilen. Aus der Datei gelesen:');
+            expect(answer()).toContain('.pre-commit-config.yaml: YAML-Konfiguration, 9 Zeilen.\npre-commit-Konfiguration: Hooks, die vor jedem Commit laufen.');
             expect(answer()).toContain('repos (Liste mit 2 Einträgen):');
             expect(answer()).toContain('repo https://github.com/PyCQA/flake8; rev 7.1.1; hooks (1): flake8');
             expect(answer()).toContain('Aus der Datei gelesen, nicht vom Modell erzeugt.');
@@ -1619,7 +1619,7 @@ describe('general questions, prompts without a question and configuration files 
         }
         expect(runtime.chat).not.toHaveBeenCalled();
         await type('What does this file do?'); await click('Send ↑');
-        expect(answer()).toContain('.pre-commit-config.yaml: YAML configuration, 9 lines. Read from the file:');
+        expect(answer()).toContain('.pre-commit-config.yaml: YAML configuration, 9 lines.\npre-commit configuration: hooks that run before each commit.');
         expect(runtime.chat).not.toHaveBeenCalled();
         await act(async () => button('Ask the model').click());
         expect(runtime.chat).toHaveBeenCalledOnce();

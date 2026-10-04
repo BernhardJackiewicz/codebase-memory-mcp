@@ -1,5 +1,6 @@
 import { isGithubWorkflow } from './file-kind';
-import { fileOutlineWords, germanWorkflowWords, workflowWords } from './strings';
+import { iniSections, type IniEntry } from './file-facts';
+import { chatRound3Text, fileOutlineWords, germanWorkflowWords, workflowWords } from './strings';
 import { workflowFactLines, yamlTree, type YamlValue } from './workflow-facts';
 
 /** "What does this file do?" about a configuration file, answered from the file (C7). The
@@ -61,13 +62,47 @@ function tomlTree(text: string): YamlValue | undefined {
     return root.length ? { kind: 'map', entries: root } : undefined;
 }
 
+/** INI: the keys before the first section, then each `[section]` with its keys. A value
+ * continued on indented lines is a list of those lines (`deps =` with one per line, B6). */
+function iniTree(text: string): YamlValue | undefined {
+    const { loose, sections } = iniSections(text);
+    const value = (entry: IniEntry): YamlValue => entry.values.length > 1 ? { kind: 'list', items: entry.values.map(item => ({ kind: 'scalar', value: item })) }
+        : { kind: 'scalar', value: entry.values[0] ?? '' };
+    const entries = (list: readonly IniEntry[]) => list.map((entry): [string, YamlValue] => [entry.key, value(entry)]);
+    const root = [...entries(loose), ...sections.map((section): [string, YamlValue] => [section.name, { kind: 'map', entries: entries(section.entries) }])];
+    return root.length ? { kind: 'map', entries: root } : undefined;
+}
+
+const INI = new Set(['ini', 'cfg', 'flake8', 'coveragerc', 'pylintrc', 'editorconfig']);
 function treeOf(path: string, text: string): YamlValue | undefined {
-    switch (extension(path)) {
+    const kind = extension(path);
+    if (INI.has(kind)) return iniTree(text);
+    switch (kind) {
         case 'yml': case 'yaml': return yamlTree(text);
         case 'json': try { return jsonValue(JSON.parse(text)); } catch { return undefined; }
         case 'toml': return tomlTree(text);
         default: return undefined;
     }
+}
+
+type Purpose = keyof typeof chatRound3Text.en.purposes;
+const has = (tree: YamlValue | undefined, test: (key: string) => boolean) => tree?.kind === 'map' && tree.entries.some(([key]) => test(key));
+/** What a well-known file is for, by its name, when its structure is that of such a file (B7). */
+function purposeOf(path: string, tree: YamlValue | undefined): Purpose | undefined {
+    const name = (path.split('/').pop() ?? path).toLowerCase();
+    if (/^\.pre-commit-config\.ya?ml$/.test(name)) return has(tree, key => key === 'repos') ? 'preCommit' : undefined;
+    if (name === 'package.json') return tree?.kind === 'map' ? 'npmPackage' : undefined;
+    if (name === 'pyproject.toml') return has(tree, key => /^\[(?:project|build-system|tool\..+)\]$/.test(key)) ? 'pyproject' : undefined;
+    if (name === 'tox.ini') return has(tree, key => /^\[(?:tox|testenv.*)\]$/.test(key)) ? 'tox' : undefined;
+    if (name === 'setup.cfg') return tree?.kind === 'map' ? 'setupCfg' : undefined;
+    if (/^(?:docker-)?compose(?:\.[\w-]+)?\.ya?ml$/.test(name)) return has(tree, key => key === 'services') ? 'compose' : undefined;
+    if (/^\.readthedocs\.ya?ml$/.test(name)) return has(tree, key => key === 'version' || key === 'build' || key === 'sphinx') ? 'readTheDocs' : undefined;
+    if (name === '.editorconfig') return has(tree, key => key.startsWith('[') || key === 'root') ? 'editorConfig' : undefined;
+    if (/^tsconfig(?:\.[\w-]+)?\.json$/.test(name)) return has(tree, key => ['compilerOptions', 'include', 'files', 'extends', 'references'].includes(key)) ? 'tsconfig' : undefined;
+    if (name === '.flake8') return has(tree, key => key === '[flake8]') ? 'flake8' : undefined;
+    if (name === 'pytest.ini') return has(tree, key => key === '[pytest]') ? 'pytest' : undefined;
+    if (name === '.coveragerc') return has(tree, key => key.startsWith('[')) ? 'coverage' : undefined;
+    return undefined;
 }
 
 const isMap = (value: YamlValue): value is Extract<YamlValue, { kind: 'map' }> => value.kind === 'map';
@@ -108,18 +143,20 @@ function entryLines(key: string, value: YamlValue, words: Words): string[] {
         ...value.items.length > ITEMS ? [`  ${words.more(value.items.length - ITEMS)}`] : []];
 }
 
-/** The outline of a YAML, JSON or TOML file in the language of the question, or undefined
- * for any other file and for text that does not parse. */
+/** The outline of a YAML, JSON, TOML or INI file in the language of the question, or undefined
+ * for any other file and for text that does not parse. A well-known file says first what it
+ * is for; "Read from the file" stands once, in the note at the end (B7). */
 export function fileOutline(path: string, text: string, language: 'en' | 'de'): string | undefined {
-    const words = fileOutlineWords[language];
+    const words = fileOutlineWords[language], own = chatRound3Text[language];
     const name = code(path.split('/').pop() ?? path);
     if (isGithubWorkflow(path)) {
         const facts = workflowFactLines(path, text, language === 'de' ? germanWorkflowWords : workflowWords);
-        if (facts.length) return [words.heading(name, words.kinds.workflow, lineCount(text)), facts.map(line => `- ${line}`).join('\n'), `_${words.note}_`].join('\n\n');
+        if (facts.length) return [own.outlineHeading(name, words.kinds.workflow, lineCount(text)), own.purposes.workflow, facts.map(line => `- ${line}`).join('\n'), `_${words.note}_`].join('\n\n');
     }
     const tree = treeOf(path, text);
     if (!tree) return undefined;
-    const kind = extension(path) === 'json' ? words.kinds.json : extension(path) === 'toml' ? words.kinds.toml : words.kinds.yaml;
+    const kind = extension(path) === 'json' ? words.kinds.json : extension(path) === 'toml' ? words.kinds.toml : INI.has(extension(path)) ? own.iniKind : words.kinds.yaml;
+    const purpose = purposeOf(path, tree);
     const entries: [string, YamlValue][] = tree.kind === 'map' ? tree.entries : [['', tree]];
     const lines: string[] = [];
     let used = 0, shown = 0;
@@ -130,5 +167,5 @@ export function fileOutline(path: string, text: string, language: 'en' | 'de'): 
         lines.push(...next); used += size; shown++;
     }
     if (shown === Math.min(entries.length, ENTRIES) && entries.length > ENTRIES) lines.push(words.more(entries.length - ENTRIES));
-    return [words.heading(name, kind, lineCount(text)), lines.join('\n'), `_${words.note}_`].join('\n\n');
+    return [own.outlineHeading(name, kind, lineCount(text)), ...purpose ? [own.purposes[purpose]] : [], lines.join('\n'), `_${words.note}_`].join('\n\n');
 }

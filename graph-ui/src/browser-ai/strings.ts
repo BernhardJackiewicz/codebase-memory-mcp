@@ -395,6 +395,25 @@ const englishRound3Text = {
     backTo: (label: string) => `Back to: ${label}. Earlier messages about it are sent again.`,
     /** A follow-up ("und was noch?") right after a change of topic (B4). */
     followUp: (typed: string, label: string) => `"${typed}" refers to earlier messages. Those were about another topic and are not sent with questions about ${label}. Please ask the full question, for example:`,
+    /** The first line of a file outline; the note under it says where it was read (B7). */
+    outlineHeading: (name: string, kind: string, lines: number) => `${name}: ${kind}, ${counted(lines, 'line', 'lines')}.`,
+    iniKind: 'INI configuration',
+    /** What a well-known file is for, by its name and structure, before its outline (B7). */
+    purposes: {
+        preCommit: 'pre-commit configuration: hooks that run before each commit.',
+        workflow: 'GitHub runs the jobs of this workflow when one of its triggers occurs.',
+        npmPackage: 'npm package manifest: the name, scripts and dependencies of a JavaScript package.',
+        pyproject: 'Python project configuration: how the package is built, its metadata and the settings of tools.',
+        tox: 'tox configuration: the test environments tox creates and the commands it runs in each.',
+        setupCfg: 'setuptools configuration: package metadata and options, often also settings of other tools.',
+        compose: 'Docker Compose file: the services that Docker Compose starts together.',
+        readTheDocs: 'Read the Docs configuration: how readthedocs.org builds the documentation.',
+        editorConfig: 'EditorConfig: indentation, line endings and similar editor settings per file pattern.',
+        tsconfig: 'TypeScript compiler configuration: which files are compiled and with which options.',
+        flake8: 'flake8 configuration: the rules of the Python linter flake8.',
+        pytest: 'pytest configuration: the options pytest runs the tests with.',
+        coverage: 'coverage.py configuration: which code test coverage measures and how it is reported.',
+    },
 };
 export const chatRound3Text: { en: typeof englishRound3Text; de: typeof englishRound3Text } = {
     en: englishRound3Text,
@@ -404,5 +423,22 @@ export const chatRound3Text: { en: typeof englishRound3Text; de: typeof englishR
         askAgain: 'Erneut fragen',
         backTo: (label: string) => `Zurück zu: ${label}. Die früheren Nachrichten dazu werden wieder mitgeschickt.`,
         followUp: (typed: string, label: string) => `"${typed}" bezieht sich auf frühere Nachrichten. Die betrafen ein anderes Thema und werden mit Fragen zu ${label} nicht mitgeschickt. Stell die Frage bitte vollständig, zum Beispiel:`,
+        outlineHeading: (name: string, kind: string, lines: number) => `${name}: ${kind}, ${gezaehlt(lines, 'Zeile', 'Zeilen')}.`,
+        iniKind: 'INI-Konfiguration',
+        purposes: {
+            preCommit: 'pre-commit-Konfiguration: Hooks, die vor jedem Commit laufen.',
+            workflow: 'GitHub führt die Jobs dieses Workflows aus, wenn einer seiner Auslöser eintritt.',
+            npmPackage: 'npm-Paketmanifest: Name, Skripte und Abhängigkeiten eines JavaScript-Pakets.',
+            pyproject: 'Python-Projektkonfiguration: wie das Paket gebaut wird, seine Metadaten und die Einstellungen von Werkzeugen.',
+            tox: 'tox-Konfiguration: die Testumgebungen, die tox anlegt, und die Befehle, die es in jeder ausführt.',
+            setupCfg: 'setuptools-Konfiguration: Paketmetadaten und Optionen, oft auch Einstellungen anderer Werkzeuge.',
+            compose: 'Docker-Compose-Datei: die Services, die Docker Compose zusammen startet.',
+            readTheDocs: 'Read-the-Docs-Konfiguration: wie readthedocs.org die Dokumentation baut.',
+            editorConfig: 'EditorConfig: Einrückung, Zeilenenden und ähnliche Editor-Einstellungen je Dateimuster.',
+            tsconfig: 'TypeScript-Compilerkonfiguration: welche Dateien mit welchen Optionen kompiliert werden.',
+            flake8: 'flake8-Konfiguration: die Regeln des Python-Linters flake8.',
+            pytest: 'pytest-Konfiguration: die Optionen, mit denen pytest die Tests ausführt.',
+            coverage: 'coverage.py-Konfiguration: welcher Code bei der Testabdeckung gemessen und wie darüber berichtet wird.',
+        },
     },
 };

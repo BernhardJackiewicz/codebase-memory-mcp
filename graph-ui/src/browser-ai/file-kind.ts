@@ -12,6 +12,8 @@ const KINDS: Readonly<Record<string, string>> = {
     conf: 'configuration file, not program code', env: 'environment settings, not program code', properties: 'Java properties, not program code',
     editorconfig: 'EditorConfig settings, not program code', gitignore: 'ignore patterns, not program code', dockerignore: 'ignore patterns, not program code',
     gitattributes: 'Git attribute patterns, not program code',
+    // INI files named after their tool, without an extension of their own (B6).
+    flake8: 'INI configuration, not program code', coveragerc: 'INI configuration, not program code', pylintrc: 'INI configuration, not program code',
 };
 
 /** Configuration, data and text files: what they say is read from them, not guessed by a model (K12). */
