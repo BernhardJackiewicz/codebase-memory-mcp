@@ -1024,7 +1024,8 @@ describe('graph answers and answer limits', () => {
         expect(request.filter(message => message.role === 'user').map(message => message.content.split('\n').at(-1))).toEqual(['Und was noch?']);
         expect([...container.querySelectorAll('.cbm-chat-topic-break')].map(item => item.textContent)).toEqual([
             'New topic: JSONBAgg. Earlier messages are not sent with these questions.',
-            'New topic: .github/workflows/new_contributor_pr.yml. Earlier messages are not sent with these questions.']);
+            // "Und was noch?" is German, so its divider is too (W8).
+            'Neues Thema: .github/workflows/new_contributor_pr.yml. Frühere Nachrichten werden bei diesen Fragen nicht mitgeschickt.']);
         // Within the returned topic the conversation goes on.
         await type('Welche Jobs?'); await click('Send ↑');
         expect(runtime.chat.mock.calls[3][0].filter(message => message.role === 'user').map(message => message.content.split('\n').at(-1))).toEqual(['Und was noch?', 'Welche Jobs?']);
@@ -1542,7 +1543,7 @@ describe('general questions, prompts without a question and configuration files 
         expect(options).toMatchObject({ maxOutputTokens: 128, generationProfile: 'automatic-explanation' });
         expect(request.at(-1)!.content).toContain('Describe this class in one short sentence that starts with `JSONBAgg`. Answer in German.');
         expect(request.at(-1)!.content).toContain('function = "JSONB_AGG"');
-        expect(answer()).toContain('Ausgewählt: JSONBAgg (Class) in django/contrib/postgres/aggregates/general.py:50-54.');
+        expect(answer()).toContain('Ausgewählt: JSONBAgg (Klasse) in django/contrib/postgres/aggregates/general.py:50-54.');
         expect(answer()).toContain('Eingehend: 23 Beziehungen von 12 Symbolen (CALLS 11, TESTS 11, DEFINES 1).');
         expect(answer()).toContain('Ausschnitt: 1 Schritt in beide Richtungen');
         expect(answer()).toContain('JSONBAgg setzt function auf "JSONB_AGG".');
@@ -1562,7 +1563,7 @@ describe('general questions, prompts without a question and configuration files 
         runtime.chat.mockResolvedValueOnce('JSONBAgg gibt eine Liste von Werten zurück.');
         await render({ ...props, proactiveSelection: jsonbAggEvidence(), readSource: vi.fn(async () => snippet) }); await click('Download & load');
         await type('was kansnt du mir über den code sagen'); await click('Send ↑');
-        expect(answer()).toContain('Ausgewählt: JSONBAgg (Class)');
+        expect(answer()).toContain('Ausgewählt: JSONBAgg (Klasse)');
         expect(answer()).not.toContain('gibt eine Liste');
         expect(answer()).toContain('Der Satz des Modells behauptete etwas, das der Quelltext nicht zeigt (hier: „gibt … zurück“), und wurde weggelassen.');
     });

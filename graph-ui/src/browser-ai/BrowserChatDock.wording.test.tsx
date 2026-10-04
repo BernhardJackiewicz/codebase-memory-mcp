@@ -161,3 +161,19 @@ describe('the note about names the answer was not given (W7)', () => {
             + 'The answer is likely made up; do not rely on it.');
     });
 });
+
+describe('the topic divider in the language of its turn (W8)', () => {
+    it('heads a German question with a German divider and an English one with an English divider', async () => {
+        const { props } = fixture();
+        const workflow = reader('name: New contributor message', '.github/workflows/new_contributor_pr.yml');
+        await render({ ...props, selectionScope: 'django-demo:explore', readerContext: workflow }); await load();
+        await ask('Which jobs does it run?');
+        await render({ ...props, selectionScope: 'django-demo:galaxy', proactiveSelection: jsonbAggEvidence() });
+        await ask('Wer ruft JSONBAgg auf?');
+        await render({ ...props, selectionScope: 'django-demo:explore', readerContext: { ...workflow, path: 'tox.ini', source: { ...workflow.source!, id: 'reader-tox', path: 'tox.ini' } } });
+        await ask('What is in this file?');
+        expect([...container.querySelectorAll('.cbm-chat-topic-break')].map(item => item.textContent)).toEqual([
+            'Neues Thema: JSONBAgg. Frühere Nachrichten werden bei diesen Fragen nicht mitgeschickt.',
+            'New topic: tox.ini. Earlier messages are not sent with these questions.']);
+    });
+});

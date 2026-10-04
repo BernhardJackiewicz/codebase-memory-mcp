@@ -116,7 +116,8 @@ export function relationshipLine(group: RelationshipGroup, _side: 'incoming' | '
     if (head.length + more(0).length > budget) return { text: '', listed: 0 };
     for (const file of group.files) {
         const kinds = new Set(file.symbols.map(symbol => symbol.kind));
-        const where = [kinds.size === 1 ? file.symbols[0].kind : undefined, file.path ? quote(file.path) : undefined].filter(Boolean).join(', ');
+        const kind = kinds.size === 1 ? file.symbols[0].kind : undefined;
+        const where = [kind ? words.kindName(kind) : undefined, file.path ? quote(file.path) : undefined].filter(Boolean).join(', ');
         const suffix = where ? ` (${where})` : '';
         let chunk = '';
         for (const symbol of file.symbols) {
@@ -155,11 +156,13 @@ export function selectionSentence(evidence: GalaxyEvidence, words: RelationshipW
     const [first] = evidence.roots;
     const range = (root: GalaxyEvidence['roots'][number]) => root.filePath
         ? ` in ${root.filePath}${root.startLine ? `:${root.startLine}${root.endLine && root.endLine !== root.startLine ? `-${root.endLine}` : ''}` : ''}` : '';
+    // Kinds in the words of the answer: "(Klasse)" in a German one (W8).
+    const kind = (root: GalaxyEvidence['roots'][number]) => root.kind ? ` (${words.kindName(root.kind)})` : '';
     if (evidence.rootCount <= 1 && first) {
-        return [words.selected(`${first.name}${first.kind ? ` (${first.kind})` : ''}${range(first)}`),
+        return [words.selected(`${first.name}${kind(first)}${range(first)}`),
             ...first.documentation ? [words.documentation(first.documentation)] : []];
     }
-    if (!first) return [words.notInScope(evidence.label, evidence.selectionKind)];
-    const listed = evidence.roots.map(root => `${root.name}${root.kind ? ` (${root.kind})` : ''}`).join(', ');
-    return [words.selectedGroup(evidence.selectionKind, evidence.label, evidence.rootCount, listed, evidence.rootCount - evidence.roots.length)];
+    if (!first) return [words.notInScope(evidence.label, words.kindName(evidence.selectionKind))];
+    const listed = evidence.roots.map(root => `${root.name}${kind(root)}`).join(', ');
+    return [words.selectedGroup(words.kindName(evidence.selectionKind), evidence.label, evidence.rootCount, listed, evidence.rootCount - evidence.roots.length)];
 }

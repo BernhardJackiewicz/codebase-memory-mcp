@@ -393,7 +393,7 @@ async function k17(page) {
     const [back] = await sentSince(page, mark);
     const backText = promptText(back);
     const divider = await page.locator('.cbm-chat-topic-break').allInnerTexts();
-    await shot(page, 'K17', 'explore-return', 'Back in Explore on the same file: a divider "New topic: .github/workflows/new_contributor_pr.yml"; the earlier answer is not in the prompt.');
+    await shot(page, 'K17', 'explore-return', 'Back in Explore on the same file: a German divider "Neues Thema: .github/workflows/new_contributor_pr.yml" above the German question; the earlier answer is not in the prompt.');
     const dividerBox = await page.locator('.cbm-chat-topic-break').last().boundingBox();
     if (dividerBox) await shot(page, 'K17', 'explore-return-crop', 'Crop of the divider above the returned question.', { clip: { x: dividerBox.x - 8, y: Math.max(0, dividerBox.y - 8), width: dividerBox.width + 16, height: 220 } });
     const backAssistant = (back?.messages ?? []).filter((message) => message.role === 'assistant').length;
@@ -401,7 +401,7 @@ async function k17(page) {
     check('K17', 'Earlier answers about another file are not resent, also not on the way back; topic breaks and New conversation visible', Boolean(request) && !/Welche Aktion nutzt dieses aktuelle File/.test(text)
         && !text.includes(exploreAnswer.slice(-60).trim()) && assistantTurns === 0 && /New conversation/.test(header) && divider.some((item) => /New topic: JSONBAgg/.test(item))
         && Boolean(back) && backAssistant === 0 && !/Welche Aktion nutzt dieses aktuelle File/.test(backText) && !backText.includes(exploreAnswer.slice(-60).trim())
-        && JSON.stringify(backUsers) === JSON.stringify(['Und was noch?']) && divider.some((item) => /New topic: \.github\/workflows\/new_contributor_pr\.yml\. Earlier messages are not sent/.test(item)),
+        && JSON.stringify(backUsers) === JSON.stringify(['Und was noch?']) && divider.some((item) => /Neues Thema: \.github\/workflows\/new_contributor_pr\.yml\. Frühere Nachrichten werden bei diesen Fragen nicht mitgeschickt/.test(item)),
     { assistantMessagesInPrompt: assistantTurns, flake8InPrompt: /flake8/i.test(text), exploreQuestionInPrompt: /aktuelle File/.test(text), header, divider, exploreAnswer: exploreAnswer.slice(0, 200), galaxyAnswer: galaxyAnswer.slice(0, 200),
         returnPrompt: { assistantMessages: backAssistant, userMessages: backUsers, earlierExploreAnswerInPrompt: backText.includes(exploreAnswer.slice(-60).trim()) }, returnAnswer: returnAnswer.slice(0, 200) });
     await save('K17', 'prompt-galaxy.txt', text);

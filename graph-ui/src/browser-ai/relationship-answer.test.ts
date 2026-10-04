@@ -109,7 +109,7 @@ describe('listed relationship answers', () => {
     it('never reports "no callers" for a side the scope did not load or while it is still loading', () => {
         expect(relationshipAnswer('Who calls JSONBAgg?', [jsonbAggEvidence({ direction: 'outbound' })])!.markdown)
             .toContain('does not follow incoming relationships');
-        expect(relationshipAnswer('Who calls JSONBAgg?', [jsonbAggEvidence({ depth: 0 })])!.markdown).toContain('Expand it by one layer');
+        expect(relationshipAnswer('Who calls JSONBAgg?', [jsonbAggEvidence({ depth: 0 })])!.markdown).toContain('Click "Expand +1" in Galaxy');
         expect(relationshipAnswer('Who calls JSONBAgg?', [jsonbAggEvidence({ state: 'loading-partial-preview' })])!.markdown)
             .toContain('still loading; this list can grow');
     });

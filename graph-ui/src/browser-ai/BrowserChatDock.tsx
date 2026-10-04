@@ -10,7 +10,7 @@ import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, citedInterpretation, explanation
 import { carriedSource, selectionSubject, SYMBOL_SOURCE_LINES, sourceTargetOf, symbolSource, type SymbolSourceReader } from './symbol-source';
 import { relationshipAnswer, relationshipSuggestion } from './relationship-answer';
 import { clampTokenLimits, tokenLimitBounds, tokenLimitsFor, useAgentPreferences, type TokenLimits } from './agent-preferences';
-import { browserChatText, groundedText, relationshipWords } from './strings';
+import { browserChatText, groundedText, relationshipWords, topicText } from './strings';
 import { isGpuRuntimeFailure, BrowserRuntimeFatalError } from './runtime-fault';
 import ChatMarkdown from './ChatMarkdown';
 import AgentSettingsDialog from './AgentSettingsDialog';
@@ -882,7 +882,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             {turns.length === 0 && !(proactive && automatic && selected) && <div className="cbm-chat-empty"><span aria-hidden="true">⌁</span><h3>Ask about the code.</h3><p>{readerContext ? 'The current file is included automatically. Mark code to focus your next message on that exact selection.' : 'Ask a question, or add source and graph context to your next message.'}</p></div>}
             {turns.map((turn, index) => { const replyWords = relationshipWords[turn.replyLanguage === 'de' ? 'de' : 'en']; return <article className="cbm-chat-turn" key={turn.id}>
                 {turn.topic && index > 0 && turn.topic.key !== turns.slice(0, index).reverse().find(item => item.topic)?.topic?.key
-                    && <p className="cbm-chat-topic-break">{browserChatText.topicBreak(turn.topic.label)}</p>}
+                    && <p className="cbm-chat-topic-break">{topicText[turn.replyLanguage ?? questionLanguage(turn.prompt)].topicBreak(turn.topic.label)}</p>}
                 <div className="cbm-chat-question"><span className="cbm-chat-speaker">You</span><ChatMarkdown text={turn.prompt} /></div>
                 <div className="cbm-chat-answer"><SourceDisclosure>
                     {turn.evidence || turn.attachment || turn.readerContext?.source || turn.context?.length ? <>

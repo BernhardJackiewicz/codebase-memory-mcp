@@ -3,7 +3,7 @@ import { prepareExplanationContext, selectionSummary } from './explanation-conte
 import { explanationSentence, formatExplanationEvidence, namesNotIn } from './explanation-response';
 import { jsonbAggEvidence, jsonbAggRenderLimited } from './galaxy-evidence.fixture';
 import { relationshipAnswer } from './relationship-answer';
-import { browserChatText, groundedText } from './strings';
+import { browserChatText, groundedText, topicText } from './strings';
 import { sourceTargetOf, symbolSource } from './symbol-source';
 
 /* Wording of the chat texts after the third review of the hand test (2026-10-04, W1 to W10). */
@@ -182,5 +182,39 @@ describe('the note about names the answer was not given (W7)', () => {
         expect(browserChatText.unsupportedNames(names(21))).toBe('21 names in this answer are not in the source or graph facts it was given: made_up_0, made_up_1, '
             + 'made_up_2, made_up_3, made_up_4, made_up_5, +15 more. The answer is likely made up; do not rely on it.');
         expect(browserChatText.unsupportedNames(names(2))).toBe('Not in the source or graph facts this answer was given: made_up_0, made_up_1. Check these names before relying on them.');
+    });
+});
+
+describe('German answers in German, with the controls named as the UI shows them (W8)', () => {
+    const line = (markdown: string, type: string) => markdown.split('\n').find(item => item.startsWith(`- **${type} (`)) ?? '';
+
+    it('writes the kinds of symbols in German in German answers and leaves English ones as they are', () => {
+        expect(selectionSummary(jsonbAggEvidence(), 'de')[0]).toBe('Ausgewählt: JSONBAgg (Klasse) in django/contrib/postgres/aggregates/general.py:50-54.');
+        expect(selectionSummary(jsonbAggEvidence())[0]).toBe('Selected: JSONBAgg (Class) in django/contrib/postgres/aggregates/general.py:50-54.');
+        const german = relationshipAnswer('Wer ruft JSONBAgg auf?', [jsonbAggEvidence()])!.markdown;
+        expect(line(german, 'CALLS')).toContain('(Methode, `tests/postgres_tests/test_aggregates.py`)');
+        expect(german).not.toMatch(/\((?:Method|Class|File|Function),/);
+        expect(line(relationshipAnswer('Was ruft JSONBAgg auf?', [jsonbAggEvidence()])!.markdown, 'INHERITS')).toContain('(Klasse, `django/contrib/postgres/aggregates/mixins.py`)');
+        expect(line(relationshipAnswer('Who calls JSONBAgg?', [jsonbAggEvidence()])!.markdown, 'CALLS')).toContain('(Method, `tests/postgres_tests/test_aggregates.py`)');
+        // The prompt stays English.
+        expect(formatExplanationEvidence(prepareExplanationContext(undefined, jsonbAggEvidence(), 3200))).toContain('Selected: JSONBAgg (Class) in');
+    });
+
+    it('names the Galaxy controls by their labels when a side or a layer is missing', () => {
+        expect(relationshipAnswer('Wer ruft JSONBAgg auf?', [jsonbAggEvidence({ direction: 'outbound' })])!.markdown)
+            .toContain('Der aktuelle Ausschnitt folgt keinen eingehenden Beziehungen. Wähle in Galaxy „Incoming“ oder „Both directions“ und frage dann noch einmal.');
+        expect(relationshipAnswer('Was ruft JSONBAgg auf?', [jsonbAggEvidence({ direction: 'inbound' })])!.markdown)
+            .toContain('Wähle in Galaxy „Outgoing“ oder „Both directions“ und frage dann noch einmal.');
+        expect(relationshipAnswer('Who calls JSONBAgg?', [jsonbAggEvidence({ direction: 'outbound' })])!.markdown)
+            .toContain('The current scope does not follow incoming relationships. Choose "Incoming" or "Both directions" in Galaxy, then ask again.');
+        expect(relationshipAnswer('Who calls JSONBAgg?', [jsonbAggEvidence({ depth: 0 })])!.markdown)
+            .toContain('The current scope shows the selection only. Click "Expand +1" in Galaxy, then ask again.');
+        expect(relationshipAnswer('Wer ruft JSONBAgg auf?', [jsonbAggEvidence({ depth: 0 })])!.markdown)
+            .toContain('Der aktuelle Ausschnitt zeigt nur die Auswahl. Klicke in Galaxy auf „Expand +1“ und frage dann noch einmal.');
+    });
+
+    it('has the topic divider in both languages', () => {
+        expect(topicText.en.topicBreak('tox.ini')).toBe('New topic: tox.ini. Earlier messages are not sent with these questions.');
+        expect(topicText.de.topicBreak('tox.ini')).toBe('Neues Thema: tox.ini. Frühere Nachrichten werden bei diesen Fragen nicht mitgeschickt.');
     });
 });

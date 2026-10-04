@@ -137,7 +137,7 @@ describe('the selected symbol source in a Galaxy explanation (K14)', () => {
 
     it('summarizes the selection in German for a German question (C5)', () => {
         expect(selectionSummary(jsonbAggEvidence(), 'de')).toEqual([
-            'Ausgewählt: JSONBAgg (Class) in django/contrib/postgres/aggregates/general.py:50-54.',
+            'Ausgewählt: JSONBAgg (Klasse) in django/contrib/postgres/aggregates/general.py:50-54.',
             'Eingehend: 23 Beziehungen von 12 Symbolen (CALLS 11, TESTS 11, DEFINES 1).',
             'Ausgehend: 2 Beziehungen zu 2 Symbolen (INHERITS 2).',
             'Ausschnitt: 1 Schritt in beide Richtungen, alle Beziehungstypen; 15 Symbole und 25 Beziehungen; vollständig geladen.',
