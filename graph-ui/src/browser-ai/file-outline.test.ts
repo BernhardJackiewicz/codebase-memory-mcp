@@ -52,8 +52,10 @@ describe('the outline of a configuration file, read from it (C7)', () => {
     });
 
     it('keeps mappings by their keys and bounds long lists with "+N more"', () => {
-        const docs = 'version: 2\nbuild:\n  os: ubuntu-22.04\n  tools:\n    python: "3.12"\nformats:\n  - pdf\n  - epub\n';
+        const docs = 'version: 2\nbuild:\n  os: ubuntu-22.04\n  tools:\n    python: "3.12"\npython:\n  install:\n    - requirements: docs/requirements.txt\nformats:\n  - pdf\n  - epub\n';
         const outline = fileOutline('.readthedocs.yml', docs, 'en')!;
+        // A single item without a naming field reads as its fields, without parentheses.
+        expect(outline).toContain('- `python`: install (1): requirements `docs/requirements.txt`');
         expect(outline).toContain('- `version`: `2`');
         expect(outline).toContain('- `build`: os `ubuntu-22.04`; tools: python `3.12`');
         expect(outline).toContain('- `formats` (list of 2): `pdf`, `epub`');

@@ -83,12 +83,16 @@ function field(key: string, value: YamlValue, depth: number, words: Words): stri
     if (value.kind === 'scalar') return `${key} ${scalarText(value, words)}`;
     if (value.kind === 'map') return depth < 2 ? `${key}: ${inlineMap(value, depth + 1, words)}` : `${key} (${words.keys(value.entries.length)})`;
     if (!value.items.some(isMap)) return `${key}: ${value.items.slice(0, ITEMS).map(item => scalarText(item, words) || words.list(0)).join(', ')}${more(value.items.length, ITEMS, words, ', ')}`;
+    // A single item without a naming field needs no parentheses to stand apart from the next.
+    const [only] = value.items;
+    if (value.items.length === 1 && isMap(only) && !namingOf(only)) return `${key} (1): ${inlineMap(only, depth + 1, words)}`;
     return `${key} (${value.items.length}): ${value.items.slice(0, ITEMS).map(item => named(item, depth + 1, words)).join('; ')}${more(value.items.length, ITEMS, words)}`;
 }
+const namingOf = (value: Extract<YamlValue, { kind: 'map' }>) => NAMING.map(key => value.entries.find(([name, item]) => name === key && item.kind === 'scalar')).find(Boolean);
 /** An item of a nested list by its naming field, the others in parentheses. */
 function named(value: YamlValue, depth: number, words: Words): string {
     if (!isMap(value)) return scalarText(value, words) || words.list(value.kind === 'list' ? value.items.length : 0);
-    const naming = NAMING.map(key => value.entries.find(([name, item]) => name === key && item.kind === 'scalar')).find(Boolean);
+    const naming = namingOf(value);
     if (!naming) return depth < 3 ? `(${inlineMap(value, depth, words)})` : `(${words.keys(value.entries.length)})`;
     const rest = value.entries.filter(entry => entry !== naming);
     const details = rest.length && depth < 3 ? ` (${inlineMap({ kind: 'map', entries: rest }, depth, words)})` : '';
