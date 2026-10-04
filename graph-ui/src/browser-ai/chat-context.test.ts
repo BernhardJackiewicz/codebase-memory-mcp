@@ -61,12 +61,12 @@ describe('what a question is about', () => {
 describe('which earlier turns a question carries (K17)', () => {
     const file = chatTopic('p:explore', { reader: { project: 'p', path: 'a.yml', status: 'ready', source: { ...attachment, path: 'a.yml', kind: 'file' } } })!;
     const selected = chatTopic('p:galaxy', { graph: jsonbAggEvidence() })!;
-    it('carries only the turns since the topic last changed, as the divider says', () => {
+    it('carries the turns of its own topic, never those of another one', () => {
         const [first, second] = [turn(file), turn(file)];
         expect(topicHistory([first, second], file)).toEqual([first, second]);
-        expect(topicHistory([first, turn(selected)], file)).toEqual([]);
-        // Coming back to a file after another topic starts it fresh: the old wrong answer stays out.
-        expect(topicHistory([first, turn(selected), second], file)).toEqual([second]);
+        // Coming back to a file after another topic carries its earlier turns again (B4).
+        expect(topicHistory([first, turn(selected)], file)).toEqual([first]);
+        expect(topicHistory([first, turn(selected), second], file)).toEqual([first, second]);
         expect(topicHistory([turn(selected), first, second], file)).toEqual([first, second]);
     });
 

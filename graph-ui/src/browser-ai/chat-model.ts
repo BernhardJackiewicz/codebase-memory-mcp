@@ -146,6 +146,11 @@ export function trimChatHistory<T extends BrowserChatTurn>(turns: readonly T[], 
  * "was macht diese klasse?" (C4). */
 export const ANSWER_LANGUAGE = { en: 'Answer in English.', de: 'Answer in German.' } as const;
 
+/** Whether a turn goes into the history of a later request: an answer, not a suggestion,
+ * the chat's own hint or its reply that a question has no context. */
+export const sentInHistory = (turn: BrowserChatTurn): boolean => turn.status !== 'error' && turn.status !== 'generating'
+    && turn.answeredFrom !== 'suggestion' && turn.answeredFrom !== 'local' && turn.answeredFrom !== 'hint';
+
 export function buildChatMessages(turns: readonly BrowserChatTurn[], prompt: string, attachment?: BrowserChatAttachment, context: readonly BrowserChatContext[] = [], readerContext?: BrowserChatReaderContext, currentContext: readonly BrowserChatContext[] = [], currentEvidence?: string,
     language?: keyof typeof ANSWER_LANGUAGE): BrowserChatMessage[] {
     const reader = snapshotReaderContext(readerContext);
@@ -156,7 +161,7 @@ export function buildChatMessages(turns: readonly BrowserChatTurn[], prompt: str
             + JSON.stringify(currentContext.map(({ label, text }) => ({ label, text }))) + '\n--- END CURRENT GRAPH DATA ---' : '') }];
     for (const turn of turns) {
         // A suggestion is a question back to the reader, not an answer the model should build on.
-        if (turn.status === 'error' || turn.status === 'generating' || turn.answeredFrom === 'suggestion' || turn.answeredFrom === 'local' || turn.answeredFrom === 'hint') continue;
+        if (!sentInHistory(turn)) continue;
         messages.push({ role: 'user', content: userMessage(turn.prompt, reader || turn.readerContext ? undefined : turn.attachment, turn.context) });
         if (turn.answer) messages.push({ role: 'assistant', content: turn.answer });
     }

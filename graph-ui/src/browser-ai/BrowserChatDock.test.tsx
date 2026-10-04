@@ -1008,7 +1008,7 @@ describe('graph answers and answer limits', () => {
         expect(runtime.chat.mock.calls[2][0].map(message => message.content).join('\n')).not.toContain('flake8');
     });
 
-    it('starts a file or selection fresh when the reader comes back to it, as the divider says (K17)', async () => {
+    it('carries the earlier turns of a file or selection the reader comes back to, as the divider says (K17, B4)', async () => {
         const { props, runtime } = fixture();
         runtime.chat.mockResolvedValueOnce('This runs the flake8 linter on Python files.');
         const workflow = reader('name: New contributor message', 'file', '.github/workflows/new_contributor_pr.yml');
@@ -1019,15 +1019,17 @@ describe('graph answers and answer limits', () => {
         await render({ ...props, selectionScope: 'django-demo:explore', readerContext: workflow });
         await type('Und was noch?'); await click('Send ↑');
         const request = runtime.chat.mock.calls[2][0];
-        expect(request.filter(message => message.role === 'assistant')).toHaveLength(0);
-        expect(request.map(message => message.content).join('\n')).not.toContain('flake8');
-        expect(request.filter(message => message.role === 'user').map(message => message.content.split('\n').at(-1))).toEqual(['Und was noch?']);
+        // Its own earlier turn comes along; nothing of JSONBAgg does.
+        expect(request.filter(message => message.role === 'assistant').map(message => message.content)).toEqual(['This runs the flake8 linter on Python files.']);
+        expect(request.map(message => message.content).join('\n')).not.toContain('JSONBAgg');
+        expect(request.filter(message => message.role === 'user').map(message => message.content.split('\n').at(-1))).toEqual(['welche Aktion nutzt dieses File?', 'Und was noch?']);
         expect([...container.querySelectorAll('.cbm-chat-topic-break')].map(item => item.textContent)).toEqual([
             'New topic: JSONBAgg. Earlier messages are not sent with these questions.',
-            'New topic: .github/workflows/new_contributor_pr.yml. Earlier messages are not sent with these questions.']);
+            'Zurück zu: .github/workflows/new_contributor_pr.yml. Die früheren Nachrichten dazu werden wieder mitgeschickt.']);
         // Within the returned topic the conversation goes on.
         await type('Welche Jobs?'); await click('Send ↑');
-        expect(runtime.chat.mock.calls[3][0].filter(message => message.role === 'user').map(message => message.content.split('\n').at(-1))).toEqual(['Und was noch?', 'Welche Jobs?']);
+        expect(runtime.chat.mock.calls[3][0].filter(message => message.role === 'user').map(message => message.content.split('\n').at(-1)))
+            .toEqual(['welche Aktion nutzt dieses File?', 'Und was noch?', 'Welche Jobs?']);
     });
 
     it('marks names in an answer that are not in the file or the graph facts (K12)', async () => {

@@ -3,7 +3,7 @@ import type { BrowserAiProgress } from './browser-ai-controller';
 import { createBrowserChatRuntime, type BrowserChatRuntime } from './browser-ai-runtime';
 import { BROWSER_MODELS, getBrowserModel, isBrowserModelCached, removeBrowserModelCache, type BrowserModel } from './model-policy';
 import { keepAgent, loadProgress, offerAgent, peekAgent, takeAgent, type AgentHandover, type LoadProgress } from './agent-handover';
-import { buildChatMessages, selectionLocation, snapshotAttachment, snapshotReaderContext, trimChatHistory, type BrowserChatAttachment, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatSource, type BrowserChatTurn } from './chat-model';
+import { buildChatMessages, selectionLocation, sentInHistory, snapshotAttachment, snapshotReaderContext, trimChatHistory, type BrowserChatAttachment, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatSource, type BrowserChatTurn } from './chat-model';
 import { explanationInput, EXPLANATION_DELAY_MS, type ExplanationInput } from './proactive-selection';
 import { prepareExplanationContext, selectionSummary, type PreparedExplanationContext } from './explanation-context';
 import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, citedInterpretation, explanationMode, explanationSentence, namesNotIn, parseExplanationResponse, explanationMessages, formatExplanationEvidence } from './explanation-response';
@@ -15,11 +15,11 @@ import { isGpuRuntimeFailure, BrowserRuntimeFatalError } from './runtime-fault';
 import ChatMarkdown from './ChatMarkdown';
 import AgentSettingsDialog from './AgentSettingsDialog';
 import { useChatHistory } from './use-chat-history';
-import { chatTopic, followedTopic, missingContextAnswer, questionLanguage, topicHistory } from './chat-context';
+import { chatTopic, contextFreeFollowUp, followedTopic, missingContextAnswer, questionLanguage, topicDivider, topicHistory } from './chat-context';
 import { isDataFile, readerFacts } from './file-facts';
 import { fileOutline } from './file-outline';
 import { readGalaxyEvidence, type GalaxyEvidence } from './galaxy-evidence';
-import { generalQuestion, knownNames, noQuestion, noQuestionAnswer } from './question-intent';
+import { followUpAnswer, generalQuestion, knownNames, noQuestion, noQuestionAnswer, type ExampleSubject } from './question-intent';
 import './browser-chat.css';
 
 export type { BrowserChatAttachment, BrowserChatContext, BrowserChatReaderContext, BrowserChatSource } from './chat-model';
@@ -646,11 +646,16 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         // A prompt that asks nothing ("test", "hallo") gets questions it could ask, not an echo of the model (C6).
         const known = knownNames({ galaxy, names: galaxy ? galaxyNames(galaxy) : fileSource ? [fileSource.path] : [],
             texts: [fileSource?.text ?? '', source?.text ?? '', ...currentGraph.filter(() => !galaxy).map(item => item.label), ...extra.map(item => item.label)] });
-        if (!retry && noQuestion(prompt, known)) {
-            const subject = galaxy ? { kind: 'galaxy' as const, name: galaxy.label } : fileSource?.kind === 'selection' || source ? { kind: 'marked' as const }
-                : { kind: 'other' as const, name: fileSource ? fileSource.path.split('/').pop()! : topic?.label ?? '' };
+        const subject: ExampleSubject = galaxy ? { kind: 'galaxy', name: galaxy.label } : fileSource?.kind === 'selection' || source ? { kind: 'marked' }
+            : { kind: 'other', name: fileSource ? fileSource.path.split('/').pop()! : topic?.label ?? '' };
+        // "und was noch?" right after a change of topic would reach the model without context:
+        // this topic has no earlier turn, and those of other topics are not sent (B4).
+        const hint = !retry && noQuestion(prompt, known) ? noQuestionAnswer(prompt, language, subject)
+            : !retry && topic && contextFreeFollowUp(prompt) && !topicHistory(turns, topic).some(sentInHistory) && turns.some(item => item.topic && item.topic.key !== topic.key)
+                ? followUpAnswer(prompt, language, subject, topic.label) : undefined;
+        if (hint) {
             setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, attachment: source, readerContext: reader, context: extra, topic, replyLanguage: language,
-                ...currentGraph[0] ? { listedFrom: currentGraph[0] } : {}, modelId: model.id, request: [], answer: noQuestionAnswer(prompt, language, subject), status: 'complete', answeredFrom: 'hint' }]);
+                ...currentGraph[0] ? { listedFrom: currentGraph[0] } : {}, modelId: model.id, request: [], answer: hint, status: 'complete', answeredFrom: 'hint' }]);
             consume();
             return;
         }
@@ -667,8 +672,8 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         // listed facts and one checked model sentence, in the language of the question (C5).
         const grounded = !retry && !source && !extra.length && galaxy && generalQuestion(prompt, galaxyNames(galaxy)) === 'general'
             ? { graph: currentGraph[0], summary: selectionSummary(currentGraph[0], language), subject: selectionSubject(currentGraph[0]) } : undefined;
-        // Answers about another file or selection stay out, and so do those from before the
-        // last change of topic: an earlier wrong answer must not become evidence for this one (K17).
+        // Answers about another file or selection stay out (K17); those of this topic come along,
+        // also from before the reader went elsewhere and came back (B4).
         const earlier = topicHistory(ask ? turns.filter(item => item.id !== retry.id) : turns, topic);
         let history: ChatTurn[] = earlier;
         const makeRequest = () => buildChatMessages(history, prompt, source, extra, reader, currentGraph, packet ? formatExplanationEvidence(packet) : undefined, questionLanguage(prompt));
@@ -882,9 +887,9 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             {turns.map((turn, index) => { const replyWords = relationshipWords[turn.replyLanguage === 'de' ? 'de' : 'en'];
                 // The model's own answers carry their note in the language of the question (B1).
                 const ownWords = chatRound3Text[turn.replyLanguage ?? questionLanguage(turn.prompt)];
+                const divider = topicDivider(turns, index);
                 return <article className="cbm-chat-turn" key={turn.id}>
-                {turn.topic && index > 0 && turn.topic.key !== turns.slice(0, index).reverse().find(item => item.topic)?.topic?.key
-                    && <p className="cbm-chat-topic-break">{browserChatText.topicBreak(turn.topic.label)}</p>}
+                {turn.topic && divider && <p className="cbm-chat-topic-break">{divider === 'back' ? ownWords.backTo(turn.topic.label) : browserChatText.topicBreak(turn.topic.label)}</p>}
                 <div className="cbm-chat-question"><span className="cbm-chat-speaker">You</span><ChatMarkdown text={turn.prompt} />
                     {turn.askedModel && <small className="cbm-chat-asked-model">{ownWords.askedModel}</small>}</div>
                 <div className="cbm-chat-answer"><SourceDisclosure>

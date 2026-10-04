@@ -1,6 +1,6 @@
 import type { GalaxyEvidence } from './galaxy-evidence';
 import { typoBudget, withinEdits } from './relationship-answer';
-import { noQuestionText } from './strings';
+import { chatRound3Text, noQuestionText } from './strings';
 
 /** What a prompt asks of the current selection or open file, before any model sees it.
  *
@@ -96,14 +96,27 @@ export function noQuestion(prompt: string, known: (word: string) => boolean): bo
 /** What the examples of a prompt without a question are about. */
 export type ExampleSubject = { kind: 'galaxy' | 'other'; name: string } | { kind: 'marked' };
 
+/** Two or three questions that work for the selection, as a Markdown list. */
+function examples(language: 'en' | 'de', subject: ExampleSubject): string {
+    const text = noQuestionText[language];
+    const items = subject.kind === 'marked' ? [text.markedDoes, text.markedInDetail]
+        : subject.kind === 'galaxy' ? [text.whatDoes(subject.name), text.whoCalls(subject.name), text.whatCalls(subject.name)]
+            : [text.whatDoes(subject.name), text.inDetail(subject.name)];
+    return items.map(example => `- ${example}`).join('\n');
+}
+const shownPrompt = (typed: string) => typed.replace(/\s+/g, ' ').replace(/["`]/g, "'").trim().slice(0, 40);
+
 /** "No question was recognized in "test"." and two or three questions that work for the selection (C6). */
 export function noQuestionAnswer(typed: string, language: 'en' | 'de', subject: ExampleSubject): string {
     const text = noQuestionText[language];
-    const examples = subject.kind === 'marked' ? [text.markedDoes, text.markedInDetail]
-        : subject.kind === 'galaxy' ? [text.whatDoes(subject.name), text.whoCalls(subject.name), text.whatCalls(subject.name)]
-            : [text.whatDoes(subject.name), text.inDetail(subject.name)];
-    const shown = typed.replace(/\s+/g, ' ').replace(/["`]/g, "'").trim().slice(0, 40);
-    return `${text.heading(shown)}\n\n${examples.map(example => `- ${example}`).join('\n')}\n\n_${text.note}_`;
+    return `${text.heading(shownPrompt(typed))}\n\n${examples(language, subject)}\n\n_${text.note}_`;
+}
+
+/** A follow-up ("und was noch?") right after a change of topic: the earlier turns are about
+ * another topic and are not sent, so the model would answer it without context ("Ja, und
+ * noch."). It asks for the full question with the same examples (B4). */
+export function followUpAnswer(typed: string, language: 'en' | 'de', subject: ExampleSubject, topic: string): string {
+    return `${chatRound3Text[language].followUp(shownPrompt(typed), topic)}\n\n${examples(language, subject)}\n\n_${noQuestionText[language].note}_`;
 }
 
 /** The names a prompt may use for what is at hand: the selection, the symbols around it, the

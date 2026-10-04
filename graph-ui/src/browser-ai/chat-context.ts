@@ -21,20 +21,33 @@ export function chatTopic(scope: string, sources: { reader?: BrowserChatReaderCo
     return undefined;
 }
 
-/** The earlier turns a question about `topic` carries: those since the topic last changed.
- * A file or selection the reader comes back to starts fresh, as the divider above it says,
- * so an earlier wrong answer about it is not sent again (K17). Replies without a topic
- * (no context) neither belong to nor end a topic. */
+/** The earlier turns a question about `topic` carries: its own, also from before the reader
+ * went to another file or selection and came back, and never those of another topic (K17).
+ * Coming back started fresh, so "Und was noch?" got "Ja, und noch." (B4). Replies without a
+ * topic (no context) belong to none. */
 export function topicHistory<T extends BrowserChatTurn>(turns: readonly T[], topic: ChatTopic | undefined): T[] {
-    if (!topic) return [];
-    const run: T[] = [];
-    for (let index = turns.length - 1; index >= 0; index--) {
-        const turn = turns[index];
-        if (!turn.topic) continue;
-        if (turn.topic.key !== topic.key) break;
-        run.unshift(turn);
-    }
-    return run;
+    return topic ? turns.filter(turn => turn.topic?.key === topic.key) : [];
+}
+
+/** The divider above turn `index`: "new" for the first turn about another topic, "back" for
+ * a topic that has earlier turns, nothing within a topic (B4). */
+export function topicDivider(turns: readonly BrowserChatTurn[], index: number): 'new' | 'back' | undefined {
+    const topic = turns[index]?.topic;
+    if (!topic || index === 0) return undefined;
+    const earlier = turns.slice(0, index);
+    if ([...earlier].reverse().find(item => item.topic)?.topic?.key === topic.key) return undefined;
+    return earlier.some(item => item.topic?.key === topic.key) ? 'back' : 'new';
+}
+
+/** Follow-ups that ask nothing of their own: they continue the answer before (B4). */
+const FOLLOW_UPS = new Set(['und', 'and', 'mehr', 'more', 'noch mehr', 'und mehr', 'and more', 'mehr davon', 'more of that', 'mehr details', 'more details', 'details',
+    'was noch', 'und was noch', 'was sonst', 'und sonst', 'sonst', 'sonst noch was', 'sonst noch etwas', 'und sonst noch was', 'noch was', 'noch etwas', 'und noch',
+    'weiter', 'und weiter', 'und dann', 'erzähl mehr', 'erzähl mir mehr', 'warum', 'wieso', 'weshalb', 'und warum',
+    'what else', 'and what else', 'anything else', 'else', 'and then', 'then', 'continue', 'go on', 'tell me more', 'why', 'and why', 'how so']);
+
+/** A short follow-up that needs the turns before it: "und", "mehr", "und was noch?", "and?", "more". */
+export function contextFreeFollowUp(prompt: string): boolean {
+    return FOLLOW_UPS.has(prompt.toLowerCase().replace(/[?!.,;:…]+/g, ' ').replace(/\s+/g, ' ').trim());
 }
 
 /** A question without its own context follows up on explicitly attached code or context
@@ -53,8 +66,9 @@ export function followedTopic(turns: readonly BrowserChatTurn[], scope: string):
 
 /** German when the question reads German; the chat's own replies follow the question.
  * "was" and "die" are English words too and decide nothing on their own. Short questions
- * with typos ("was mcht die klasse") and greetings ("hallo") read German too (C4). */
-const GERMAN = /[äöüß]|\b(?:ich|du|der|das|und|ist|nicht|wie|wer|wo|warum|wieso|weshalb|kannst|kann|mir|mich|diese[rsnm]?|dise[rsnm]?|datei|sagen|erkl\w*|zeig\w*|welche\w*|gibt|wird|macht|mach|mcht|tut|klasse|klase|funktion|methode|modul|hallo|moin|servus|danke|bitte|kurz\w*|antwort\w*|sehr|ein|eine[rsnm]?|sind|noch|auch|hier|zeile\w*|genau|beschreib\w*|detailliert\w*|ausf\w*)\b/i;
+ * with typos ("was mcht die klasse") and greetings ("hallo") read German too (C4), and so do
+ * follow-ups such as "mehr" (B4). */
+const GERMAN = /[äöüß]|\b(?:ich|du|der|das|und|ist|nicht|wie|wer|wo|warum|wieso|weshalb|kannst|kann|mir|mich|diese[rsnm]?|dise[rsnm]?|datei|sagen|erkl\w*|zeig\w*|welche\w*|gibt|wird|macht|mach|mcht|tut|klasse|klase|funktion|methode|modul|hallo|moin|servus|danke|bitte|kurz\w*|antwort\w*|sehr|ein|eine[rsnm]?|sind|noch|auch|hier|zeile\w*|genau|beschreib\w*|detailliert\w*|ausf\w*|mehr|weiter|sonst|dann)\b/i;
 export function questionLanguage(prompt: string): 'en' | 'de' {
     return GERMAN.test(prompt) ? 'de' : 'en';
 }
