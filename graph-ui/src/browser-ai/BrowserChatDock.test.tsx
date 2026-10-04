@@ -1589,11 +1589,12 @@ describe('general questions, prompts without a question and configuration files 
         expect(runtime.countTokens).not.toHaveBeenCalled();
         expect(runtime.chat).not.toHaveBeenCalled();
         expect(answer()).toContain('No question was recognized in "test". You can ask, for example:');
-        for (const example of ['What does JSONBAgg do?', 'Who calls JSONBAgg?', 'What does JSONBAgg call?']) expect(answer()).toContain(example);
+        // JSONBAgg is a class: what it is, who uses it, what it inherits from (W9).
+        for (const example of ['What is JSONBAgg?', 'Who uses JSONBAgg?', 'What does JSONBAgg inherit from?']) expect(answer()).toContain(example);
         expect(buttons()).toEqual(['Ask the model']);
         await type('hallo'); await click('Send ↑');
-        expect(answer()).toContain('In "hallo" wurde keine Frage erkannt. Frage zum Beispiel:');
-        for (const example of ['Was macht JSONBAgg?', 'Wer ruft JSONBAgg auf?']) expect(answer()).toContain(example);
+        expect(answer()).toContain('In „hallo“ wurde keine Frage erkannt. Du kannst zum Beispiel fragen:');
+        for (const example of ['Was ist JSONBAgg?', 'Wer verwendet JSONBAgg?']) expect(answer()).toContain(example);
         expect(buttons()).toEqual(['Modell fragen']);
         expect(runtime.chat).not.toHaveBeenCalled();
         await act(async () => button('Modell fragen').click());

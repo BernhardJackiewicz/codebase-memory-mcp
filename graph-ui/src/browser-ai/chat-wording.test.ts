@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { selectionEvidenceContext } from '../galaxy/selection-evidence';
 import { prepareExplanationContext, selectionSummary } from './explanation-context';
 import { explanationSentence, formatExplanationEvidence, namesNotIn } from './explanation-response';
-import { jsonbAggEvidence, jsonbAggRenderLimited } from './galaxy-evidence.fixture';
-import { relationshipAnswer } from './relationship-answer';
-import { browserChatText, groundedText, topicText } from './strings';
+import { readGalaxyEvidence } from './galaxy-evidence';
+import { jsonbAggEvidence, jsonbAggRenderLimited, largeFolderScope } from './galaxy-evidence.fixture';
+import { generalQuestion, noQuestionAnswer } from './question-intent';
+import { relationshipAnswer, relationshipQuestion, relationshipSuggestion } from './relationship-answer';
+import { browserChatText, groundedText, relationshipWords, topicText } from './strings';
 import { sourceTargetOf, symbolSource } from './symbol-source';
 
 /* Wording of the chat texts after the third review of the hand test (2026-10-04, W1 to W10). */
@@ -216,5 +219,61 @@ describe('German answers in German, with the controls named as the UI shows them
     it('has the topic divider in both languages', () => {
         expect(topicText.en.topicBreak('tox.ini')).toBe('New topic: tox.ini. Earlier messages are not sent with these questions.');
         expect(topicText.de.topicBreak('tox.ini')).toBe('Neues Thema: tox.ini. Frühere Nachrichten werden bei diesen Fragen nicht mitgeschickt.');
+    });
+});
+
+describe('German wording and examples that fit the selection (W9)', () => {
+    const jsonb = () => readGalaxyEvidence(jsonbAggEvidence().text)!;
+
+    it('suggests questions to a German prompt without a question in natural German', () => {
+        const answer = noQuestionAnswer('test', 'de', { kind: 'galaxy', name: 'JSONBAgg', evidence: jsonb() });
+        expect(answer.startsWith('In „test“ wurde keine Frage erkannt. Du kannst zum Beispiel fragen:')).toBe(true);
+        expect(answer).not.toContain('Frage zum Beispiel');
+    });
+
+    it('offers examples for a class that make sense for a class, and that the chat answers as offered', () => {
+        const german = noQuestionAnswer('test', 'de', { kind: 'galaxy', name: 'JSONBAgg', evidence: jsonb() });
+        expect(german).toContain('- Was ist JSONBAgg?\n- Wer verwendet JSONBAgg?\n- Wovon erbt JSONBAgg?');
+        expect(german).not.toContain('Was ruft JSONBAgg auf?');
+        const english = noQuestionAnswer('test', 'en', { kind: 'galaxy', name: 'JSONBAgg', evidence: jsonb() });
+        expect(english).toContain('- What is JSONBAgg?\n- Who uses JSONBAgg?\n- What does JSONBAgg inherit from?');
+        expect(english).not.toContain('What does JSONBAgg call?');
+        expect(generalQuestion('What is JSONBAgg?', ['JSONBAgg'])).toBe('general');
+        expect(generalQuestion('Was ist JSONBAgg?', ['JSONBAgg'])).toBe('general');
+        expect(relationshipQuestion('Who uses JSONBAgg?')?.sides).toEqual(['incoming']);
+        expect(relationshipQuestion('Wer verwendet JSONBAgg?')?.sides).toEqual(['incoming']);
+        // A class that inherits nothing gets no question about it.
+        const plain = { ...jsonb(), relationships: { ...jsonb().relationships, outgoing: [] } };
+        expect(noQuestionAnswer('test', 'en', { kind: 'galaxy', name: 'JSONBAgg', evidence: plain })).not.toContain('inherit');
+    });
+
+    it('keeps the call questions for a function and asks what a folder contains', () => {
+        const method = { ...jsonb(), roots: [{ ...jsonb().roots[0], kind: 'Method' }] };
+        expect(noQuestionAnswer('test', 'en', { kind: 'galaxy', name: 'handle', evidence: method })).toContain('- What does handle do?\n- Who calls handle?\n- What does handle call?');
+        const folder = readGalaxyEvidence(selectionEvidenceContext(largeFolderScope()).text)!;
+        expect(noQuestionAnswer('hallo', 'de', { kind: 'galaxy', name: 'postgres', evidence: folder })).toContain('- Was enthält postgres?\n- Erklär postgres ausführlich.');
+        expect(generalQuestion('Was enthält postgres?', ['postgres'])).toBe('general');
+    });
+
+    it('offers the list or the model as a choice, not as an order', () => {
+        expect(relationshipSuggestion('jsonbagg aufrufe?', [jsonbAggEvidence()])!.markdown)
+            .toContain('_Die Frage wurde nicht sicher erkannt. Du kannst dir die Liste aus dem indizierten Graphen anzeigen lassen oder das Modell fragen._');
+        expect(relationshipSuggestion('jsonbagg calls', [jsonbAggEvidence()])!.markdown)
+            .toContain('_The question was not recognized for certain. You can show the list from the indexed graph or ask the model._');
+        expect(relationshipSuggestion('wer ruft JSONBAg auf', [jsonbAggEvidence()])!.markdown)
+            .toContain('_`JSONBAg` entspricht nicht dem Namen der Auswahl (`JSONBAgg`). Du kannst dir die Liste aus dem indizierten Graphen anzeigen lassen oder das Modell fragen._');
+        expect(relationshipSuggestion('who calls JSONBAg?', [jsonbAggEvidence()])!.markdown)
+            .toContain('_`JSONBAg` does not match the name of the selection (`JSONBAgg`). You can show the list from the indexed graph or ask the model._');
+    });
+
+    it('names what defines the selection with the right article and pronoun for every kind', () => {
+        expect(relationshipWords.de.definer('File', 1, 'X')).toBe('die Datei, die X definiert');
+        expect(relationshipWords.de.definer('Module', 1, 'X')).toBe('das Modul, das X definiert');
+        expect(relationshipWords.de.definer('Interface', 1, 'X')).toBe('die Schnittstelle, die X definiert');
+        expect(relationshipWords.de.definer('Folder', 1, 'X')).toBe('der Ordner, der X definiert');
+        expect(relationshipWords.de.definer('Class', 2, 'X')).toBe('die Klassen, die X definieren');
+        expect(relationshipWords.de.definer('Gadget', 1, 'X')).toBe('das Symbol (Gadget), das X definiert');
+        expect(relationshipWords.en.definer('Class', 2, 'X')).toBe('the classes that define X');
+        expect(relationshipWords.en.definer('Interface', 1, 'X')).toBe('the interface that defines X');
     });
 });

@@ -216,7 +216,7 @@ function suggestionFor(sides: readonly Side[], language: 'en' | 'de', evidence: 
         : both ? `Who calls ${name} and what does ${name} call?` : outgoing ? `What does ${name} call?` : `Who calls ${name}?`;
     const text = relationshipWords[language];
     const heading = both ? text.didYouMeanBoth(quote(name)) : text.didYouMean(outgoing ? 'outgoing' : 'incoming', quote(name));
-    return { markdown: `${heading}\n\n_${typedName ? text.uncertainName(quote(typedName)) : text.uncertain}_`, question, context, language };
+    return { markdown: `${heading}\n\n_${typedName ? text.uncertainName(quote(typedName), quote(name)) : text.uncertain}_`, question, context, language };
 }
 
 /** A question that sounds like callers or callees of the selection, but not certainly:

@@ -325,8 +325,8 @@ async function k16(page) {
     const typoModelCalls = (await sentSince(page, typoMark)).length;
     check('K16', 'A typo in the selected name (up to two letters, any case) is offered for the selection, a free word order with "wo" is listed; none of them reach the model',
         orders.every((item) => /Aufrufer \(CALLS\) von JSONBAgg im geladenen Graphen/.test(item.answer) && callers.every((name) => item.answer.includes(name)))
-        && typos.every((item) => item.language === 'de' ? /Meintest du: Aufrufer von JSONBAgg\?/.test(item.answer) && /ist nicht genau der Name der Auswahl/.test(item.answer)
-            : /Did you mean: callers of JSONBAgg\?/.test(item.answer) && /is not exactly the name of the selection/.test(item.answer))
+        && typos.every((item) => item.language === 'de' ? /Meintest du: Aufrufer von JSONBAgg\?/.test(item.answer) && /entspricht nicht dem Namen der Auswahl \(JSONBAgg\)/.test(item.answer)
+            : /Did you mean: callers of JSONBAgg\?/.test(item.answer) && /does not match the name of the selection \(JSONBAgg\)/.test(item.answer))
         && /callers \(CALLS\) of JSONBAgg in the loaded graph/.test(typoListed) && typoModelCalls === 0,
     { orders: orders.map((item) => `${item.question} => ${item.answer.replace(/\s+/g, ' ').slice(0, 140)}`), typos: typos.map((item) => `${item.question} => ${item.answer.replace(/\s+/g, ' ').slice(0, 160)}`),
         afterShowList: typoListed.replace(/\s+/g, ' ').slice(0, 140), modelCalls: typoModelCalls });

@@ -652,7 +652,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         const known = knownNames({ galaxy, names: galaxy ? galaxyNames(galaxy) : fileSource ? [fileSource.path] : [],
             texts: [fileSource?.text ?? '', source?.text ?? '', ...currentGraph.filter(() => !galaxy).map(item => item.label), ...extra.map(item => item.label)] });
         if (!retry && noQuestion(prompt, known)) {
-            const subject = galaxy ? { kind: 'galaxy' as const, name: galaxy.label } : fileSource?.kind === 'selection' || source ? { kind: 'marked' as const }
+            const subject = galaxy ? { kind: 'galaxy' as const, name: galaxy.label, evidence: galaxy } : fileSource?.kind === 'selection' || source ? { kind: 'marked' as const }
                 : { kind: 'other' as const, name: fileSource ? fileSource.path.split('/').pop()! : topic?.label ?? '' };
             setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, attachment: source, readerContext: reader, context: extra, topic, replyLanguage: language,
                 ...currentGraph[0] ? { listedFrom: currentGraph[0] } : {}, modelId: model.id, request: [], answer: noQuestionAnswer(prompt, language, subject), status: 'complete', answeredFrom: 'hint' }]);

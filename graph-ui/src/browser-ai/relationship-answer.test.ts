@@ -314,7 +314,7 @@ describe('caller questions with a misspelled selection or a free word order (K16
             ? expected === 'incoming' ? 'Meintest du: Aufrufer von `JSONBAgg`?' : 'Meintest du: von `JSONBAgg` aufgerufene Symbole?'
             : expected === 'incoming' ? 'Did you mean: callers of `JSONBAgg`?' : 'Did you mean: what `JSONBAgg` calls?');
         // The uncertain part is the name, and the reply says so.
-        if (relationshipQuestion(prompt)) expect(suggestion?.markdown).toContain(language === 'de' ? 'ist nicht genau der Name der Auswahl' : 'is not exactly the name of the selection');
+        if (relationshipQuestion(prompt)) expect(suggestion?.markdown).toContain(language === 'de' ? 'entspricht nicht dem Namen der Auswahl (`JSONBAgg`)' : 'does not match the name of the selection (`JSONBAgg`)');
         // The suggested question lists the selection when chosen.
         expect(relationshipAnswer(suggestion!.question, evidence())?.markdown).toContain(heading(expected, language));
     });
