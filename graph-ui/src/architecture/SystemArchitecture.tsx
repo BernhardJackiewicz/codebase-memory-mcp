@@ -8,9 +8,12 @@ import { connectionLoad } from '../graph/connection-load';
 import { AtlasApi } from '../app/atlas-api';
 import type { FlowSummary } from '../traces/trace-schemas';
 import BehaviorJourney from './BehaviorJourney';
+import { defaultJourneyStart } from './behavior-journey-model';
 import type { BehaviorPlace, JourneyPlace, PlaceChange, SystemPlace } from './architecture-history';
 import { useLiftedPlace, useOnIdentityChange } from './lifted-place';
 import { RefreshControl, useRefreshFeedback } from './refresh-feedback';
+import { nameOperations } from './operation-choices';
+import { RpcIntelligenceClient } from '../provider/rpc-client';
 import './system-architecture.css';
 
 const Scene = lazy(() => import('./SystemArchitectureScene'));
@@ -21,6 +24,8 @@ export interface SystemArchitectureProps {
     onNavigate: (path: string, line?: number, name?: string) => void;
     loader?: SystemArchitectureLoader;
     flowsLoader?: FlowsLoader;
+    /** Fills in the qualified names of look-alike flow starts, so "Start" can tell them apart (hand test 2026-10-04, A4). */
+    operationNames?: OperationNamer;
     /** Focus, expanded groups, the Behavior start and position, and both cameras, lifted to the workspace for Back and Forward (K27). */
     place?: SystemPlace;
     onPlace?: PlaceChange<SystemPlace>;
@@ -28,8 +33,12 @@ export interface SystemArchitectureProps {
 /** Ranked call-graph flows (route handlers, call-graph roots) from /api/flows. */
 export type FlowsLoader = (project: string) => Promise<FlowSummary[]>;
 const loadFlows: FlowsLoader = project => new AtlasApi().flows(project);
+export type OperationNamer = (project: string, entries: SystemSymbol[]) => Promise<SystemSymbol[]>;
+const nameFlowStarts: OperationNamer = (project, entries) => nameOperations(project, entries, new RpcIntelligenceClient());
 /** Below this many classified entry points the Behavior start list also offers ranked flows. */
 const FEW_ENTRY_POINTS = 8;
+/** How many of the ranked flows "Start" suggests after the automatic start. */
+const RANKED_SUGGESTIONS = 5;
 
 /** Starting operations from flows, once each. The projection supplies qualified name and component on request. */
 export function flowEntries(flows: FlowSummary[]): SystemSymbol[] {
@@ -71,7 +80,7 @@ const connectionAllowed = (type: string, view: ConnectionView) => view === 'all'
     || (view === 'calls' ? ['CALLS', 'IMPORTS', 'HTTP_CALLS', 'ASYNC_CALLS'] : ['INHERITS', 'IMPLEMENTS']).includes(type);
 
 /** Poll only while this view is active. A new request key hides stale results before its effect runs. */
-export default function SystemArchitecture({ project, generation, view, filter, active, graph, onSelect, onClearSelection, onSelectionEvidence, onNavigate, loader = loadSystemArchitecture, flowsLoader = loadFlows, place: liftedPlace, onPlace }: SystemArchitectureProps) {
+export default function SystemArchitecture({ project, generation, view, filter, active, graph, onSelect, onClearSelection, onSelectionEvidence, onNavigate, loader = loadSystemArchitecture, flowsLoader = loadFlows, operationNames = nameFlowStarts, place: liftedPlace, onPlace }: SystemArchitectureProps) {
     const [place, changePlace] = useLiftedPlace<SystemPlace>(liftedPlace, onPlace, () => ({ expanded: [] }));
     const entryChoice = place.behavior;
     /** A start the page picks itself (the suggestion, a reset) completes the current step instead of adding one. */
@@ -171,9 +180,11 @@ export default function SystemArchitecture({ project, generation, view, filter, 
     useEffect(() => {
         if (!needsFlows || (flows?.project === project && flows.generation === generation)) return;
         let live = true;
-        void flowsLoader(project).then(flowEntries, () => []).then(entries => { if (live) setFlows({ project, generation, entries }); });
+        // Look-alike flow starts get their qualified names first, so the field never relabels them later (A4).
+        void flowsLoader(project).then(flowEntries, () => []).then(entries => operationNames(project, entries).catch(() => entries))
+            .then(entries => { if (live) setFlows({ project, generation, entries }); });
         return () => { live = false; };
-    }, [needsFlows, flows, project, generation, flowsLoader]);
+    }, [needsFlows, flows, project, generation, flowsLoader, operationNames]);
     const flowStarts = useMemo(() => flows?.project === project && flows.generation === generation ? flows.entries : [], [flows, project, generation]);
     const entries = useMemo(() => {
         if (!fewEntries || !flowStarts.length) return chosenEntries;
@@ -181,11 +192,24 @@ export default function SystemArchitecture({ project, generation, view, filter, 
         for (const item of flowStarts) if (!merged.has(item.id)) merged.set(item.id, item);
         return [...merged.values()];
     }, [fewEntries, flowStarts, chosenEntries]);
+    const automaticStart = useMemo(() => data ? data.entrypoints.length ? suggestedBehaviorEntry(data.entrypoints) : suggestedBehaviorEntry(flowStarts, true) : undefined, [data, flowStarts]);
     useEffect(() => {
         if (view !== 'behavior' || !data || (entryChoice?.project === project && entryChoice.generation === generation)) return;
-        const suggested = data.entrypoints.length ? suggestedBehaviorEntry(data.entrypoints) : suggestedBehaviorEntry(flowStarts, true);
-        if (suggested) setEntryChoice({ project, generation, expectedGeneration: current?.response?.generation ?? snapshot?.analysisGeneration, id: suggested.id, name: suggested.name }, true);
-    }, [view, data, project, generation, entryChoice, current?.response?.generation, snapshot?.analysisGeneration, flowStarts]);
+        if (automaticStart) setEntryChoice({ project, generation, expectedGeneration: current?.response?.generation ?? snapshot?.analysisGeneration, id: automaticStart.id, name: automaticStart.name }, true);
+    }, [view, data, project, generation, entryChoice, current?.response?.generation, snapshot?.analysisGeneration, automaticStart]);
+    /*
+     * "Start" offers the automatic start first, then the best ranked flows in the server's order (hand test
+     * 2026-10-04, A4). Without a conventional entry the journey starts where the projection points
+     * (django-demo: "main · …/manage.py-tpl"); that start stays a suggestion after another one is chosen.
+     */
+    const [projectionStart, setProjectionStart] = useState<{ project: string; generation?: string; id: number }>();
+    const pickedByProjection = requestedEntry === undefined && view === 'behavior' && queryData ? defaultJourneyStart(queryData) : undefined;
+    useEffect(() => {
+        if (pickedByProjection !== undefined) setProjectionStart({ project, generation, id: pickedByProjection });
+    }, [pickedByProjection, project, generation]);
+    const shownByProjection = projectionStart?.project === project && projectionStart.generation === generation ? projectionStart.id : undefined;
+    const suggestedStarts = useMemo(() => [...new Set([...automaticStart ? [automaticStart.id] : shownByProjection !== undefined ? [shownByProjection] : [],
+        ...flowStarts.slice(0, RANKED_SUGGESTIONS).map(item => item.id)])], [automaticStart, shownByProjection, flowStarts]);
     const returnedPaths = useMemo(() => {
         const valid = queryData?.paths.filter(path => isContiguousPath(path)) ?? [];
         if (queryData?.behavior && requestedTarget === undefined) return [];
@@ -322,7 +346,7 @@ export default function SystemArchitecture({ project, generation, view, filter, 
     }, automatic);
     const behaviorPage = view === 'behavior' ? <BehaviorJourney project={project} generation={projectionGeneration} data={queryData}
         entries={entries} targets={targets} entryId={requestedEntry} targetId={requestedTarget} active={active} pending={queryPending}
-        error={error} filter={filter} onRefresh={refreshAnalysis} refresh={refresh.feedback} onNavigate={onNavigate} onSelectSymbol={selectSymbol} onClearSelection={onClearSelection} onSelectionEvidence={onSelectionEvidence}
+        error={error} filter={filter} onRefresh={refreshAnalysis} refresh={refresh.feedback} suggestedEntries={suggestedStarts} onNavigate={onNavigate} onSelectSymbol={selectSymbol} onClearSelection={onClearSelection} onSelectionEvidence={onSelectionEvidence}
         from={requestedEntry !== undefined ? entryChoice?.from : undefined} place={journeyPlace} onPlace={changeJourney}
         onShownStart={name => { if (name !== place.shown) changePlace({ shown: name }, true); }}
         onRequest={(entry, targetId, detail) => {

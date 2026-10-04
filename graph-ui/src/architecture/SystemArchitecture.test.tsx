@@ -561,8 +561,10 @@ describe('system architecture workspace', () => {
         expect(flowsLoader).toHaveBeenCalledExactlyOnceWith('sample');
         expect(loader.mock.calls.at(-1)?.[0]).toEqual({ project: 'sample', entryNodeId: 36163, expectedGeneration: 'g1', includeBehaviorEvidence: true });
         const start = container.querySelector<HTMLSelectElement>('[aria-label="Behavior entry point"]')!;
-        expect([...start.options].map(option => option.textContent)).toEqual(['Choose an operation…', 'run_tests · tests/runtests.py',
-            'handle · django/core/management/commands/runserver.py']);
+        // Alphabetical (hand test 2026-10-04, A4); with every operation suggested a Suggested group would only repeat the list.
+        expect([...start.options].map(option => option.textContent)).toEqual(['Choose an operation…',
+            'handle · django/core/management/commands/runserver.py', 'run_tests · tests/runtests.py']);
+        expect(start.querySelectorAll('optgroup')).toHaveLength(1);
         expect(start.value).toBe('36163');
         const state = container.querySelector('.behavior-loading[role="status"]')!;
         expect(state.textContent).toContain('The analysis returned no call evidence.');
@@ -570,7 +572,9 @@ describe('system architecture workspace', () => {
         expect(state.textContent).toContain('Optional behavior evidence was omitted entirely');
         await choose('Behavior entry point', '9');
         expect(loader.mock.calls.at(-1)?.[0].entryNodeId).toBe(9);
-        expect([...start.options].map(option => option.value)).toEqual(['', '9', '36163']);
+        // The chosen start keeps its place in the alphabetical list.
+        expect([...start.options].map(option => option.value)).toEqual(['', '36163', '9']);
+        expect(start.value).toBe('9');
     });
     it('does not ask for flows once the projection classifies enough entry points', async () => {
         const flowsLoader = vi.fn<FlowsLoader>().mockResolvedValue([]);
@@ -586,8 +590,46 @@ describe('system architecture workspace', () => {
         await render(vi.fn<SystemArchitectureLoader>().mockResolvedValue(response()), { view: 'behavior', flowsLoader });
         expect(flowsLoader).toHaveBeenCalledExactlyOnceWith('sample');
         const start = container.querySelector<HTMLSelectElement>('[aria-label="Behavior entry point"]')!;
-        // The two classified entry points come first; the flow that repeats one of them is not listed twice.
-        expect([...start.options].map(option => option.value)).toEqual(['', '1', '2', '36163']);
+        // Every operation alphabetically (hand test 2026-10-04, A4), the flow that repeats a classified entry point once.
+        // The journey's start and the two ranked flows would suggest all three, so no Suggested group repeats them.
+        expect([...start.querySelectorAll('optgroup')].map(group => [group.label, [...group.querySelectorAll('option')].map(option => option.value)]))
+            .toEqual([['All operations · 3', ['36163', '2', '1']]]);
+    });
+    it('A4: suggests the automatic start and the top ranked flows, and names look-alike flow starts by their class', async () => {
+        const MODELS = 'django/db/migrations/operations/models.py';
+        const flow = (id: number, name: string, filePath: string) => ({ id, label: name, entry: { id, name, filePath }, terminal: { id: 1, name: 'x' }, steps: 3 });
+        const flowsLoader = vi.fn<FlowsLoader>().mockResolvedValue([flow(41, 'database_backwards', MODELS), flow(42, 'database_backwards', MODELS),
+            flow(43, 'handle', 'django/core/management/commands/loaddata.py'), flow(44, 'b4', 'b.py'), flow(45, 'b5', 'b.py'), flow(46, 'b6', 'b.py')]);
+        const operationNames = vi.fn(async (_project: string, entries: SystemSymbol[]) => entries.map(entry => entry.id === 41
+            ? { ...entry, qualified_name: 'p.ops.models.CreateModel.database_backwards' } : entry.id === 42 ? { ...entry, qualified_name: 'p.ops.models.DeleteModel.database_backwards' } : entry));
+        const data = overviewFixture();
+        data.entrypoints = [{ ...data.entrypoints[0], name: 'main' }, data.entrypoints[1]];
+        await render(vi.fn<SystemArchitectureLoader>().mockResolvedValue(response(data)), { view: 'behavior', flowsLoader, operationNames });
+        expect(operationNames).toHaveBeenCalledOnce();
+        expect(operationNames.mock.calls[0]?.[1].map(entry => entry.id)).toEqual([41, 42, 43, 44, 45, 46]);
+        const start = container.querySelector<HTMLSelectElement>('[aria-label="Behavior entry point"]')!;
+        const suggested = [...start.querySelectorAll('optgroup')[0]!.querySelectorAll('option')].map(option => option.textContent);
+        // The automatic start, then the first five ranked flows in their order.
+        expect(suggested).toEqual(['main · src/api.ts', `database_backwards (CreateModel) · ${MODELS}`, `database_backwards (DeleteModel) · ${MODELS}`,
+            'handle · django/core/management/commands/loaddata.py', 'b4 · b.py', 'b5 · b.py']);
+        expect(start.selectedOptions[0]?.textContent).toBe('main · src/api.ts');
+    });
+    it('A4: suggests the start the projection chose itself, and keeps suggesting it after another start is picked', async () => {
+        // django-demo: "main · …/manage.py-tpl" is no conventional entry for the page, the projection picks it on its own.
+        const flow = (id: number, name: string, filePath: string) => ({ id, label: name, entry: { id, name, filePath }, terminal: { id: 1, name: 'x' }, steps: 3 });
+        const flowsLoader = vi.fn<FlowsLoader>().mockResolvedValue([flow(43, 'handle', 'loaddata.py'), flow(44, 'b4', 'b.py')]);
+        const data = overviewFixture();
+        data.entrypoints = [{ ...data.entrypoints[0], name: 'main', file_path: 'conf/manage.py-tpl' }, data.entrypoints[1]];
+        // No operation requested: the server names none (0), and the journey starts at the first classified entry point.
+        data.behavior = { ...data.behavior!, source_id: 0 };
+        await render(vi.fn<SystemArchitectureLoader>().mockResolvedValue(response(data)), { view: 'behavior', flowsLoader });
+        const start = container.querySelector<HTMLSelectElement>('[aria-label="Behavior entry point"]')!;
+        const suggested = () => [...start.querySelectorAll('optgroup')[0]!.querySelectorAll('option')].map(option => option.value);
+        expect(start.value).toBe('1');
+        expect(suggested()).toEqual(['1', '43', '44']);
+        await choose('Behavior entry point', '43');
+        expect(start.value).toBe('43');
+        expect(suggested()).toEqual(['1', '43', '44']);
     });
     it('shows failures without retrying continuously', async () => {
         vi.useFakeTimers(); const loader = vi.fn<SystemArchitectureLoader>().mockResolvedValue({ status: 'failed', generation: 'g1', error: 'Analysis budget exceeded.' });

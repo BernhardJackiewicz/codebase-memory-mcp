@@ -10,6 +10,10 @@
 .behavior-requests label { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--atlas-dim); flex: 1 1 270px; min-width: 0; }
 .behavior-requests select { min-width: 0; width: 100%; max-width: 100%; }
 .behavior-requests input { flex: 1 1 150px; min-width: 120px; background: transparent; color: var(--atlas-fg); border: 1px solid var(--journey-line); border-radius: 5px; padding: 6px 9px; font: inherit; font-size: 11px; }
+/* Hand test 2026-10-04 (A4): "Start" holds the filter and the field; it takes the larger share of the row. */
+.behavior-requests .behavior-start { flex: 2 1 460px; }
+.behavior-requests .behavior-start input { flex: 0 1 190px; }
+.behavior-requests .behavior-start select { flex: 1 1 240px; width: auto; }
 .behavior-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin: 12px 0; font-size: 11px; color: var(--atlas-dim); }
 .behavior-navigation > span:first-of-type { margin-left: 4px; }
 .behavior-static-badge { margin-left: auto; border: 1px solid var(--journey-line); border-radius: 20px; padding: 4px 9px; font-size: 10px; }

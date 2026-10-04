@@ -8,7 +8,10 @@ import type { SystemProjection, SystemSymbol } from './system-architecture-sourc
 import BehaviorSourceEvidence, { type BehaviorSourceSnapshot } from './BehaviorSourceEvidence';
 import { useSelectionEvidence, type SelectionEvidenceListener } from '../galaxy/selection-evidence';
 import { RefreshControl, type RefreshFeedback } from './refresh-feedback';
+import { operationChoices } from './operation-choices';
 import './behavior-journey.css';
+
+const startText = text.behaviorStart;
 
 const Scene = lazy(() => import('./SystemArchitectureScene'));
 export interface BehaviorJourneyProps {
@@ -31,6 +34,8 @@ export interface BehaviorJourneyProps {
     onRefresh: () => void; onSelectSymbol: (symbol: SystemSymbol) => void;
     /** What the last Refresh did, shown beside its button (hand test 2026-10-04, A3). */
     refresh?: RefreshFeedback;
+    /** The automatic start and the ranked suggestions, in their order, offered first in "Start" (hand test 2026-10-04, A4). */
+    suggestedEntries?: number[];
     onNavigate: (path: string, line?: number, name?: string) => void;
 }
 
@@ -56,7 +61,7 @@ export function journeyPage(scene: SystemSceneModel, step: number, choices = fal
 }
 
 export default function BehaviorJourney({ project, generation, data, entries, targets, entryId, targetId, active, pending, error, filter,
-    onRequest, onRefresh, refresh, onSelectSymbol, onNavigate, onClearSelection, onSelectionEvidence, from, place: liftedPlace, onPlace, onShownStart }: BehaviorJourneyProps) {
+    onRequest, onRefresh, refresh, suggestedEntries, onSelectSymbol, onNavigate, onClearSelection, onSelectionEvidence, from, place: liftedPlace, onPlace, onShownStart }: BehaviorJourneyProps) {
     const [place, changePlace] = useLiftedPlace<JourneyPlace>(liftedPlace, onPlace, () => ({}));
     const { path: pathIndex = 0, step = 0, page: branchPage = 0, planar = false } = place;
     const [overview, setOverview] = useState(false);
@@ -97,7 +102,10 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
     const targetOptions = [...new Map([...targets, ...(journey?.choices ?? []).map(item => ({ ...item, distance: item.distance ?? 1 }))]
         .filter(item => item.id !== (entryId ?? journey?.entry?.id)).map(item => [item.id, item])).values()];
     const entry = journey?.entry ?? entries.find(item => item.id === entryId);
-    const availableEntries = entry && !entries.some(item => item.id === entry.id) ? [entry, ...entries] : entries;
+    const availableEntries = useMemo(() => entry && !entries.some(item => item.id === entry.id) ? [entry, ...entries] : entries, [entry, entries]);
+    const [startQuery, setStartQuery] = useState('');
+    const startChoices = useMemo(() => operationChoices(availableEntries, { suggested: suggestedEntries, query: startQuery, keep: entry?.id }),
+        [availableEntries, suggestedEntries, startQuery, entry?.id]);
     const reportShown = useRef(onShownStart);
     reportShown.current = onShownStart;
     const shownStart = entryId === undefined && !pending ? entry?.name : undefined;
@@ -165,10 +173,20 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
             <p>{path ? 'Follow one recorded call chain across the parts it touches.' : 'Choose a starting operation. Explore its calls, or follow a path to a destination.'}</p></div>
             <RefreshControl labels={text.refreshFeedback.behavior} feedback={refresh} onRefresh={onRefresh} /></header>
         <div className="behavior-requests">
-            {/* The field names the operation the journey shows, also when the projection chose it. */}
-            <label>Start <select aria-label="Behavior entry point" value={entry?.id ?? ''} onChange={event => request(availableEntries.find(item => item.id === Number(event.target.value)))}>
-                <option value="">Choose an operation…</option>{availableEntries.map(item => <option key={item.id} value={item.id}>{item.name} · {item.file_path ?? item.qualified_name}</option>)}
-            </select></label>
+            {/*
+              * The field names the operation the journey shows, also when the projection chose it. Suggestions come
+              * first, then every operation alphabetically; the filter before it narrows both (hand test 2026-10-04, A4).
+              */}
+            <label className="behavior-start">{startText.label}
+                <input type="search" aria-label={startText.filter} placeholder={startText.filterPlaceholder} value={startQuery} onChange={event => setStartQuery(event.target.value)} />
+                <select aria-label={startText.field} value={entry?.id ?? ''} onChange={event => request(availableEntries.find(item => item.id === Number(event.target.value)))}>
+                    <option value="">{startText.choose}</option>
+                    {startChoices.suggested.length > 0 && <optgroup label={startText.suggested}>{startChoices.suggested.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</optgroup>}
+                    <optgroup label={startQuery.trim() ? startText.matching(startChoices.matching, startChoices.total) : startText.all(startChoices.total)}>
+                        {startChoices.all.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+                        {startQuery.trim() && !startChoices.matching && <option disabled value="-1">{startText.none(startQuery.trim())}</option>}
+                    </optgroup>
+                </select></label>
             <label>Reach <select aria-label="Behavior destination" value={targetId ?? ''} disabled={!entry || pending} onChange={event => request(entry, event.target.value ? Number(event.target.value) : undefined, from)}>
                 <option value="">Explore immediate calls</option>{targetOptions.map(item => <option key={item.id} value={item.id}>{item.name} · {item.file_path ?? ''}</option>)}
             </select></label>

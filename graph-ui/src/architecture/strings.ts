@@ -100,6 +100,23 @@ export const architectureText = {
     openedFile: 'Opened file',
     scopeMeasure: (files: number, lines?: number) => `${files.toLocaleString()} files · ${lines === undefined ? 'unknown' : lines.toLocaleString()} indexed lines`,
     openedScopeHint: 'Select a part or connection to inspect it. The location above leads back to the repository.',
+    /** Behavior "Start": suggestions first, then every operation alphabetically, with a filter (hand test 2026-10-04, A4). */
+    behaviorStart: {
+        label: 'Start',
+        field: 'Behavior entry point',
+        choose: 'Choose an operation…',
+        filter: 'Filter operations',
+        filterPlaceholder: 'Filter operations…',
+        suggested: 'Suggested',
+        all: (total: number) => `All operations · ${total.toLocaleString()}`,
+        matching: (shown: number, total: number) => `Matching operations · ${shown.toLocaleString()} of ${total.toLocaleString()}`,
+        none: (query: string) => `No operation matches "${query}"`,
+        option: (name: string, place: string) => `${name} · ${place}`,
+        /** The name stays first, so the list still reads alphabetically: "database_backwards (CreateModel)". */
+        qualified: (qualifier: string, name: string) => `${name} (${qualifier})`,
+        line: (place: string, line: number) => `${place}:${line}`,
+        ordinal: (index: number, count: number) => ` (${index} of ${count})`,
+    },
     /** Each Refresh button says what it did (hand test 2026-10-04, A3): busy while it runs, then when, and whether anything changed. */
     refreshFeedback: {
         routes: { idle: 'Refresh connections', busy: 'Refreshing connections…', done: (time: string) => `Connections refreshed at ${time}` },
