@@ -47,6 +47,60 @@ function names(items: Row[], limit: number, total?: number): string {
     return `${listed.join(', ')}${more ? `; ${words.more(more)}` : ''}`;
 }
 
+/** The measured lines and languages of an area or file. */
+function measuredFacts(measure: Row | undefined): string[] {
+    const languages = rows(measure?.languages).flatMap(item => { const name = text(item.name, 40), files = count(item.files); return name && files ? [`${name} ${number(files)}`] : []; });
+    return measure && count(measure.lines) !== undefined ? [words.measured(count(measure.lines)!, count(measure.measuredFiles) ?? 0, count(measure.files) ?? 0, languages)] : [];
+}
+
+/** The ranked hotspot findings, at most five by name, place and measure. */
+function hotspotFacts(group: Row | undefined): string[] {
+    const findings = rows(group?.findings);
+    if (!findings.length) return [];
+    const ranked = findings.map(item => ({ name: text(item.name, 120), path: text(item.filePath, 240), line: count(item.line), fanIn: count(item.fanIn), complexity: count(item.complexity) }))
+        .filter(item => item.name).slice(0, 5)
+        .map(item => `${quote(item.name!)}${item.path ? ` (${quote(`${item.path}${item.line ? `:${item.line}` : ''}`)})` : ''}${item.fanIn !== undefined ? ` ${words.fanIn(item.fanIn)}` : item.complexity !== undefined ? ` ${words.complexity(item.complexity)}` : ''}`);
+    return [words.hotspots(findings.length, ranked)];
+}
+
+/** Connections summed by the part at the other end (or the pair, without one) and the edge type.
+ * Parts in `outside` lie outside the opened area and are named so. */
+function connectionLines(items: Row[], label?: string, outside: ReadonlySet<string> = new Set()): string[] {
+    const sides = new Map<string, Map<string, number>>();
+    const part = (name: string) => outside.has(name) ? words.outside(quote(name)) : quote(name);
+    for (const item of items) {
+        const from = text(item.source, 120), to = text(item.target, 120), edge = text(item.type, 40);
+        if (!from || !to || !edge) continue;
+        const key = label === undefined ? `${part(from)} → ${part(to)}` : from === label ? words.to(to) : to === label ? words.from(from) : `${from} → ${to}`;
+        const types = sides.get(key) ?? new Map<string, number>();
+        types.set(edge, (types.get(edge) ?? 0) + (count(item.count) ?? 1)); sides.set(key, types);
+    }
+    return [...sides].map(([side, types]) => `${side}: ${[...types].sort((a, b) => b[1] - a[1]).map(([edge, total]) => `${edge} ×${number(total)}`).join(', ')}`);
+}
+
+/** An opened area, file or hotspot area with nothing selected inside it (K7): "Opened: django"
+ * said nothing, so the scope is described by what the view shows of it. */
+function openedFacts(selected: Row, relationships: Row | undefined): ArchitectureFacts {
+    const file = text(selected.filePath, 240), area = text(selected.areaPath, 240), hotspotArea = text(selected.hotspotArea, 240);
+    const opened = file ?? area ?? hotspotArea;
+    if (!opened) return { facts: [] };
+    const facts = [file ? words.openedFile(quote(file)) : area ? words.openedArea(quote(area)) : words.openedHotspots(quote(opened))];
+    facts.push(...measuredFacts(record(selected.measurement)));
+    const parts = rows(selected.parts).flatMap(item => {
+        const label = text(item.label, 160), kind = text(item.kind, 20);
+        return label && (kind === 'area' || kind === 'file') ? [words.scopePart(quote(label), kind, kind === 'area' ? count(item.files) : undefined, count(item.lines))] : [];
+    });
+    const outside = new Set((Array.isArray(selected.outside) ? selected.outside : []).flatMap(name => text(name, 120) ?? []));
+    // The view counts the parts outside the opened scope with the ones inside it, so the card does too.
+    const outsideTotal = Math.max(count(selected.outsideCount) ?? 0, outside.size);
+    if (parts.length || outside.size) facts.push(words.parts(parts, Math.max(count(selected.partCount) ?? 0, parts.length), file ? 'file' : 'area',
+        [...outside].map(quote), outsideTotal));
+    facts.push(...hotspotFacts(record(selected.hotspots)));
+    const described = connectionLines(rows(relationships?.items), undefined, outside);
+    if (described.length) facts.push(words.partConnections(described, count(relationships?.omitted) ?? 0));
+    return { facts };
+}
+
 /** Overview, Hotspots, Routes and Entry points: a source area, file, symbol, route or connection. */
 function spatialFacts(selected: Row, relationships: Row | undefined, scope: Row | undefined): ArchitectureFacts {
     const facts: string[] = [];
@@ -62,40 +116,17 @@ function spatialFacts(selected: Row, relationships: Row | undefined, scope: Row 
     }
     const label = text(selected.label, 160);
     const kind = text(selected.kind, 20);
-    if (!label || !kind) {
-        const opened = text(selected.filePath, 240) ?? text(selected.areaPath, 240) ?? text(selected.hotspotArea, 240);
-        return { facts: opened ? [words.opened(quote(opened))] : [] };
-    }
+    if (!label || !kind) return openedFacts(selected, relationships);
     const members = rows(selected.members);
     const total = count(selected.memberCount) ?? members.length;
     const symbol = kind === 'symbol' ? symbolOf(members[0]) : undefined;
     facts.push(kind === 'symbol' && symbol ? words.selectedSymbol(located(symbol)) : words.selected(words.kinds[kind as keyof typeof words.kinds] ?? kind, quote(label), text(selected.detail, 160)));
-    const measure = record(selected.measurement);
-    const languages = rows(measure?.languages).flatMap(item => { const name = text(item.name, 40), files = count(item.files); return name && files ? [`${name} ${number(files)}`] : []; });
-    if (measure && count(measure.lines) !== undefined) facts.push(words.measured(count(measure.lines)!, count(measure.measuredFiles) ?? 0, count(measure.files) ?? 0, languages));
-    const findings = rows(record(selected.hotspots)?.findings);
-    if (findings.length) {
-        const ranked = findings.map(item => ({ name: text(item.name, 120), path: text(item.filePath, 240), line: count(item.line), fanIn: count(item.fanIn), complexity: count(item.complexity) }))
-            .filter(item => item.name).slice(0, 5)
-            .map(item => `${quote(item.name!)}${item.path ? ` (${quote(`${item.path}${item.line ? `:${item.line}` : ''}`)})` : ''}${item.fanIn !== undefined ? ` ${words.fanIn(item.fanIn)}` : item.complexity !== undefined ? ` ${words.complexity(item.complexity)}` : ''}`);
-        facts.push(words.hotspots(findings.length, ranked));
-    }
+    facts.push(...measuredFacts(record(selected.measurement)));
+    facts.push(...hotspotFacts(record(selected.hotspots)));
     if (kind !== 'symbol' && members.length) facts.push(words.members(names(members, 8, total)));
     // Connections of the selection, summed by the part at the other end and the edge type.
-    const items = rows(relationships?.items);
-    if (items.length) {
-        const sides = new Map<string, Map<string, number>>();
-        for (const item of items) {
-            const from = text(item.source, 120), to = text(item.target, 120), edge = text(item.type, 40);
-            if (!from || !to || !edge) continue;
-            const key = from === label ? words.to(to) : to === label ? words.from(from) : `${from} → ${to}`;
-            const types = sides.get(key) ?? new Map<string, number>();
-            types.set(edge, (types.get(edge) ?? 0) + (count(item.count) ?? 1)); sides.set(key, types);
-        }
-        const described = [...sides].map(([side, types]) => `${side}: ${[...types].sort((a, b) => b[1] - a[1]).map(([edge, total]) => `${edge} ×${number(total)}`).join(', ')}`);
-        const omitted = count(relationships?.omitted) ?? 0;
-        if (described.length) facts.push(words.connections(described, omitted));
-    }
+    const described = connectionLines(rows(relationships?.items), label);
+    if (described.length) facts.push(words.connections(described, count(relationships?.omitted) ?? 0));
     const visible = count(scope?.visibleNodes);
     if (visible !== undefined) facts.push(words.view(text(scope?.view, 40) ?? 'overview', visible, count(scope?.visibleEdges) ?? 0));
     return { facts, target: targetOf(symbol) };

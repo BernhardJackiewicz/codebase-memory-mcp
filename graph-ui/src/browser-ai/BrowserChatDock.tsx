@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type JSX, type Re
 import type { BrowserAiProgress } from './browser-ai-controller';
 import { createBrowserChatRuntime, type BrowserChatRuntime } from './browser-ai-runtime';
 import { BROWSER_MODELS, getBrowserModel, isBrowserModelCached, removeBrowserModelCache, type BrowserModel } from './model-policy';
-import { takeAgentResume } from './agent-resume';
+import { keepAgent, loadProgress, offerAgent, peekAgent, takeAgent, type AgentHandover, type LoadProgress } from './agent-handover';
 import { buildChatMessages, selectionLocation, snapshotAttachment, snapshotReaderContext, trimChatHistory, type BrowserChatAttachment, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatSource, type BrowserChatTurn } from './chat-model';
 import { explanationInput, EXPLANATION_DELAY_MS, type ExplanationInput } from './proactive-selection';
 import { prepareExplanationContext, selectionSummary, type PreparedExplanationContext } from './explanation-context';
@@ -16,7 +16,7 @@ import ChatMarkdown from './ChatMarkdown';
 import AgentSettingsDialog from './AgentSettingsDialog';
 import { useChatHistory } from './use-chat-history';
 import { chatTopic, followedTopic, missingContextAnswer, topicHistory } from './chat-context';
-import { readerFacts } from './workflow-facts';
+import { isDataFile, readerFacts } from './file-facts';
 import './browser-chat.css';
 
 export type { BrowserChatAttachment, BrowserChatContext, BrowserChatReaderContext, BrowserChatSource } from './chat-model';
@@ -51,7 +51,9 @@ export interface BrowserChatDockProps {
 type Phase = 'off' | 'preparing' | 'ready' | 'counting' | 'generating' | 'removing';
 type ChatTurn = BrowserChatTurn & { evidence?: PreparedExplanationContext };
 /** `grounded`: the facts are listed in the card, so the prompt's name budget is not the reader's limit. */
-type Explanation = { key: string; label: string; answer: string; status: string; error?: string; packet?: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; mode?: 'interpretation'; shortened?: boolean; limit?: TokenLimits; evidence?: string; grounded?: boolean };
+type Explanation = { key: string; label: string; answer: string; status: string; error?: string; packet?: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; mode?: 'interpretation'; shortened?: boolean; limit?: TokenLimits; evidence?: string; grounded?: boolean;
+    /** The facts of a configuration or text file, which the model was not asked about (K12). */
+    askable?: boolean };
 /** Finished explanations per selection, so returning to one does not run the model again. */
 const EXPLANATION_CACHE_SIZE = 32;
 const initialModel = BROWSER_MODELS.find(model => model.availability === 'available')!;
@@ -86,13 +88,13 @@ function SourceDisclosure({ children, title }: { children?: ReactNode; title?: s
 
 /** Where an answer stopped and what can be changed: the limits it ran into, the way to
  * the output limit and the larger models with their download. */
-interface LimitNote { limit: TokenLimits; automatic?: boolean; chatOutput: number; model: BrowserModel; onChangeOutput: () => void }
-function TokenLimitNote({ limit, automatic, chatOutput, model, onChangeOutput }: LimitNote): JSX.Element {
+interface LimitNote { limit: TokenLimits; automatic?: boolean; chat: TokenLimits; model: BrowserModel; onChangeOutput: () => void }
+function TokenLimitNote({ limit, automatic, chat, model, onChangeOutput }: LimitNote): JSX.Element {
     const larger = BROWSER_MODELS.filter(candidate => candidate.availability === 'available' && candidate.bytes > model.bytes);
     return <details className="cbm-chat-limit-note">
         <summary>{browserChatText.shortened}</summary>
-        <p>{automatic ? browserChatText.limitAutomatic(limit.outputTokens, chatOutput) : browserChatText.limitReached(limit.inputTokens, limit.outputTokens)}</p>
-        <p>{browserChatText.outputRoom(chatOutput, model.maxOutputTokens)}</p>
+        <p>{automatic ? browserChatText.limitAutomatic(limit.inputTokens, limit.outputTokens, chat.inputTokens, chat.outputTokens) : browserChatText.limitReached(limit.inputTokens, limit.outputTokens)}</p>
+        <p>{browserChatText.outputRoom(chat.outputTokens, model.maxOutputTokens)}</p>
         <button type="button" onClick={onChangeOutput}>{browserChatText.changeOutputLimit}</button>
         {larger.length > 0 && <><p>{browserChatText.largerModels}</p>
             <ul>{larger.map(candidate => <li key={candidate.id}>{browserChatText.modelDownload(candidate.displayName, sizeLabel(candidate.bytes))}</li>)}</ul></>}
@@ -163,6 +165,8 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     const [questionQueued, setQuestionQueued] = useState(false);
     const [newExplanation, setNewExplanation] = useState(false);
     const lastAttempt = useRef<string | undefined>(undefined);
+    /** Files whose card the reader asked the model to write about ("Ask the model", K12). */
+    const modelAsked = useRef(new Set<string>());
     const selected = useMemo(() => explanationInput(selectionScope, readerContext, proactiveSelection), [selectionScope, readerContext, proactiveSelection]);
     const selectionRef = useRef(selected); selectionRef.current = selected;
     const settingsSeen = useRef(settingsRequest);
@@ -175,12 +179,14 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     // Evidence for a manual question grows with the input limit: about 1.5 characters per
     // token leave room for the question, history and instructions (2048 tokens: 3200).
     const chatEvidence = Math.max(800, Math.floor(limits.inputTokens * 25 / 16));
-    const [phase, setPhase] = useState<Phase>('off');
+    // A model handed over by the dock of the last project is loaded from the first frame (K24).
+    const [phase, setPhase] = useState<Phase>(() => { const handover = peekAgent(model.id); return !handover ? 'off' : handover.ready ? 'preparing' : handover.settled ? 'counting' : 'ready'; });
     const { draft, setDraft, turns, setTurns, ready: historyReady, historyNotice, clearHistory } = useChatHistory<ChatTurn>(historyKey);
     const [error, setError] = useState<string>();
     const [runtimeFailed, setRuntimeFailed] = useState(false);
     const [notice, setNotice] = useState<string>();
-    const [progress, setProgress] = useState<BrowserAiProgress>();
+    // A download handed over unfinished shows how far it got from the first frame (K24).
+    const [progress, setProgress] = useState<BrowserAiProgress | undefined>(() => peekAgent(model.id)?.progress?.latest);
     /** Models whose files are in the browser cache: checked on start, not remembered per session (K10). */
     const [cached, setCached] = useState<ReadonlySet<string>>(() => new Set());
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -196,6 +202,8 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     const runtime = useRef<BrowserChatRuntime | undefined>(undefined);
     /** The model the worker was created for; the stored choice can change in another tab. */
     const runtimeModel = useRef<string | undefined>(undefined);
+    /** The model still loading and its progress, so a project switch can hand it over unfinished (K24). */
+    const loading = useRef<{ ready: Promise<void>; progress: LoadProgress } | undefined>(undefined);
     const epoch = useRef(0);
     const pending = useRef(false);
     const stopRequested = useRef(false);
@@ -206,24 +214,37 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     const input = useRef<HTMLTextAreaElement>(null);
     const busy = phase === 'preparing' || phase === 'counting' || phase === 'generating' || phase === 'removing';
 
-    useEffect(() => () => { epoch.current += 1; runtime.current?.dispose(); runtime.current = undefined; }, []);
     useEffect(() => {
-        // A model active before a project switch comes back, as does the chosen one when asked
-        // to load on start; both only from the cache (K10, K24).
-        const resume = takeAgentResume();
+        // A project switch hands this dock the model of the last project's dock (K24).
+        const handover = takeAgent(model.id);
+        if (handover) adopt(handover);
+        const withdraw = offerAgent(handOver);
+        return () => {
+            withdraw(); epoch.current += 1;
+            const current = runtime.current, id = runtimeModel.current;
+            runtime.current = undefined; runtimeModel.current = undefined;
+            // Inside a switch (also React's development double effect) the model stays for the next dock.
+            if (current && !(id && keepAgent(handoverOf(current, id)))) current.dispose();
+        };
+    }, []);
+    useEffect(() => {
+        // The chosen model loads on start when asked to, only from the cache (K10).
         let alive = true;
         void Promise.all(BROWSER_MODELS.filter(candidate => candidate.availability === 'available').map(async candidate => [candidate.id, await isCached(candidate.id)] as const))
             .then(entries => {
                 if (!alive) return;
                 const found = new Set(entries.filter(([, inCache]) => inCache).map(([id]) => id));
                 setCached(found);
-                if ((resume || preferences.autoLoad) && found.has(model.id) && !runtime.current && !pending.current) void prepare(true);
+                if (preferences.autoLoad && found.has(model.id) && !runtime.current && !pending.current) void prepare(true);
             });
         return () => { alive = false; };
     }, []);
     useEffect(() => {
         if (historyProject.current === historyKey) return;
+        const previous = historyProject.current;
         historyProject.current = historyKey;
+        // The first project of this window is no switch: there is nothing of another project to drop.
+        if (previous === undefined) return;
         explanations.current.clear(); symbolSources.current.clear(); readSources.current.clear(); resetProject();
         setSelectedContext([]); setHandledContextId(undefined); setNewExplanation(false);
     }, [historyKey]);
@@ -276,7 +297,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     }, [settingsOpen]);
     const openOutputLimit = (): void => { focusOutputLimit.current = true; setSettingsOpen(true); };
     const limitNote = (shortened: boolean | undefined, limit: TokenLimits | undefined, automatic?: boolean): LimitNote | undefined => shortened
-        ? { limit: limit ?? (automatic ? { inputTokens: autoInput, outputTokens: autoOutput } : limits), automatic, chatOutput: limits.outputTokens, model, onChangeOutput: openOutputLimit } : undefined;
+        ? { limit: limit ?? (automatic ? { inputTokens: autoInput, outputTokens: autoOutput } : limits), automatic, chat: limits, model, onChangeOutput: openOutputLimit } : undefined;
     useEffect(() => {
         const run = autoRun.current;
         if (run && !run.cancelled && (run.key !== selected?.key || !automatic || !proactive)) {
@@ -346,6 +367,16 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
     const explain = async (snapshot: ExplanationInput): Promise<void> => {
         const currentRuntime = runtime.current;
         if (!historyReady || !currentRuntime || pending.current || manualRequest.current || selectionRef.current?.key !== snapshot.key) return;
+        // A configuration or text file is explained by what is read from it. The model writes
+        // about it only when asked, here or in the chat (K12).
+        if (snapshot.reader?.source && isDataFile(snapshot.reader.source.path) && !modelAsked.current.has(snapshot.key)) {
+            lastAttempt.current = snapshot.key;
+            const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: groundedExplanation(readerFacts(snapshot.reader), undefined, false, 'file'), status: 'complete',
+                packet: prepareExplanationContext(snapshot.reader, snapshot.graph, 3200), grounded: true, askable: true };
+            remember(complete); setExplanation(complete);
+            if (!followExplanation.current) setNewExplanation(true);
+            return;
+        }
         pending.current = true; stopRequested.current = false; setStopping(false);
         const ticket = ++epoch.current;
         let settle!: () => void;
@@ -442,6 +473,45 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             pending.current = false; stopRequested.current = false; setStopping(false); setPhase('ready');
         });
     };
+    const handoverOf = (current: BrowserChatRuntime, modelId: string): AgentHandover => ({ runtime: current, modelId,
+        ...operationSettled.current ? { settled: operationSettled.current } : {}, ...loading.current ? { ready: loading.current.ready, progress: loading.current.progress } : {} });
+    /** Gives the model to the dock of the next project (K24). What this dock was doing stops,
+     * and its late results land nowhere: its epoch has moved on. */
+    const handOver = (): AgentHandover | undefined => {
+        const current = runtime.current, id = runtimeModel.current;
+        if (!current || !id) return undefined;
+        if (autoRun.current) autoRun.current.cancelled = true;
+        if (manualRequest.current) manualRequest.current.cancelled = true;
+        epoch.current += 1; current.stop();
+        const handover = handoverOf(current, id);
+        runtime.current = undefined; runtimeModel.current = undefined;
+        return handover;
+    };
+    /** The model the last project's dock handed over: no new worker and no second load. A
+     * stopped answer settles, and a model still loading finishes, before this project uses it. */
+    const adopt = (handover: AgentHandover): void => {
+        const adopted = handover.runtime;
+        runtime.current = adopted; runtimeModel.current = handover.modelId;
+        adopted.setFatalHandler?.(failure => { if (runtime.current === adopted) invalidateRuntime(failure); });
+        const waiting = handover.ready ?? handover.settled;
+        if (!waiting) { setPhase('ready'); return; }
+        const ticket = epoch.current;
+        pending.current = true;
+        if (handover.ready) {
+            const progress = handover.progress ?? loadProgress();
+            loading.current = { ready: handover.ready, progress }; setPhase('preparing');
+            progress.follow(value => { if (epoch.current === ticket && runtime.current === adopted) setProgress(value); });
+        } else { stopRequested.current = true; setStopping(true); setPhase('counting'); }
+        void waiting.then(() => {
+            if (epoch.current !== ticket || runtime.current !== adopted) return;
+            pending.current = false; stopRequested.current = false; loading.current = undefined; setStopping(false);
+            if (handover.ready) { setCached(previous => new Set(previous).add(handover.modelId)); setProgress(undefined); }
+            setPhase('ready');
+        }, (failure: unknown) => {
+            if (epoch.current !== ticket || runtime.current !== adopted) return;
+            release(); setError(messageOf(failure));
+        });
+    };
     const release = (): void => {
         if (manualRequest.current) manualRequest.current.cancelled = true;
         manualRequest.current = undefined; operationSettled.current = undefined; setQuestionQueued(false);
@@ -451,7 +521,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         if (id) setTurns(previous => previous.map(turn => turn.id === id ? { ...turn, status: 'stopped' } : turn));
         epoch.current += 1; pending.current = false; activeTurn.current = undefined;
         stopRequested.current = false; setStopping(false);
-        runtime.current?.dispose(); runtime.current = undefined; runtimeModel.current = undefined;
+        runtime.current?.dispose(); runtime.current = undefined; runtimeModel.current = undefined; loading.current = undefined;
         setProgress(undefined); setPhase('off'); setRuntimeFailed(false);
     };
     const invalidateRuntime = (failure: unknown): void => {
@@ -469,8 +539,13 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             const nextRuntime = createRuntime(model.id);
             runtime.current = nextRuntime; runtimeModel.current = model.id;
             nextRuntime.setFatalHandler?.(failure => { if (runtime.current === nextRuntime) invalidateRuntime(failure); });
-            await nextRuntime.prepare(value => { if (epoch.current === ticket) setProgress(value); }, cacheOnly ? { cacheOnly } : undefined);
+            const progress = loadProgress();
+            progress.follow(value => { if (epoch.current === ticket) setProgress(value); });
+            const loaded = nextRuntime.prepare(value => progress.report(value), cacheOnly ? { cacheOnly } : undefined);
+            loading.current = { ready: loaded, progress };
+            await loaded;
             if (epoch.current !== ticket) return;
+            loading.current = undefined;
             setCached(previous => new Set(previous).add(model.id));
             setPhase('ready'); setProgress(undefined); setSettingsOpen(false); pending.current = false;
         } catch (failure) {
@@ -726,8 +801,9 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                     {explanation.status !== 'generating' && <AnswerNotes shortened={limitNote(explanation.shortened, explanation.limit, true)} packet={explanation.grounded ? undefined : explanation.packet} model={model.displayName} />}
                     {explanation.error && <p className="cbm-chat-turn-error" role="alert">{explanation.error}</p>}
                     {explanation.status !== 'generating' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready' || !!selected.waiting} onClick={() => {
+                        if (explanation.askable) modelAsked.current.add(selected.key);
                         lastAttempt.current = undefined; explanations.current.delete(selected.key); setRetryExplanation(value => value + 1);
-                    }}>Explain again</button>}
+                    }}>{explanation.askable ? relationshipWords.en.askModel : 'Explain again'}</button>}
                 </> : <p>{selected.waiting === 'loading' ? browserChatText.waitingForScope : selected.waiting === 'partial' ? browserChatText.partialScope
                     : manualRequest.current ? 'This selection will be explained after your answer.' : 'Preparing explanation…'}</p>}
             </section>}

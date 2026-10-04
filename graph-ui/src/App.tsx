@@ -130,7 +130,7 @@ import { resolveRepositorySelection, useRepositorySnapshot } from './architectur
 import ActivityPanel from './agents/ActivityPanel';
 import WelcomePanel from './app/WelcomePanel';
 import BrowserChatDock from './browser-ai/BrowserChatDock';
-import { requestAgentResume } from './browser-ai/agent-resume';
+import { switchKeepingAgent } from './browser-ai/agent-handover';
 import { browserChatHistoryProjectKey } from './browser-ai/chat-history-cache';
 import type { BrowserChatAttachment } from './browser-ai/BrowserChatDock';
 import { browserGraphContext } from './browser-ai/graph-context';
@@ -311,7 +311,7 @@ import type { SettingsMeasurement } from './settings/SettingsPanel';
 import AddProjectIndexDialog from './projects/AddProjectIndexDialog';
 import ProjectSwitcher from './projects/ProjectSwitcher';
 import type { ProjectsSource } from './projects/ProjectsPanel';
-import { projectHref } from './projects/projects-model';
+import { ProjectWindows, type ProjectWindow } from './app/project-windows';
 import { MODEL_SUGGESTIONS, fetchCommand } from './settings/model-catalog';
 import { modelKey, readModelPreference, recordModelPreference } from './settings/model-preference';
 import {
@@ -746,10 +746,32 @@ declare global {
     var __atlasLlm: AtlasLlmSeam | undefined;
 }
 
+/** Was ein Projektfenster dem naechsten mitgibt (K24): den Arbeitsbereich, die Kopfzeile des Agenten und ob der Chat offen ist. */
+interface WindowCarry {
+    workspace: Workspace;
+    chatOpen: boolean;
+    agentState: 'off' | 'loading' | 'active' | 'busy' | 'error';
+    agentModelName: string;
+    agentHasOpened: boolean;
+}
+
+/**
+ * Jedes Projekt bekommt ein frisches Fenster in derselben Seite (K24, Kopf von
+ * src/app/project-windows.tsx). Der Agent reicht beim Wechsel sein geladenes
+ * Modell an das Fenster des neuen Projekts weiter.
+ */
 export default function App(): JSX.Element {
+    return <ProjectWindows<WindowCarry> around={switchKeepingAgent}>
+        {shown => <ProjectWindowView key={shown.key} projectWindow={shown} />}
+    </ProjectWindows>;
+}
+
+function ProjectWindowView({ projectWindow }: { projectWindow: ProjectWindow<WindowCarry> }): JSX.Element {
+    const carried = projectWindow.carried;
     const [workspace, setWorkspace] = useState<Workspace>(() => {
         try {
-            const requested = new URLSearchParams(window.location.search).get('workspace');
+            // A project switch keeps the workspace in view; Back and Forward restore the one of their entry (K24).
+            const requested = new URLSearchParams(window.location.search).get('workspace') ?? carried?.workspace ?? null;
             let saved: string | null = null;
             try { saved = localStorage.getItem('cbm.workspace'); } catch { /* URL navigation works without storage. */ }
             return initialWorkspace(requested, saved);
@@ -769,11 +791,15 @@ export default function App(): JSX.Element {
     const [welcomeOpen, setWelcomeOpen] = useState(() => {
         try { return localStorage.getItem('cbm.workspace.setup') !== 'done'; } catch { return false; }
     });
-    const [browserAiOpen, setBrowserAiOpen] = useState(false);
-    const [localAgentState, setLocalAgentState] = useState<'off' | 'loading' | 'active' | 'busy' | 'error'>('off');
+    // The agent's lamp and the chat stay as they were across a project switch (K24).
+    const [browserAiOpen, setBrowserAiOpen] = useState(carried?.chatOpen ?? false);
+    const [localAgentState, setLocalAgentState] = useState<'off' | 'loading' | 'active' | 'busy' | 'error'>(carried?.agentState ?? 'off');
     const [agentSettingsRequest, setAgentSettingsRequest] = useState(0);
-    const [agentModelName, setAgentModelName] = useState('');
-    const agentHasOpened = useRef(false);
+    const [agentModelName, setAgentModelName] = useState(carried?.agentModelName ?? '');
+    const agentHasOpened = useRef(carried?.agentHasOpened ?? false);
+    useEffect(() => {
+        projectWindow.report({ workspace, chatOpen: browserAiOpen, agentState: localAgentState, agentModelName, agentHasOpened: agentHasOpened.current });
+    });
     const onAgentStateChange = useCallback((state: 'off' | 'loading' | 'active' | 'busy' | 'error') => {
         setLocalAgentState(state);
         if ((state === 'active' || state === 'busy') && !agentHasOpened.current) {
@@ -796,16 +822,17 @@ export default function App(): JSX.Element {
         try { localStorage.setItem('cbm.workspace.setup', 'done'); } catch { /* Session-only preference. */ }
     };
     const guidance: Guidance = 'brief';
-    const client = useMemo(() => new RpcIntelligenceClient({}), []);
-    const api = useMemo(() => new AtlasApi({}), []);
+    // Requests of this window end with it: a switch to another project aborts them (K24).
+    const client = useMemo(() => new RpcIntelligenceClient({ signal: projectWindow.signal }), [projectWindow.signal]);
+    const api = useMemo(() => new AtlasApi({ signal: projectWindow.signal }), [projectWindow.signal]);
     const [diagnosticsPath, setDiagnosticsPath] = useState<string>();
 
     /*
      * What the projects panel asks the server. The list comes over /rpc like
      * every other read of this window; the rest are the /api routes the panel
-     * names in its own text. Opening a project reloads the page with the
-     * query the start-up code reads, because every panel of this window is
-     * keyed to the project it started with.
+     * names in its own text. Opening a project replaces this window with a
+     * fresh one for that project in the same page, because every panel of this
+     * window is keyed to the project it started with (K24).
      */
     const projectsSource = useMemo<ProjectsSource>(
         () => ({
@@ -823,12 +850,8 @@ export default function App(): JSX.Element {
         }),
         [client, api],
     );
-    // Opening a project reloads the page; a loaded agent comes back from the cache (K24).
-    const agentStateRef = useRef(localAgentState); agentStateRef.current = localAgentState;
-    const openProject = useCallback((name: string) => {
-        if (agentStateRef.current === 'active' || agentStateRef.current === 'busy' || agentStateRef.current === 'loading') requestAgentResume();
-        window.location.assign(projectHref(name));
-    }, []);
+    // Opening a project stays in this page and keeps a loaded agent (K24).
+    const openProject = projectWindow.open;
 
     const [project, setProject] = useState('');
     const selectionScope = `${project}:${workspace}`;

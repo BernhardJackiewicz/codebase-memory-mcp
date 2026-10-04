@@ -80,6 +80,37 @@ describe('UiLogBuffer', () => {
         ]);
     });
 
+    it('posts each entry under the page it was recorded on, also when the address changed in the page (K24)', async () => {
+        // A project switch stays in the page and only changes the address; the server files a post's entries under its one page.
+        let page = '/?project=django-demo&workspace=galaxy';
+        const posts: { payload: UiLogPayload; final: boolean }[] = [];
+        const buffer = new UiLogBuffer({
+            page, getPage: () => page, session: 'switch', getProject: () => new URLSearchParams(page.slice(1)).get('project') ?? '',
+            transport: { send: async (payload, final) => { posts.push({ payload, final }); return true; } },
+            schedule: () => 0, cancel: () => undefined,
+        });
+        buffer.record('warn', 'console', 'before the switch');
+        page = '/?project=cbm&workspace=galaxy';
+        buffer.record('warn', 'console', 'after the switch');
+        buffer.record('info', 'console', 'still after');
+        await buffer.flush();
+        await buffer.flush();
+        expect(posts.map(({ payload }) => [payload.page, payload.entries.map((entry) => [entry.message, entry.project])])).toEqual([
+            ['/?project=django-demo&workspace=galaxy', [['before the switch', 'django-demo']]],
+            ['/?project=cbm&workspace=galaxy', [['after the switch', 'cbm'], ['still after', 'cbm']]],
+        ]);
+        expect(buffer.page).toBe('/?project=cbm&workspace=galaxy');
+        // A page that is going away sends the entries of every page it was on.
+        buffer.record('warn', 'console', 'cbm again');
+        page = '/?project=django-demo&workspace=explore';
+        buffer.record('warn', 'console', 'django-demo again');
+        await buffer.flush(true);
+        expect(posts.slice(2).map(({ payload, final }) => [payload.page, payload.entries.map((entry) => entry.message), final])).toEqual([
+            ['/?project=cbm&workspace=galaxy', ['cbm again'], true],
+            ['/?project=django-demo&workspace=explore', ['django-demo again'], true],
+        ]);
+    });
+
     it('queues entries with a sequence and a timestamp, and posts them as one batch on the timer', async () => {
         const { buffer, posts, timers, fire } = harness();
         buffer.record('error', 'rpc', 'get_code_snippet returned no source', { detail: 'HTTP 200' });

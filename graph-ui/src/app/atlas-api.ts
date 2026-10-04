@@ -49,6 +49,8 @@ export interface AtlasApiOptions {
     base?: string;
     /** Ersetzbares fetch, damit Tests ohne Netz laufen. */
     fetch?: typeof globalThis.fetch;
+    /** Abbruchsignal fuer jeden Aufruf: das Projektfenster bricht so beim Wechsel ab (K24). */
+    signal?: AbortSignal;
 }
 
 /** Was `/api/repo-info` ueber ein Projekt weiss. Leere Felder heissen "unbekannt". */
@@ -128,10 +130,14 @@ export class AtlasApi {
                 init.headers = { Accept: 'application/json', 'Content-Type': 'application/json' };
                 init.body = JSON.stringify(payload);
             }
+            if (this.options.signal !== undefined) init.signal = this.options.signal;
             response = await doFetch(url, init);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            throw announce(new AtlasApiError(route, 0, `${route} war nicht erreichbar: ${message}`));
+            const failure = new AtlasApiError(route, 0, `${route} war nicht erreichbar: ${message}`);
+            // Ein abgebrochener Aufruf ist die Sache des Aufrufers und kein Fehler des Servers.
+            if (this.options.signal?.aborted) throw failure;
+            throw announce(failure);
         }
         const body = await response.text();
         if (!response.ok) {

@@ -1,4 +1,3 @@
-import type { BrowserChatReaderContext } from './chat-model';
 import { isGithubWorkflow } from './file-kind';
 import { workflowWords as words } from './strings';
 
@@ -66,6 +65,25 @@ function children(lines: readonly Line[], at: number): number[] {
     return found.filter(index => lines[index].keyIndent === level);
 }
 
+/** The top-level keys of a YAML file in block layout, each with the keys right below it or
+ * the length of the list it holds (K12). Keys inside block values are text, not keys.
+ *
+ * The keys of a list's items stand at the same indent as the keys of a mapping ("- repo:"
+ * and "rev:" below it), so a key holding any item is a list: its items are counted, and
+ * their keys are named as item keys, never as keys of the parent. */
+export function yamlOutline(text: string): { key: string; keys: string[]; items: number; itemKeys: string[] }[] {
+    const lines = linesOf(text);
+    if (!lines.length) return [];
+    const level = Math.min(...lines.map(line => line.keyIndent));
+    return lines.flatMap((line, index) => {
+        if (line.keyIndent !== level || line.dash || !line.key) return [];
+        const below = line.value ? [] : children(lines, index);
+        const named = below.flatMap(child => lines[child].key ? [lines[child].key!] : []);
+        const items = below.filter(child => lines[child].dash).length;
+        return [items ? { key: line.key, keys: [], items, itemKeys: [...new Set(named)] } : { key: line.key, keys: named, items: 0, itemKeys: [] }];
+    });
+}
+
 export function workflowFacts(text: string): WorkflowFacts | undefined {
     const lines = linesOf(text);
     if (!lines.length) return undefined;
@@ -105,10 +123,4 @@ export function workflowFactLines(path: string, text: string): string[] {
     lines.push(words.jobs(facts.jobs.length, facts.jobs.slice(0, LISTED).map(job => words.job(quote(job.id), job.name?.slice(0, 120), job.runsOn?.slice(0, 60), job.steps))));
     if (facts.uses.length) lines.push(words.uses(facts.uses.slice(0, LISTED).map(quote)));
     return lines;
-}
-
-/** Only a whole open file is counted: a marked part or a cut excerpt is not the workflow. */
-export function readerFacts(reader: BrowserChatReaderContext | undefined): string[] {
-    const source = reader?.source;
-    return source?.kind === 'file' && !source.partial ? workflowFactLines(source.path, source.text) : [];
 }

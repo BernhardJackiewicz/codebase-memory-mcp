@@ -2,7 +2,7 @@ import { snapshotReaderContext, type BrowserChatContext, type BrowserChatReaderC
 import { fairShares, readGalaxyEvidence, relationshipLine, scopeSentence, selectionSentence, sideLoaded, type GalaxyEvidence } from './galaxy-evidence';
 import { relationshipWords } from './strings';
 import { architectureFacts } from './architecture-evidence';
-import { readerFacts } from './workflow-facts';
+import { readerFacts } from './file-facts';
 
 export interface ExplanationEvidence {
     id: string;
