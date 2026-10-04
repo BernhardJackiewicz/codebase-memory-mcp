@@ -53,6 +53,8 @@ const CONTROL = String(arg('control', 'cbm'));
 const ONLY = String(arg('only', 'K18,K19,K20,K21,K22,K23,K25,K26')).split(',');
 const VIEWPORT = { width: 1600, height: 1000 };
 const SCALE = 2;
+// Ohne Fenster, wie die Galaxy-Pruefung; `--headed` zeigt es.
+const HEADED = arg('headed', false) === true;
 const THREE_CLOCK = 'THREE.THREE.Clock: This module has been deprecated. Please use THREE.Timer instead.';
 
 const wait = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -653,7 +655,7 @@ async function k26(page) {
 /* ------------------------------------------------------------------ */
 
 const context = await chromium.launchPersistentContext(PROFILE, {
-    headless: false, viewport: VIEWPORT, deviceScaleFactor: SCALE,
+    headless: !HEADED, ...(HEADED ? {} : { channel: 'chromium' }), viewport: VIEWPORT, deviceScaleFactor: SCALE,
     args: ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist'],
 });
 await context.addInitScript(() => {

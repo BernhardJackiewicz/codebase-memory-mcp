@@ -43,6 +43,8 @@ const PROJECT = String(arg('project', 'django-demo'));
 const CONTROL = String(arg('control', 'cbm'));
 const ONLY = String(arg('only', 'galaxy,chat,architecture')).split(',');
 const MODEL = arg('no-model', false) !== true;
+// Ohne Fenster, wie die Chat-Pruefung: ANGLE auf Metal gibt dem Modell die GPU mit shader-f16; `--headed` zeigt das Fenster.
+const HEADED = arg('headed', false) === true;
 const VIEWPORT = { width: 1600, height: 1000 };
 // Ein vollstaendiges ffmpeg zuerst: das von Playwright mitgelieferte kennt nur die Filter fuer die Aufnahme.
 const FFMPEG = ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', join(homedir(), 'Library/Caches/ms-playwright/ffmpeg-1011/ffmpeg-mac')].find((path) => existsSync(path));
@@ -622,8 +624,8 @@ await mkdir(join(OUT, 'bilder'), { recursive: true });
 await mkdir(join(OUT, 'streifen'), { recursive: true });
 await mkdir(join(OUT, 'video'), { recursive: true });
 const context = await chromium.launchPersistentContext(PROFILE, {
-    headless: false, viewport: VIEWPORT, deviceScaleFactor: 2,
-    args: ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist'],
+    headless: !HEADED, viewport: VIEWPORT, deviceScaleFactor: 2,
+    args: ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist', '--use-angle=metal', '--enable-gpu'],
     recordVideo: { dir: join(OUT, 'video'), size: VIEWPORT },
 });
 await context.addInitScript(pageProbe);
