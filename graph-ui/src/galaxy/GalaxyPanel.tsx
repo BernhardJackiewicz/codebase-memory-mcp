@@ -2943,9 +2943,9 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                   * Das Instrument liegt IM Kasten der Szene und nicht darunter:
                   * es erklaert, was auf dem Graphen zu sehen ist, und ein Kasten
                   * daneben waere eine zweite Flaeche, die man zwischen Bild und
-                  * Text hin und her lesen muesste. Es ist halbtransparent und
-                  * faengt seine eigenen Klicks ab; der Rest der Flaeche bleibt
-                  * die Szene.
+                  * Text hin und her lesen muesste. Es ist deckend (Review zu
+                  * K29) und faengt seine eigenen Klicks ab; der Rest der Flaeche
+                  * bleibt die Szene.
                   */}
                 {liveOn && agentsView !== undefined && props.agents !== undefined && (
                     <AgentsHud
