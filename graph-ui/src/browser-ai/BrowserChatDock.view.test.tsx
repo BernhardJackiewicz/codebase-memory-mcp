@@ -16,7 +16,7 @@ describe('questions about the current view are answered from the loaded scope (H
             await dock.ask(question);
             const answer = dock.answerOf(dock.last()).replace(/\s+/g, ' ');
             expect(answer).toContain('.github (Ordner) steht in der Mitte; der Ausschnitt geht 1 Schritt in beide Richtungen.');
-            expect(answer).toContain('Links, eingehend: CONTAINS_FOLDER (1): DETACHED');
+            expect(answer).toContain('Links, eingehend: CONTAINS_FOLDER (1): django-demo · losgelöster HEAD');
             expect(answer).toContain('Rechts, ausgehend: CONTAINS_FILE (4): CODE_OF_CONDUCT.md, FUNDING.yml, pull_request_template.md, SECURITY.md CONTAINS_FOLDER (1): workflows');
             expect(answer).toContain('So liest du die Hierarchie: eingehende Beziehungen stehen links, ausgehende rechts.');
             expect(answer).toContain('Aus dem indizierten Graphen gelistet, nicht vom Modell erzeugt.');
@@ -57,7 +57,7 @@ describe('a model answer that only restates the question is not shown as an answ
         expect(runtime.chat).toHaveBeenCalledOnce();
         const answer = dock.answerOf(dock.last());
         expect(answer).toContain('Das Modell hat keine Antwort gegeben, es hat nur die Frage wiederholt („Ich kann dir die Ordner erklären.“).');
-        expect(answer).toContain('Ausgewählt: .github (Ordner) in .github.');
+        expect(answer).toContain('Ausgewählt: .github (Ordner).');
         expect(answer).toContain('Ausgehend: 5 Beziehungen zu 5 Symbolen (CONTAINS_FILE 4, CONTAINS_FOLDER 1).');
         expect(answer).toContain('Aus dem indizierten Graphen gelistet, nicht vom Modell erzeugt.');
         expect(dock.notesOf(dock.last())).toEqual([]);

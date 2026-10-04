@@ -183,12 +183,16 @@ export function selectionName(evidence: GalaxyEvidence, words: RelationshipWords
 /** What is selected, in the words of the prompt (English) or of a question (C5). */
 export function selectionSentence(evidence: GalaxyEvidence, words: RelationshipWords): string[] {
     const [first] = evidence.roots;
-    const range = (root: GalaxyEvidence['roots'][number]) => root.filePath
+    // A folder or a file is its path; "Selected: .github (Folder) in .github." only repeated the name (K47).
+    const isPath = (root: GalaxyEvidence['roots'][number]) => /^(?:folder|file|directory)$/i.test(root.kind ?? '')
+        && Boolean(root.filePath) && (root.filePath === root.name || root.filePath!.endsWith(`/${root.name}`));
+    const shown = (root: GalaxyEvidence['roots'][number]) => isPath(root) ? root.filePath! : rootName(root, words);
+    const range = (root: GalaxyEvidence['roots'][number]) => root.filePath && !isPath(root)
         ? ` in ${root.filePath}${root.startLine ? `:${root.startLine}${root.endLine && root.endLine !== root.startLine ? `-${root.endLine}` : ''}` : ''}` : '';
     // Kinds in the words of the answer: "(Klasse)" in a German one (W8).
     const kind = (root: GalaxyEvidence['roots'][number]) => root.kind ? ` (${words.kindName(root.kind)})` : '';
     if (evidence.rootCount <= 1 && first) {
-        return [words.selected(`${rootName(first, words)}${kind(first)}${range(first)}`),
+        return [words.selected(`${shown(first)}${kind(first)}${range(first)}`),
             ...first.documentation ? [words.documentation(first.documentation)] : []];
     }
     if (!first) return [words.notInScope(selectionName(evidence, words), words.kindName(evidence.selectionKind))];

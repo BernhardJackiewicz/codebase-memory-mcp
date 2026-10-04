@@ -43,7 +43,8 @@ describe('the listed answer about the current view (H1)', () => {
         const answer = viewAnswer(evidence('hierarchy'), 'de');
         expect(answer.split('\n\n')).toEqual([
             '`.github` (Ordner) steht in der Mitte; der Ausschnitt geht 1 Schritt in beide Richtungen.',
-            'Links, eingehend:\n- **CONTAINS_FOLDER (1):** `DETACHED`',
+            // The branch node is named as the Galaxy names it, not by its bare "DETACHED" (K47).
+            'Links, eingehend:\n- **CONTAINS_FOLDER (1):** `django-demo · losgelöster HEAD`',
             'Rechts, ausgehend:\n- **CONTAINS_FILE (4):** `CODE_OF_CONDUCT.md`, `FUNDING.yml`, `pull_request_template.md`, `SECURITY.md`\n- **CONTAINS_FOLDER (1):** `workflows`',
             'So liest du die Hierarchie: eingehende Beziehungen stehen links, ausgehende rechts.',
             '7 Symbole und 6 Beziehungen, alle Beziehungstypen; vollständig geladen.',
@@ -55,7 +56,7 @@ describe('the listed answer about the current view (H1)', () => {
         const answer = viewAnswer(evidence('galaxy'), 'en');
         expect(answer.split('\n\n')).toEqual([
             '`.github` (Folder) is in the middle; the scope reaches 1 hop in both directions.',
-            'Incoming:\n- **CONTAINS_FOLDER (1):** `DETACHED`',
+            'Incoming:\n- **CONTAINS_FOLDER (1):** `django-demo · detached HEAD`',
             'Outgoing:\n- **CONTAINS_FILE (4):** `CODE_OF_CONDUCT.md`, `FUNDING.yml`, `pull_request_template.md`, `SECURITY.md`\n- **CONTAINS_FOLDER (1):** `workflows`',
             'The galaxy view shows this scope as a cloud. "hierarchy" at the top right lays the same scope out in columns: incoming on the left, outgoing on the right.',
             '7 symbols and 6 relationships, all relationship types; fully loaded.',
@@ -84,7 +85,7 @@ describe('the listed answer about the current view (H1)', () => {
 
     it('says nothing about left, right or a cloud when the evidence does not say which view is shown', () => {
         const answer = viewAnswer(evidence(), 'en');
-        expect(answer).toContain('Incoming:\n- **CONTAINS_FOLDER (1):** `DETACHED`');
+        expect(answer).toContain('Incoming:\n- **CONTAINS_FOLDER (1):** `django-demo · detached HEAD`');
         expect(answer).not.toMatch(/left|right|cloud/);
     });
 });

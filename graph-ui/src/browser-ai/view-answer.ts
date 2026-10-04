@@ -1,5 +1,6 @@
+import { nodeDisplayName } from '../galaxy/node-names';
 import type { RelationshipGroup } from '../galaxy/selection-evidence';
-import { scopeParts, sideLoaded, type GalaxyEvidence } from './galaxy-evidence';
+import { scopeParts, selectionName, sideLoaded, type GalaxyEvidence } from './galaxy-evidence';
 import { relationshipWords, viewText, type RelationshipWords } from './strings';
 
 /** The answer to a question about the current Galaxy view, listed from the loaded scope (H1).
@@ -16,7 +17,8 @@ const quote = (value: string) => `\`${value.replace(/`/g, "'")}\``;
 
 /** "- **CONTAINS_FILE (4):** `CODE_OF_CONDUCT.md`, `FUNDING.yml`; +2 more". */
 function typeLine(group: RelationshipGroup, words: RelationshipWords): string {
-    const shown = group.files.flatMap(file => file.symbols.map(symbol => symbol.name)).slice(0, NAMES_PER_TYPE);
+    // Named as the Galaxy names them: the branch node as "django-demo · detached HEAD", not "DETACHED" (K47).
+    const shown = group.files.flatMap(file => file.symbols.map(symbol => nodeDisplayName(symbol, words.nodeNames))).slice(0, NAMES_PER_TYPE);
     const rest = group.count - shown.length;
     const names = shown.length ? `${shown.map(quote).join(', ')}${rest > 0 ? `; ${words.more(rest)}` : ''}` : words.more(group.count);
     return `- **${words.typeCount(group.type, group.count)}:** ${names}`;
@@ -28,7 +30,7 @@ export function viewAnswer(evidence: GalaxyEvidence, language: 'en' | 'de'): str
     const hierarchy = evidence.display === 'hierarchy';
     const [first] = evidence.roots;
     const single = evidence.rootCount <= 1 && first !== undefined;
-    const center = text.center(quote(single ? first.name : evidence.label), words.kindName((single ? first.kind : undefined) ?? evidence.selectionKind), single ? 1 : evidence.rootCount);
+    const center = text.center(quote(single ? nodeDisplayName(first, words.nodeNames) : selectionName(evidence, words)), words.kindName((single ? first.kind : undefined) ?? evidence.selectionKind), single ? 1 : evidence.rootCount);
     const { direction, types, state } = scopeParts(evidence, words);
     const reach = evidence.depth === 0 ? text.selectionOnly : text.reach(words.hops(evidence.depth), direction, evidence.direction === 'both');
     const side = (name: 'incoming' | 'outgoing'): string => {
