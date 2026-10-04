@@ -7,6 +7,7 @@ import { useLiftedPlace, useOnIdentityChange } from './lifted-place';
 import type { SystemProjection, SystemSymbol } from './system-architecture-source';
 import BehaviorSourceEvidence, { type BehaviorSourceSnapshot } from './BehaviorSourceEvidence';
 import { useSelectionEvidence, type SelectionEvidenceListener } from '../galaxy/selection-evidence';
+import { RefreshControl, type RefreshFeedback } from './refresh-feedback';
 import './behavior-journey.css';
 
 const Scene = lazy(() => import('./SystemArchitectureScene'));
@@ -28,6 +29,8 @@ export interface BehaviorJourneyProps {
     onClearSelection?: () => void;
     onSelectionEvidence?: SelectionEvidenceListener;
     onRefresh: () => void; onSelectSymbol: (symbol: SystemSymbol) => void;
+    /** What the last Refresh did, shown beside its button (hand test 2026-10-04, A3). */
+    refresh?: RefreshFeedback;
     onNavigate: (path: string, line?: number, name?: string) => void;
 }
 
@@ -53,7 +56,7 @@ export function journeyPage(scene: SystemSceneModel, step: number, choices = fal
 }
 
 export default function BehaviorJourney({ project, generation, data, entries, targets, entryId, targetId, active, pending, error, filter,
-    onRequest, onRefresh, onSelectSymbol, onNavigate, onClearSelection, onSelectionEvidence, from, place: liftedPlace, onPlace, onShownStart }: BehaviorJourneyProps) {
+    onRequest, onRefresh, refresh, onSelectSymbol, onNavigate, onClearSelection, onSelectionEvidence, from, place: liftedPlace, onPlace, onShownStart }: BehaviorJourneyProps) {
     const [place, changePlace] = useLiftedPlace<JourneyPlace>(liftedPlace, onPlace, () => ({}));
     const { path: pathIndex = 0, step = 0, page: branchPage = 0, planar = false } = place;
     const [overview, setOverview] = useState(false);
@@ -160,7 +163,7 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
         <header className="behavior-heading"><div><span className="system-eyebrow">Behavior · source-guided exploration</span>
             <h2>{targetId !== undefined ? `${entry?.name ?? 'Operation'} → ${selectedTarget?.name ?? 'destination'}` : `What can ${entry?.name ?? 'this operation'} call?`}</h2>
             <p>{path ? 'Follow one recorded call chain across the parts it touches.' : 'Choose a starting operation. Explore its calls, or follow a path to a destination.'}</p></div>
-            <button onClick={onRefresh}>Refresh</button></header>
+            <RefreshControl labels={text.refreshFeedback.behavior} feedback={refresh} onRefresh={onRefresh} /></header>
         <div className="behavior-requests">
             {/* The field names the operation the journey shows, also when the projection chose it. */}
             <label>Start <select aria-label="Behavior entry point" value={entry?.id ?? ''} onChange={event => request(availableEntries.find(item => item.id === Number(event.target.value)))}>

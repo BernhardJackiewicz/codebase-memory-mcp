@@ -100,6 +100,15 @@ export const architectureText = {
     openedFile: 'Opened file',
     scopeMeasure: (files: number, lines?: number) => `${files.toLocaleString()} files · ${lines === undefined ? 'unknown' : lines.toLocaleString()} indexed lines`,
     openedScopeHint: 'Select a part or connection to inspect it. The location above leads back to the repository.',
+    /** Each Refresh button says what it did (hand test 2026-10-04, A3): busy while it runs, then when, and whether anything changed. */
+    refreshFeedback: {
+        routes: { idle: 'Refresh connections', busy: 'Refreshing connections…', done: (time: string) => `Connections refreshed at ${time}` },
+        services: { idle: 'Refresh', busy: 'Refreshing…', done: (time: string) => `Service map refreshed at ${time}` },
+        structure: { idle: 'Refresh analysis', busy: 'Refreshing analysis…', done: (time: string) => `Analysis refreshed at ${time}` },
+        behavior: { idle: 'Refresh', busy: 'Refreshing…', done: (time: string) => `Journey refreshed at ${time}` },
+        unchanged: (time: string) => `Up to date at ${time}: no changes since the last load`,
+        failed: (time: string, error: string) => `Refresh failed at ${time}: ${error}`,
+    },
 };
 
 /**

@@ -198,3 +198,45 @@ it('focuses an aggregated hotspot area and restores all areas on empty backgroun
     expect(host.querySelector('[aria-label="Hotspot area"]')).toBeNull();
     expect(host.querySelector('input[type="search"]')).toBeNull();
 });
+/*
+ * Hand test 2026-10-04 (A3): "Refresh connections" fetched everything again and nothing on screen changed. Now the
+ * button says it runs, the map keeps the connections it shows meanwhile, and a status names the time and the result.
+ */
+it('A3: Refresh connections says that it runs and what it found, and keeps the map while it runs', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+        vi.setSystemTime(new Date(2026, 9, 4, 13, 45, 12));
+        const route: GraphNode = { id: 2, label: 'Route', name: '/api/', qualified_name: 'sample.route.2', file_path: 'app/urls.py', x: 0, y: 0, z: 0, size: 1, color: '' };
+        const input: GraphData = { nodes: [node, route], edges: [], total_nodes: 2 };
+        await act(async () => root.render(<SpatialArchitecture project="sample" graph={input} overview={overview} view="routes" filter="" active onNavigate={vi.fn()} onView={vi.fn()} />));
+        const refresh = () => [...host.querySelectorAll('button')].find(button => /^Refresh(ing)? connections/.test(button.textContent ?? ''))!;
+        const status = () => host.querySelector('[role="status"].atlas-arch-refresh-status')?.textContent;
+        expect(refresh().textContent).toBe('Refresh connections');
+        expect(status()).toBe('');
+
+        let finish!: (value: Awaited<ReturnType<typeof loadRouteGraph>>) => void;
+        vi.mocked(loadRouteGraph).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+        await act(async () => refresh().click());
+        expect(refresh().textContent).toBe('Refreshing connections…');
+        expect(refresh().getAttribute('aria-disabled')).toBe('true');
+        // The map keeps what it shows; it does not fall back to "reading" while the refresh runs.
+        expect(host.textContent).not.toContain('Reading indexed endpoint connections…');
+        expect(host.textContent).not.toContain('(checking…)');
+        // A second press while it runs starts nothing.
+        await act(async () => refresh().click());
+        expect(loadRouteGraph).toHaveBeenCalledTimes(2);
+        await act(async () => finish({ relationships: [], truncated: false, warnings: [] }));
+        expect(refresh().textContent).toBe('Refresh connections');
+        expect(refresh().getAttribute('aria-disabled')).toBeNull();
+        expect(status()).toBe('Up to date at 13:45:12: no changes since the last load');
+
+        vi.setSystemTime(new Date(2026, 9, 4, 13, 46, 3));
+        vi.mocked(loadRouteGraph).mockResolvedValueOnce({ relationships: [{ source: route, target: node, type: 'HANDLES', id: 7 }], truncated: false, warnings: [] });
+        await act(async () => refresh().click());
+        expect(status()).toBe('Connections refreshed at 13:46:03');
+
+        vi.mocked(loadRouteGraph).mockRejectedValueOnce(new Error('daemon unavailable'));
+        await act(async () => refresh().click());
+        expect(status()).toBe('Refresh failed at 13:46:03: daemon unavailable');
+    } finally { vi.useRealTimers(); }
+});

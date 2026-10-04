@@ -595,3 +595,49 @@ describe('system architecture workspace', () => {
         expect(container.querySelector('[role="alert"]')?.textContent).toContain('Analysis budget exceeded'); expect(loader).toHaveBeenCalledTimes(1);
     });
 });
+
+/* Hand test 2026-10-04 (A3): "Refresh analysis" and the Behavior "Refresh" read again and said nothing. */
+describe('system architecture refresh feedback', () => {
+    const refresh = (pattern: RegExp) => [...container.querySelectorAll('button')].find(element => pattern.test(element.textContent ?? ''))!;
+    const status = () => container.querySelector('[role="status"].atlas-arch-refresh-status')?.textContent;
+    afterEach(() => { vi.useRealTimers(); });
+
+    it('A3: Refresh analysis is busy while it runs, then names the time and whether the index changed', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(2026, 9, 4, 18, 0, 9));
+        const loader = vi.fn<SystemArchitectureLoader>().mockResolvedValue(response(overviewFixture()));
+        await render(loader);
+        let finish!: (value: SystemArchitectureResponse) => void;
+        loader.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+        await act(async () => refresh(/^Refresh(ing)? analysis/).click());
+        expect(refresh(/^Refresh(ing)? analysis/).textContent).toBe('Refreshing analysis…');
+        expect(refresh(/^Refresh(ing)? analysis/).getAttribute('aria-disabled')).toBe('true');
+        // The structure stays on screen meanwhile.
+        expect(container.querySelector('[data-testid="system-scene"]')).not.toBeNull();
+        await act(async () => finish(response(overviewFixture())));
+        expect(refresh(/^Refresh(ing)? analysis/).textContent).toBe('Refresh analysis');
+        expect(status()).toBe('Up to date at 18:00:09: no changes since the last load');
+        loader.mockResolvedValueOnce({ ...response(overviewFixture()), generation: 'g2' });
+        await act(async () => refresh(/^Refresh(ing)? analysis/).click());
+        expect(status()).toBe('Analysis refreshed at 18:00:09');
+        loader.mockRejectedValueOnce(new Error('Daemon stopped.'));
+        await act(async () => refresh(/^Refresh(ing)? analysis/).click());
+        expect(status()).toBe('Refresh failed at 18:00:09: Daemon stopped.');
+    });
+
+    it('A3: the Behavior Refresh says the same beside its button', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(2026, 9, 4, 18, 1, 0));
+        const loader = vi.fn<SystemArchitectureLoader>().mockResolvedValue(response(overviewFixture()));
+        await render(loader, { view: 'behavior' });
+        const button = () => container.querySelector<HTMLButtonElement>('.behavior-heading .atlas-arch-refresh button')!;
+        expect(button()?.textContent).toBe('Refresh');
+        let finish!: (value: SystemArchitectureResponse) => void;
+        loader.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+        await act(async () => button().click());
+        expect(button().textContent).toBe('Refreshing…');
+        await act(async () => finish(response(overviewFixture())));
+        expect(button().textContent).toBe('Refresh');
+        expect(container.querySelector('.behavior-heading [role="status"]')?.textContent).toBe('Up to date at 18:01:00: no changes since the last load');
+    });
+});

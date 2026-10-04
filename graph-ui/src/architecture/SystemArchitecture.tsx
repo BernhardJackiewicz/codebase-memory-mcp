@@ -10,6 +10,7 @@ import type { FlowSummary } from '../traces/trace-schemas';
 import BehaviorJourney from './BehaviorJourney';
 import type { BehaviorPlace, JourneyPlace, PlaceChange, SystemPlace } from './architecture-history';
 import { useLiftedPlace, useOnIdentityChange } from './lifted-place';
+import { RefreshControl, useRefreshFeedback } from './refresh-feedback';
 import './system-architecture.css';
 
 const Scene = lazy(() => import('./SystemArchitectureScene'));
@@ -159,6 +160,9 @@ export default function SystemArchitecture({ project, generation, view, filter, 
     });
     const structureData = useMemo(() => data ? { ...data, dependencies: data.dependencies.filter(edge => connectionAllowed(edge.type, connectionView)) } : undefined, [data, connectionView]);
     const error = current?.error ?? (current?.response?.status === 'failed' ? current.response.error ?? 'Architecture analysis failed.' : undefined);
+    /* Refresh analysis and the Behavior Refresh say what they did (hand test 2026-10-04, A3). The same index answers with the same generation. */
+    const refresh = useRefreshFeedback({ key: requestKey, settled: Boolean(current) && !queryPending, value: current?.response?.generation, error });
+    const refreshAnalysis = () => { refresh.begin(); setRevision(value => value + 1); };
     const chosenEntries = entryChoices?.project === project && entryChoices.generation === generation ? entryChoices.entries : data?.entrypoints ?? [];
     // With no or only a handful of classified entry points (limited projections, Python without main, a few
     // route handlers) the ranked flows add their starts after the classified ones.
@@ -318,7 +322,7 @@ export default function SystemArchitecture({ project, generation, view, filter, 
     }, automatic);
     const behaviorPage = view === 'behavior' ? <BehaviorJourney project={project} generation={projectionGeneration} data={queryData}
         entries={entries} targets={targets} entryId={requestedEntry} targetId={requestedTarget} active={active} pending={queryPending}
-        error={error} filter={filter} onRefresh={() => setRevision(value => value + 1)} onNavigate={onNavigate} onSelectSymbol={selectSymbol} onClearSelection={onClearSelection} onSelectionEvidence={onSelectionEvidence}
+        error={error} filter={filter} onRefresh={refreshAnalysis} refresh={refresh.feedback} onNavigate={onNavigate} onSelectSymbol={selectSymbol} onClearSelection={onClearSelection} onSelectionEvidence={onSelectionEvidence}
         from={requestedEntry !== undefined ? entryChoice?.from : undefined} place={journeyPlace} onPlace={changeJourney}
         onShownStart={name => { if (name !== place.shown) changePlace({ shown: name }, true); }}
         onRequest={(entry, targetId, detail) => {
@@ -332,7 +336,8 @@ export default function SystemArchitecture({ project, generation, view, filter, 
     return <section className="system-architecture" data-testid="system-architecture" aria-label={view === 'structure' ? 'System structure' : 'Behavior'} aria-busy={active && pending}>
         <div className="system-toolbar">
             <p>{view === 'structure' ? 'Inspect the parts and the code that connects them.' : 'Follow a question through the same system map.'}</p>
-            <button className="atlas-arch-action system-refresh" onClick={() => { setRevision(value => value + 1); setResetKey(value => value + 1); }}>Refresh analysis</button>
+            <RefreshControl className="atlas-arch-action system-refresh" labels={text.refreshFeedback.structure} feedback={refresh.feedback}
+                onRefresh={() => { refreshAnalysis(); setResetKey(value => value + 1); }} />
         </div><div className="system-controls">
             <div className="system-scope-actions"><button disabled={!focusId} onClick={clearSelection}>Whole system</button></div>
             {view === 'structure' && <label>Connections <select aria-label="Connection view" value={connectionView} onChange={event => { setConnectionView(event.target.value as ConnectionView); setCyclesOnly(false); }}>

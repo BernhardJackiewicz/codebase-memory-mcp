@@ -78,6 +78,12 @@
 .atlas-arch-recent-menu button:hover:not(:disabled) { background: var(--atlas-panel-raised); }
 .atlas-arch-recent-menu button span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--atlas-dim); }
 .atlas-arch-recent-menu button[aria-current="true"] { opacity: 0.6; }
+/* Hand test 2026-10-04 (A3): a Refresh says that it runs and, beside it, what it found. The live region stays in the tree. */
+.atlas-arch-refresh { display: inline-flex; align-items: center; flex-wrap: wrap; min-width: 0; }
+.atlas-arch-refresh > button[aria-disabled="true"] { opacity: 0.6; cursor: progress; }
+.atlas-arch-refresh-status { color: var(--atlas-dim); font-size: 11px; line-height: 1.4; }
+.atlas-arch-refresh-status:not(:empty) { margin-left: 8px; }
+.atlas-arch-refresh-status[data-phase="failed"] { color: var(--atlas-alarm); }
 .atlas-arch-toolbar { margin-bottom: 24px; gap: 10px; }
 .atlas-arch-filter { position: relative; flex: 1; max-width: 370px; }
 .atlas-arch-filter svg { color: var(--atlas-dim); left: 11px; position: absolute; top: 10px; pointer-events: none; }
