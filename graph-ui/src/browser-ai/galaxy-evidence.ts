@@ -27,6 +27,8 @@ export interface GalaxyEvidence {
     relationships: Omit<ScopeRelationships, 'incomingSymbols' | 'outgoingSymbols'> & { incomingSymbols?: number; outgoingSymbols?: number };
     /** The snapshot budget cut relationship data, so counts and names can be incomplete. */
     truncated: boolean;
+    /** Which picture of the scope Galaxy shows; undefined where the snapshot does not say (H1). */
+    display?: 'galaxy' | 'hierarchy';
 }
 
 const record = (value: unknown): Record<string, unknown> | undefined => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -93,7 +95,7 @@ export function readGalaxyEvidence(snapshot: string): GalaxyEvidence | undefined
         relationships: { incoming: groups(relationships?.incoming, project), incomingSymbols: total(relationships?.incomingSymbols),
             outgoing: groups(relationships?.outgoing, project), outgoingSymbols: total(relationships?.outgoingSymbols),
             internal: totals(relationships?.internal), beyond: totals(relationships?.beyond) },
-        truncated,
+        truncated, ...scope.display === 'galaxy' || scope.display === 'hierarchy' ? { display: scope.display } : {},
     };
 }
 
@@ -141,15 +143,21 @@ export function relationshipLine(group: RelationshipGroup, _side: 'incoming' | '
     return { text: head + body + more(listed), listed };
 }
 
-/** "1 hop in both directions, all relationship types; complete." in words, never as fields. */
-export function scopeSentence(evidence: GalaxyEvidence, words: RelationshipWords): string {
+/** The direction, the edge types and how complete the scope is, in words. */
+export function scopeParts(evidence: GalaxyEvidence, words: RelationshipWords): { direction: string; types: string; state: string } {
     const direction = evidence.direction === 'inbound' ? words.inbound : evidence.direction === 'outbound' ? words.outbound : words.both;
     const types = evidence.edgeTypes === 'all' ? words.allTypes : words.onlyTypes(evidence.edgeTypes);
     const state = evidence.state === 'complete' ? words.complete : evidence.state === 'loading' ? words.loading
         : evidence.state === 'limited' && evidence.renderLimit ? words.renderLimited(evidence.renderLimit.layer, evidence.renderLimit.limit, evidence.renderLimit.kind)
             : words.partial(evidence.error);
     const notes = [state, ...evidence.state === 'complete' && evidence.exhausted ? [words.exhausted] : [], ...evidence.truncated ? [words.truncated] : []];
-    return words.scope(`${words.hops(evidence.depth)} ${direction}, ${types}`, words.size(evidence.nodes, evidence.edges), notes.join('; '));
+    return { direction, types, state: notes.join('; ') };
+}
+
+/** "1 hop in both directions, all relationship types; complete." in words, never as fields. */
+export function scopeSentence(evidence: GalaxyEvidence, words: RelationshipWords): string {
+    const { direction, types, state } = scopeParts(evidence, words);
+    return words.scope(`${words.hops(evidence.depth)} ${direction}, ${types}`, words.size(evidence.nodes, evidence.edges), state);
 }
 
 /** Whether the loaded scope followed this side at all; otherwise "none" would be a guess. */

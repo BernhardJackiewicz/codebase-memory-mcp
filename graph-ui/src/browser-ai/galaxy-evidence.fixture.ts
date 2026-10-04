@@ -59,3 +59,19 @@ export function largeFolderScope(): SelectionEvidence {
     return galaxyScopeEvidence({ project: 'django-demo', identity: { kind: 'folder', path: 'django/contrib/postgres', name: 'postgres' }, nodes, edges,
         roots: new Set(roots.map(root => root.id)), depth: 1, direction: 'both', edgeTypes: 'all', state: 'complete-indexed-scope', exhausted: false });
 }
+
+/** `.github` in django-demo at one layer, as the hand test of 2026-10-04 showed it in the hierarchy:
+ * the branch node of the detached checkout above it, four files and the workflows folder below it. */
+export function githubFolderEvidence(display?: 'galaxy' | 'hierarchy', overrides: { depth?: number; direction?: string; nodes?: GraphNode[]; edges?: GraphEdge[] } = {}): BrowserChatContext {
+    const folder = (id: number, name: string, path: string): GraphNode => ({ id, name, label: 'Folder', file_path: path, qualified_name: `django-demo.${path}`, x: 0, y: 0, z: 0, size: 1, color: '#999' });
+    const file = (id: number, name: string): GraphNode => ({ id, name, label: 'File', file_path: `.github/${name}`, qualified_name: `django-demo..github.${name}`, x: 0, y: 0, z: 0, size: 1, color: '#999' });
+    const root = folder(1, '.github', '.github');
+    const branch: GraphNode = { id: 2, name: 'DETACHED', label: 'Branch', qualified_name: 'django-demo.__branch__.detached', x: 0, y: 0, z: 0, size: 1, color: '#999' };
+    const files = ['CODE_OF_CONDUCT.md', 'FUNDING.yml', 'pull_request_template.md', 'SECURITY.md'].map((name, index) => file(10 + index, name));
+    const workflows = folder(20, 'workflows', '.github/workflows');
+    const edges: GraphEdge[] = [{ source: branch.id, target: root.id, type: 'CONTAINS_FOLDER' }, ...files.map(item => ({ source: root.id, target: item.id, type: 'CONTAINS_FILE' })),
+        { source: root.id, target: workflows.id, type: 'CONTAINS_FOLDER' }];
+    return selectionEvidenceContext(galaxyScopeEvidence({ project: 'django-demo', identity: { kind: 'folder', path: '.github', name: '.github' },
+        nodes: [root, branch, ...files, workflows, ...overrides.nodes ?? []], edges: [...edges, ...overrides.edges ?? []], roots: new Set([root.id]),
+        depth: overrides.depth ?? 1, direction: overrides.direction ?? 'both', edgeTypes: 'all', state: 'complete-indexed-scope', exhausted: false, ...display ? { display } : {} }));
+}

@@ -123,6 +123,8 @@ export interface GalaxyScope {
     exhausted?: boolean;
     /** The layer that stopped and the limit it stopped at. */
     renderLimit?: { layer: number; kind: 'nodes' | 'edges'; limit: number };
+    /** Which picture of the scope Galaxy shows, so the chat can say how to read it (H1). */
+    display?: 'galaxy' | 'hierarchy';
 }
 
 /** Every scope edge is classified against the roots first; only the names are
@@ -134,7 +136,8 @@ export function galaxyScopeEvidence(scope: GalaxyScope): SelectionEvidence {
     return { project: scope.project, view: 'galaxy', source: 'query_graph scoped indexed relationships', label: scopeDisplayName(scope.identity),
         selected: { scope: scope.identity, rootCount: roots.length, roots: roots.slice(0, ROOTS_LISTED).map(root => ({ ...graphNodeEvidence(root),
             documentation: root.documentation?.slice(0, ROOT_DOCUMENTATION_CHARACTERS) })), omittedRoots: Math.max(0, roots.length - ROOTS_LISTED) },
-        scope: { depth: scope.depth, direction: scope.direction, edgeTypes: scope.edgeTypes, nodes: scope.nodes.length, edges: scope.edges.length },
+        scope: { depth: scope.depth, direction: scope.direction, edgeTypes: scope.edgeTypes, nodes: scope.nodes.length, edges: scope.edges.length,
+            ...scope.display ? { display: scope.display } : {} },
         relationships: scopeRelationships(scope.nodes, scope.edges, scope.roots),
         limitations: { state: scope.state, error: scope.error, exhausted: scope.exhausted, ...scope.renderLimit ? { renderLimit: scope.renderLimit } : {}, indexCoverage: 'unavailable',
             interpretation: 'Static indexed relationships, not runtime activity. Scope completeness is relative to the indexed graph and selected depth/types.' } };
@@ -215,9 +218,12 @@ export function selectionEvidenceContext(original: SelectionEvidence): BrowserCh
     const snapshot = copy(architecture ? { ...head, relationships: evidence.relationships, selected: evidence.selected }
         : { ...head, selected: evidence.selected, relationships: evidence.relationships }, '$', 0);
     const text = JSON.stringify({ evidence: snapshot, omissions });
+    // The picture Galaxy draws a scope in is no code fact: in either one the scope keeps its identity (H1).
+    const scope = row(row(snapshot)?.scope);
+    const identity = scope?.display === undefined ? text : JSON.stringify({ evidence: { ...row(snapshot), scope: { ...scope, display: undefined } }, omissions });
     let hash = 2166136261;
-    for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
-    return { id: `selection:${evidence.project}:${evidence.view}:${(hash >>> 0).toString(16)}:${text.length}`,
+    for (let i = 0; i < identity.length; i++) hash = Math.imul(hash ^ identity.charCodeAt(i), 16777619);
+    return { id: `selection:${evidence.project}:${evidence.view}:${(hash >>> 0).toString(16)}:${identity.length}`,
         label: evidence.label.slice(0, 120), text };
 }
 
