@@ -29,17 +29,48 @@ function jsonValue(value: unknown): YamlValue {
     return { kind: 'scalar', value: String(value) };
 }
 
-/** TOML: the keys before the first table, each `[table]` with its keys, each `[[table]]` as a list item. */
+/** Brackets still open after `text`, outside strings and comments. */
+function openBrackets(text: string): number {
+    let depth = 0, quote: string | undefined;
+    for (let index = 0; index < text.length; index++) {
+        const character = text[index];
+        if (quote) { if (character === '\\' && quote === '"') index++; else if (character === quote) quote = undefined; continue; }
+        if (character === '#') break;
+        if (character === '"' || character === "'") quote = character;
+        else if (character === '[' || character === '{') depth++;
+        else if (character === ']' || character === '}') depth--;
+    }
+    return depth;
+}
+/** The items of an array, split at its own commas, not at those inside strings or inline tables. */
+function arrayItems(inner: string): string[] {
+    const items: string[] = [];
+    let depth = 0, quote: string | undefined, start = 0;
+    for (let index = 0; index < inner.length; index++) {
+        const character = inner[index];
+        if (quote) { if (character === '\\' && quote === '"') index++; else if (character === quote) quote = undefined; continue; }
+        if (character === '"' || character === "'") quote = character;
+        else if (character === '[' || character === '{') depth++;
+        else if (character === ']' || character === '}') depth--;
+        else if (character === ',' && depth === 0) { items.push(inner.slice(start, index)); start = index + 1; }
+    }
+    return [...items, inner.slice(start)].map(item => item.trim()).filter(Boolean);
+}
+
+/** TOML: the keys before the first table, each `[table]` with its keys, each `[[table]]` as a list
+ * item. An array may run over several lines ("dependencies = [" with one item per line). */
 function tomlTree(text: string): YamlValue | undefined {
     const root: [string, YamlValue][] = [];
     let current = root, quoted: string | undefined;
+    const unquote = (item: string) => item.replace(/^(["'])(.*)\1$/, '$2');
     const value = (raw: string): YamlValue => {
         const plain = raw.replace(/\s+#[^"']*$/, '').trim();
-        if (/^\[.*\]$/.test(plain)) return { kind: 'list', items: plain.slice(1, -1).split(',').map(item => item.trim().replace(/^(["'])(.*)\1$/, '$2')).filter(Boolean).map(item => ({ kind: 'scalar', value: item })) };
-        return { kind: 'scalar', value: plain.replace(/^(["'])(.*)\1$/, '$2') };
+        if (/^\[[\s\S]*\]$/.test(plain)) return { kind: 'list', items: arrayItems(plain.slice(1, -1)).map(item => ({ kind: 'scalar', value: unquote(item) })) };
+        return { kind: 'scalar', value: unquote(plain) };
     };
-    for (const raw of text.split(/\r?\n/)) {
-        const line = raw.trim();
+    const lines = text.split(/\r?\n/);
+    for (let at = 0; at < lines.length; at++) {
+        const line = lines[at].trim();
         if (quoted) { if (line.split(quoted).length % 2 === 0) quoted = undefined; continue; }
         if (!line || line.startsWith('#')) continue;
         const table = /^(\[\[?)\s*([^\]]+?)\s*\]\]?\s*(?:#.*)?$/.exec(line);
@@ -57,7 +88,10 @@ function tomlTree(text: string): YamlValue | undefined {
         if (!key) continue;
         const delimiter = ['"""', "'''"].find(mark => line.split(mark).length === 2);
         if (delimiter) quoted = delimiter;
-        current.push([key[1], delimiter ? { kind: 'scalar', value: '' } : value(key[2])]);
+        let raw = key[2];
+        // The lines an open array or inline table runs over, without their comments.
+        while (!delimiter && openBrackets(raw) > 0 && at + 1 < lines.length) raw += ` ${lines[++at].trim().replace(/\s+#[^"']*$/, '')}`;
+        current.push([key[1], delimiter ? { kind: 'scalar', value: '' } : value(raw)]);
     }
     return root.length ? { kind: 'map', entries: root } : undefined;
 }
