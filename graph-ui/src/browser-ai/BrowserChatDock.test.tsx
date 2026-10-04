@@ -930,7 +930,7 @@ describe('graph answers and answer limits', () => {
         const last = () => [...container.querySelectorAll('.cbm-chat-turn')].at(-1)!;
         await type('wer ruf jsonbagg auf'); await click('Send ↑');
         expect(runtime.chat).not.toHaveBeenCalled();
-        expect(last().querySelector('.cbm-chat-answer-text')?.textContent).toContain('Aufrufer von JSONBAgg im geladenen Graphen');
+        expect(last().querySelector('.cbm-chat-answer-text')?.textContent).toContain('11 Aufrufer (CALLS) von JSONBAgg im geladenen Graphen.');
         expect([...last().querySelectorAll('button.cbm-chat-retry')].map(item => item.textContent)).toEqual(['Modell fragen']);
         await type('jsonbagg aufrufe?'); await click('Send ↑');
         expect(runtime.chat).not.toHaveBeenCalled();
@@ -939,7 +939,7 @@ describe('graph answers and answer limits', () => {
         expect([...last().querySelectorAll('button.cbm-chat-retry')].map(item => item.textContent)).toEqual(['Liste anzeigen', 'Modell fragen']);
         await click('Liste anzeigen');
         expect(runtime.chat).not.toHaveBeenCalled();
-        expect(last().querySelector('.cbm-chat-answer-text')?.textContent).toContain('Aufrufer von JSONBAgg im geladenen Graphen');
+        expect(last().querySelector('.cbm-chat-answer-text')?.textContent).toContain('11 Aufrufer (CALLS) von JSONBAgg im geladenen Graphen.');
         for (const name of JSONB_AGG_CALLERS) expect(last().textContent).toContain(name);
         await type('jsonbagg calls'); await click('Send ↑');
         expect(last().querySelector('.cbm-chat-answer-text')?.textContent).toContain('Did you mean: what JSONBAgg calls?');

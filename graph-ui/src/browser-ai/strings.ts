@@ -74,11 +74,18 @@ const englishRelationshipWords = {
     notInScope: (label: string, kind: string) => `Selected: ${label} (${kind}); its symbols are not in the loaded scope.`,
     selectedGroup: (kind: string, label: string, count: number, listed: string, omitted: number) =>
         `Selected ${kind}: ${label} with ${en(count)} symbols: ${listed}${omitted > 0 ? `; +${en(omitted)} more` : ''}.`,
-    callersOf: (name: string) => `Callers of ${name} in the loaded graph`,
-    calleesOf: (name: string) => `What ${name} calls in the loaded graph`,
-    /** The total of a listed answer: "23 incoming relationships from 12 symbols", never "23 from 12" (C2). */
-    total: (side: 'incoming' | 'outgoing', total: number, symbols?: number) => `${en(total)} ${side} ${total === 1 ? 'relationship' : 'relationships'}`
+    /** The heading of a listed answer counts what it lists, the CALLS edges; every other relationship
+     * of that side is counted apart, so 23 relationships never head a list of 11 callers (W3). */
+    callers: (name: string, count: number) => `${en(count)} ${count === 1 ? 'caller' : 'callers'} (CALLS) of ${name} in the loaded graph.`,
+    callees: (name: string, count: number) => `${name} calls ${en(count)} ${count === 1 ? 'symbol' : 'symbols'} (CALLS) in the loaded graph.`,
+    all: (side: 'incoming' | 'outgoing', total: number, symbols?: number) => `All ${side}: ${en(total)} ${total === 1 ? 'relationship' : 'relationships'}`
         + `${symbols === undefined ? '' : ` ${side === 'incoming' ? 'from' : 'to'} ${en(symbols)} ${symbols === 1 ? 'symbol' : 'symbols'}`}.`,
+    /** Why a side cannot be listed; the reason follows. */
+    unlisted: (side: 'incoming' | 'outgoing', name: string) => side === 'incoming' ? `The callers of ${name} cannot be listed from this scope.`
+        : `What ${name} calls cannot be listed from this scope.`,
+    nothing: (side: 'incoming' | 'outgoing', name: string) => side === 'incoming' ? `${name} has no callers and no other incoming relationships in this scope.`
+        : `${name} calls nothing and has no other outgoing relationships in this scope.`,
+    cutListed: (side: 'incoming' | 'outgoing') => `The snapshot left the ${side} relationships out.`,
     /** One edge type of a listed answer with the number of its symbols: "TESTS (11)". */
     typeCount: (type: string, count: number) => `${type} (${en(count)})`,
     /** What an incoming DEFINES edge from a file, module or class says about the selection. */
@@ -86,7 +93,6 @@ const englishRelationshipWords = {
     noCalls: (name: string, side: 'incoming' | 'outgoing') => side === 'incoming'
         ? `No CALLS edge reaches ${name} in this scope.` : `${name} has no outgoing CALLS edge in this scope.`,
     otherRelationships: (side: 'incoming' | 'outgoing') => `Other ${side} relationships:`,
-    noRelationships: 'None in this scope.',
     notLoaded: (side: 'incoming' | 'outgoing'): string => side === 'incoming'
         ? 'The current scope does not follow incoming relationships. Trace incoming or both directions, then ask again.'
         : 'The current scope does not follow outgoing relationships. Trace outgoing or both directions, then ask again.',
@@ -141,10 +147,15 @@ export const relationshipWords: { en: RelationshipWords; de: RelationshipWords }
         notInScope: (label: string, kind: string) => `Ausgewählt: ${label} (${kind}); seine Symbole sind nicht im geladenen Ausschnitt.`,
         selectedGroup: (kind: string, label: string, count: number, listed: string, omitted: number) =>
             `Ausgewählt (${kind}): ${label} mit ${de(count)} Symbolen: ${listed}${omitted > 0 ? `; +${de(omitted)} weitere` : ''}.`,
-        callersOf: (name: string) => `Aufrufer von ${name} im geladenen Graphen`,
-        calleesOf: (name: string) => `Was ${name} im geladenen Graphen aufruft`,
-        total: (side: 'incoming' | 'outgoing', total: number, symbols?: number) => `${de(total)} ${side === 'incoming' ? 'eingehende' : 'ausgehende'} ${total === 1 ? 'Beziehung' : 'Beziehungen'}`
-            + `${symbols === undefined ? '' : ` ${side === 'incoming' ? 'aus' : 'zu'} ${de(symbols)} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
+        callers: (name: string, count: number) => `${de(count)} Aufrufer (CALLS) von ${name} im geladenen Graphen.`,
+        callees: (name: string, count: number) => `${name} ruft im geladenen Graphen ${de(count)} ${count === 1 ? 'Symbol' : 'Symbole'} auf (CALLS).`,
+        all: (side: 'incoming' | 'outgoing', total: number, symbols?: number) => `Alle ${side === 'incoming' ? 'eingehenden' : 'ausgehenden'}: ${de(total)} ${total === 1 ? 'Beziehung' : 'Beziehungen'}`
+            + `${symbols === undefined ? '' : ` ${side === 'incoming' ? 'von' : 'zu'} ${de(symbols)} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
+        unlisted: (side: 'incoming' | 'outgoing', name: string) => side === 'incoming' ? `Die Aufrufer von ${name} lassen sich aus diesem Ausschnitt nicht auflisten.`
+            : `Was ${name} aufruft, lässt sich aus diesem Ausschnitt nicht auflisten.`,
+        nothing: (side: 'incoming' | 'outgoing', name: string) => side === 'incoming' ? `${name} hat in diesem Ausschnitt keine Aufrufer und keine anderen eingehenden Beziehungen.`
+            : `${name} ruft in diesem Ausschnitt nichts auf und hat keine anderen ausgehenden Beziehungen.`,
+        cutListed: (side: 'incoming' | 'outgoing') => `Der Schnappschuss hat die ${side === 'incoming' ? 'eingehenden' : 'ausgehenden'} Beziehungen ausgelassen.`,
         typeCount: (type: string, count: number) => `${type} (${de(count)})`,
         definer: (kind: string, count: number, name: string) => {
             const noun = ({ file: ['die Datei', 'die Dateien'], module: ['das Modul', 'die Module'], class: ['die Klasse', 'die Klassen'] } as Record<string, string[]>)[kind.toLowerCase()]
@@ -153,8 +164,8 @@ export const relationshipWords: { en: RelationshipWords; de: RelationshipWords }
         },
         noCalls: (name: string, side: 'incoming' | 'outgoing') => side === 'incoming'
             ? `Keine CALLS-Kante führt in diesem Ausschnitt zu ${name}.` : `${name} hat in diesem Ausschnitt keine ausgehende CALLS-Kante.`,
-        otherRelationships: (side: 'incoming' | 'outgoing') => `Weitere ${side === 'incoming' ? 'eingehende' : 'ausgehende'} Beziehungen:`,
-        noRelationships: 'Keine in diesem Ausschnitt.',
+        /** "Andere": the types other than CALLS, also where no CALLS edge exists (W3). */
+        otherRelationships: (side: 'incoming' | 'outgoing') => `Andere ${side === 'incoming' ? 'eingehende' : 'ausgehende'} Beziehungen:`,
         notLoaded: (side: 'incoming' | 'outgoing') => side === 'incoming'
             ? 'Der aktuelle Ausschnitt folgt keinen eingehenden Beziehungen. Verfolge eingehend oder beide Richtungen und frage noch einmal.'
             : 'Der aktuelle Ausschnitt folgt keinen ausgehenden Beziehungen. Verfolge ausgehend oder beide Richtungen und frage noch einmal.',

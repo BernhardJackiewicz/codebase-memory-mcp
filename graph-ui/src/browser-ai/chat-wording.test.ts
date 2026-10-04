@@ -82,3 +82,43 @@ describe('relationship counts that read as counts, not as a score (W2)', () => {
         expect(selectionSummary(lonely, 'de').slice(1, 3)).toEqual(['Eingehend: keine Beziehungen in diesem Ausschnitt.', 'Ausgehend: keine Beziehungen in diesem Ausschnitt.']);
     });
 });
+
+describe('the heading of a listed caller or callee answer (W3)', () => {
+    const answer = (prompt: string, context = jsonbAggEvidence()) => relationshipAnswer(prompt, [context])!.markdown;
+    // Two callers of JSONBAgg with CALLS only, and three calls from it.
+    const calling = () => jsonbAggEvidence({ edges: [{ source: 100, target: 32360, type: 'CALLS' }, { source: 101, target: 32360, type: 'CALLS' },
+        { source: 32360, target: 7, type: 'CALLS' }, { source: 32360, target: 8, type: 'CALLS' }, { source: 32360, target: 9, type: 'CALLS' }, { source: 32360, target: 7, type: 'INHERITS' }] });
+
+    it('counts the callers it lists and gives all incoming relationships as a sentence of their own', () => {
+        expect(answer('Who calls JSONBAgg?').split('\n')[0]).toBe('11 callers (CALLS) of `JSONBAgg` in the loaded graph. All incoming: 23 relationships from 12 symbols.');
+        expect(answer('Wer ruft JSONBAgg auf?').split('\n')[0]).toBe('11 Aufrufer (CALLS) von `JSONBAgg` im geladenen Graphen. Alle eingehenden: 23 Beziehungen von 12 Symbolen.');
+        // With CALLS as the only type there is nothing more to count.
+        expect(answer('Who calls JSONBAgg?', calling()).split('\n')[0]).toBe('2 callers (CALLS) of `JSONBAgg` in the loaded graph.');
+    });
+
+    it('says what the selection calls as a full sentence, in English and German', () => {
+        expect(answer('What does JSONBAgg call?', calling()).split('\n')[0])
+            .toBe('`JSONBAgg` calls 3 symbols (CALLS) in the loaded graph. All outgoing: 4 relationships to 3 symbols.');
+        expect(answer('Was ruft JSONBAgg auf?', calling()).split('\n')[0])
+            .toBe('`JSONBAgg` ruft im geladenen Graphen 3 Symbole auf (CALLS). Alle ausgehenden: 4 Beziehungen zu 3 Symbolen.');
+        expect(answer('Was ruft JSONBAgg auf?').split('\n')[0])
+            .toBe('`JSONBAgg` hat in diesem Ausschnitt keine ausgehende CALLS-Kante. Ausgehend: 2 Beziehungen zu 2 Symbolen.');
+        expect(answer('What does JSONBAgg call?').split('\n')[0])
+            .toBe('`JSONBAgg` has no outgoing CALLS edge in this scope. Outgoing: 2 relationships to 2 symbols.');
+        expect(answer('Was ruft JSONBAgg auf?')).not.toContain('Was `JSONBAgg` im geladenen Graphen aufruft.');
+    });
+
+    it('heads the other edge types "Andere" in German, also right after "keine ausgehende CALLS-Kante"', () => {
+        expect(answer('Was ruft JSONBAgg auf?')).toContain('\n\nAndere ausgehende Beziehungen:\n- **INHERITS (2):**');
+        expect(answer('Wer ruft JSONBAgg auf?')).toContain('\n\nAndere eingehende Beziehungen:\n- **TESTS (11):**');
+        expect(answer('What does JSONBAgg call?')).toContain('\n\nOther outgoing relationships:\n- **INHERITS (2):**');
+        expect(answer('Wer ruft JSONBAgg auf?') + answer('Was ruft JSONBAgg auf?')).not.toContain('Weitere');
+    });
+
+    it('says in a full sentence why nothing is listed', () => {
+        expect(answer('Who calls JSONBAgg?', jsonbAggEvidence({ direction: 'outbound' })).split('\n')[0]).toMatch(/^The callers of `JSONBAgg` cannot be listed from this scope\. /);
+        expect(answer('Was ruft JSONBAgg auf?', jsonbAggEvidence({ direction: 'inbound' })).split('\n')[0]).toMatch(/^Was `JSONBAgg` aufruft, lässt sich aus diesem Ausschnitt nicht auflisten\. /);
+        expect(answer('Who calls JSONBAgg?', jsonbAggEvidence({ edges: [] })).split('\n')[0]).toBe('`JSONBAgg` has no callers and no other incoming relationships in this scope.');
+        expect(answer('Was ruft JSONBAgg auf?', jsonbAggEvidence({ edges: [] })).split('\n')[0]).toBe('`JSONBAgg` ruft in diesem Ausschnitt nichts auf und hat keine anderen ausgehenden Beziehungen.');
+    });
+});

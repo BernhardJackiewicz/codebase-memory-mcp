@@ -301,9 +301,9 @@ async function k16(page) {
     const luftCalls = await sentSince(page, luftMark);
     await shot(page, 'K16', 'luft-to-model', '"Hat diese Klasse Luft?" is not read as a call question: the model answers it.');
     const callers = ['test_default_argument', 'test_empty_result_set', 'test_jsonb_agg', 'test_values_list'];
-    check('K16', 'Typo caller questions are listed; uncertain ones are suggested in the right direction and language; no model call', /Aufrufer von JSONBAgg im geladenen Graphen/.test(typo)
-        && callers.every((name) => typo.includes(name)) && /Aufrufer von JSONBAgg im geladenen Graphen/.test(shortTypo) && /Meintest du: Aufrufer von JSONBAgg\?/.test(suggestion)
-        && JSON.stringify(germanButtons) === JSON.stringify(['Liste anzeigen', 'Modell fragen']) && /Aufrufer von JSONBAgg im geladenen Graphen/.test(listed)
+    check('K16', 'Typo caller questions are listed; uncertain ones are suggested in the right direction and language; no model call', /Aufrufer \(CALLS\) von JSONBAgg im geladenen Graphen/.test(typo)
+        && callers.every((name) => typo.includes(name)) && /Aufrufer \(CALLS\) von JSONBAgg im geladenen Graphen/.test(shortTypo) && /Meintest du: Aufrufer von JSONBAgg\?/.test(suggestion)
+        && JSON.stringify(germanButtons) === JSON.stringify(['Liste anzeigen', 'Modell fragen']) && /Aufrufer \(CALLS\) von JSONBAgg im geladenen Graphen/.test(listed)
         && JSON.stringify(listedButtons) === JSON.stringify(['Modell fragen']) && /Did you mean: what JSONBAgg calls\?/.test(direction)
         && JSON.stringify(englishButtons) === JSON.stringify(['Show the list', 'Ask the model']) && modelCalls.length === 0 && luftCalls.length === 1 && !/Meintest du|Did you mean/.test(luft),
     { typoAnswerStart: typo.slice(0, 120), shortTypo: shortTypo.slice(0, 120), suggestion: suggestion.slice(0, 200), germanButtons, afterShowList: listed.slice(0, 120), listedButtons,
@@ -324,10 +324,10 @@ async function k16(page) {
     await shot(page, 'K16', 'name-typo-listed', 'After "Show the list": the complete callers of JSONBAgg.');
     const typoModelCalls = (await sentSince(page, typoMark)).length;
     check('K16', 'A typo in the selected name (up to two letters, any case) is offered for the selection, a free word order with "wo" is listed; none of them reach the model',
-        orders.every((item) => /Aufrufer von JSONBAgg im geladenen Graphen/.test(item.answer) && callers.every((name) => item.answer.includes(name)))
+        orders.every((item) => /Aufrufer \(CALLS\) von JSONBAgg im geladenen Graphen/.test(item.answer) && callers.every((name) => item.answer.includes(name)))
         && typos.every((item) => item.language === 'de' ? /Meintest du: Aufrufer von JSONBAgg\?/.test(item.answer) && /ist nicht genau der Name der Auswahl/.test(item.answer)
             : /Did you mean: callers of JSONBAgg\?/.test(item.answer) && /is not exactly the name of the selection/.test(item.answer))
-        && /Callers of JSONBAgg in the loaded graph/.test(typoListed) && typoModelCalls === 0,
+        && /callers \(CALLS\) of JSONBAgg in the loaded graph/.test(typoListed) && typoModelCalls === 0,
     { orders: orders.map((item) => `${item.question} => ${item.answer.replace(/\s+/g, ' ').slice(0, 140)}`), typos: typos.map((item) => `${item.question} => ${item.answer.replace(/\s+/g, ' ').slice(0, 160)}`),
         afterShowList: typoListed.replace(/\s+/g, ' ').slice(0, 140), modelCalls: typoModelCalls });
 }
