@@ -190,11 +190,19 @@ export const browserChatText = {
     shortened: 'Token limit reached: the answer was cut short',
     /** What the expanded token-limit note says, with the limits the answer ran into. */
     limitReached: (input: number, output: number) => `This answer used all ${tokens(output)} output tokens it was allowed. The input limit is ${tokens(input)} tokens for the question, its source and earlier messages.`,
-    limitAutomatic: (automaticInput: number, automatic: number, input: number, output: number) => `Automatic explanations stop after ${tokens(automatic)} output tokens so they stay short, and read at most ${tokens(automaticInput)} input tokens of source and facts. A question in the chat may read up to ${tokens(input)} input tokens and answer with up to ${tokens(output)} output tokens.`,
+    /** `cap` is what automatic explanations write at most; below it they stop at the reader's own limit,
+     * which is no design choice to keep them short (W6). */
+    limitAutomatic: (automaticInput: number, automatic: number, input: number, output: number, cap: number) => `Automatic explanations stop after ${tokens(automatic)} output tokens`
+        + `${automatic < cap ? ', your output limit,' : ' so they stay short,'} and read at most ${tokens(automaticInput)} input tokens of source and facts. `
+        + `A question in the chat may read up to ${tokens(input)} input tokens and answer with up to ${tokens(output)} output tokens.${output > automatic ? ' Ask in the chat for a longer answer.' : ''}`,
+    automaticRoom: (cap: number) => `Raise the output limit in the agent configuration and automatic explanations can use up to ${tokens(cap)} output tokens.`,
     outputRoom: (output: number, max: number) => output < max ? `You can raise the output limit up to ${tokens(max)} tokens in the agent configuration.`
-        : `The output limit is at the maximum of ${tokens(max)} tokens for this model.`,
+        : `The output limit is at its maximum of ${tokens(max)} tokens.`,
+    /** At the maximum a larger model writes no longer answer: every model stops at the same limit (W6). */
+    narrower: (sameForLarger: boolean) => `${sameForLarger ? 'Larger models have the same limit. ' : ''}Ask about one part of the code, or ask for the rest of the answer.`,
     changeOutputLimit: 'Change the output limit',
-    largerModels: 'A larger model may stay closer to the question. Each needs a one-time download, and its memory use is higher than the download:',
+    largerModels: (sameLimit: boolean) => `A larger model may stay closer to the question${sameLimit ? ', but its output limit is the same' : ''}. `
+        + 'Each is a one-time download and needs more memory than its download size:',
     modelDownload: (name: string, size: string) => `${name} · ${size} download`,
     newConversation: 'New conversation',
     /** The model's state in the agent configuration (K10). */

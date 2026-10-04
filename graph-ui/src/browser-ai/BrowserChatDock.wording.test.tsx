@@ -6,6 +6,8 @@ import BrowserChatDock, { type BrowserChatDockProps, type BrowserChatReaderConte
 import type { BrowserAiProgress, BrowserChatMessage } from './browser-ai-runtime';
 import type { BrowserChatOptions } from './browser-ai-controller';
 import { jsonbAggEvidence } from './galaxy-evidence.fixture';
+import { AGENT_PREFERENCES_KEY } from './agent-preferences';
+import { BROWSER_MODELS } from './model-policy';
 
 /* The chat dock shows the wording of the third review (W5 to W10) where it builds it. */
 
@@ -86,5 +88,64 @@ describe('the note under a left out model sentence (W5)', () => {
         await render({ ...props, proactive: true, selectionScope: 'django-demo:explore', readerContext: reader('[metadata]\nname = demo\n', 'setup.cfg') }); await settle();
         await act(async () => button('Ask the model').click()); await settle();
         expect(card()).toContain('Read from the file. The model\'s text named something the file does not show (here: flake8) and was left out.');
+    });
+});
+
+describe('the token limit note (W6)', () => {
+    const outputLimit = (outputTokens: number) => window.localStorage.setItem(AGENT_PREFERENCES_KEY, JSON.stringify({ version: 1,
+        preferences: { modelId: BROWSER_MODELS[0].id, automatic: true, limits: { [BROWSER_MODELS[0].id]: { inputTokens: 2048, outputTokens } } } }));
+    const cut = (runtime: ReturnType<typeof fixture>['runtime'], text = 'A long answer that') => runtime.chat.mockImplementationOnce(async (_messages, _onToken, options) => {
+        options?.onComplete?.({ stopReason: 'length' }); return text;
+    });
+    const note = (scope: string) => container.querySelector<HTMLDetailsElement>(`${scope} details.cbm-chat-limit-note`);
+    const noteButtons = (scope: string) => [...note(scope)?.querySelectorAll('button') ?? []].map(item => item.textContent);
+
+    it('at the maximum says that larger models have the same limit and how to get the rest, without offering them', async () => {
+        const { props, runtime } = fixture(); cut(runtime);
+        await render({ ...props, proactiveSelection: jsonbAggEvidence() }); await load();
+        await ask('Explain this class in detail, line by line.');
+        const text = note('.cbm-chat-turn')?.textContent ?? '';
+        expect(text).toContain('The output limit is at its maximum of 512 tokens.');
+        expect(text).toContain('Larger models have the same limit. Ask about one part of the code, or ask for the rest of the answer.');
+        expect(text).not.toMatch(/A larger model|download/);
+        expect(note('.cbm-chat-turn')?.querySelectorAll('li')).toHaveLength(0);
+        expect(noteButtons('.cbm-chat-turn')).toEqual([]);
+    });
+
+    it('below the maximum offers the higher limit and lists larger models without promising a longer answer', async () => {
+        outputLimit(256);
+        const { props, runtime } = fixture(); cut(runtime);
+        await render({ ...props, proactiveSelection: jsonbAggEvidence() }); await load();
+        await ask('Explain this class in detail, line by line.');
+        const text = note('.cbm-chat-turn')?.textContent ?? '';
+        expect(text).toContain('You can raise the output limit up to 512 tokens in the agent configuration.');
+        expect(text).toContain('A larger model may stay closer to the question, but its output limit is the same. Each is a one-time download and needs more memory than its download size:');
+        expect(text).not.toContain('memory use is higher than the download');
+        expect(text).toContain('Qwen3 0.6B · 579 MB download');
+        expect(noteButtons('.cbm-chat-turn')).toEqual(['Change the output limit']);
+    });
+
+    it('under an automatic explanation offers a higher limit only below the 128 tokens it can use', async () => {
+        vi.useFakeTimers();
+        outputLimit(256);
+        const { props, runtime } = fixture(); cut(runtime, 'JSONBAgg sets the function to JSONB_AGG and');
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence() }); await load(); await settle();
+        const text = note('.cbm-chat-explanation')?.textContent ?? '';
+        expect(text).toContain('Automatic explanations stop after 128 output tokens so they stay short');
+        expect(text).toContain('Ask in the chat for a longer answer.');
+        expect(text).not.toMatch(/raise the output limit|A larger model/i);
+        expect(noteButtons('.cbm-chat-explanation')).toEqual([]);
+    });
+
+    it('does not call the reader\'s own lower limit a design choice', async () => {
+        vi.useFakeTimers();
+        outputLimit(32);
+        const { props, runtime } = fixture(); cut(runtime, 'JSONBAgg sets the function to JSONB_AGG and');
+        await render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence() }); await load(); await settle();
+        const text = note('.cbm-chat-explanation')?.textContent ?? '';
+        expect(text).toContain('Automatic explanations stop after 32 output tokens, your output limit, and read at most 1,536 input tokens of source and facts.');
+        expect(text).not.toContain('so they stay short');
+        expect(text).toContain('Raise the output limit in the agent configuration and automatic explanations can use up to 128 output tokens.');
+        expect(noteButtons('.cbm-chat-explanation')).toEqual(['Change the output limit']);
     });
 });

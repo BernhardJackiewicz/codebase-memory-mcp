@@ -98,17 +98,23 @@ function SourceDisclosure({ children, title }: { children?: ReactNode; title?: s
 }
 
 /** Where an answer stopped and what can be changed: the limits it ran into, the way to
- * the output limit and the larger models with their download. */
+ * the output limit and the larger models with their download. Only what helps is offered:
+ * an automatic explanation writes at most AUTO_OUTPUT_TOKENS whatever the limit, and at the
+ * maximum a larger model stops at the same limit (W6). */
 interface LimitNote { limit: TokenLimits; automatic?: boolean; chat: TokenLimits; model: BrowserModel; onChangeOutput: () => void }
 function TokenLimitNote({ limit, automatic, chat, model, onChangeOutput }: LimitNote): JSX.Element {
     const larger = BROWSER_MODELS.filter(candidate => candidate.availability === 'available' && candidate.bytes > model.bytes);
+    const sameLimit = larger.every(candidate => candidate.maxOutputTokens <= model.maxOutputTokens);
+    const atMaximum = chat.outputTokens >= model.maxOutputTokens;
+    const raise = automatic ? chat.outputTokens < AUTO_OUTPUT_TOKENS : !atMaximum;
     return <details className="cbm-chat-limit-note">
         <summary>{browserChatText.shortened}</summary>
-        <p>{automatic ? browserChatText.limitAutomatic(limit.inputTokens, limit.outputTokens, chat.inputTokens, chat.outputTokens) : browserChatText.limitReached(limit.inputTokens, limit.outputTokens)}</p>
-        <p>{browserChatText.outputRoom(chat.outputTokens, model.maxOutputTokens)}</p>
+        <p>{automatic ? browserChatText.limitAutomatic(limit.inputTokens, limit.outputTokens, chat.inputTokens, chat.outputTokens, AUTO_OUTPUT_TOKENS) : browserChatText.limitReached(limit.inputTokens, limit.outputTokens)}</p>
+        {automatic ? raise && <p>{browserChatText.automaticRoom(AUTO_OUTPUT_TOKENS)}</p> : <p>{browserChatText.outputRoom(chat.outputTokens, model.maxOutputTokens)}</p>}
+        {!automatic && atMaximum && sameLimit && <p>{browserChatText.narrower(larger.length > 0)}</p>}
         {/* At its maximum the limit cannot be raised, so there is nothing to change (C8). */}
-        {chat.outputTokens < model.maxOutputTokens && <button type="button" onClick={onChangeOutput}>{browserChatText.changeOutputLimit}</button>}
-        {larger.length > 0 && <><p>{browserChatText.largerModels}</p>
+        {raise && <button type="button" onClick={onChangeOutput}>{browserChatText.changeOutputLimit}</button>}
+        {!automatic && larger.length > 0 && (!atMaximum || !sameLimit) && <><p>{browserChatText.largerModels(sameLimit)}</p>
             <ul>{larger.map(candidate => <li key={candidate.id}>{browserChatText.modelDownload(candidate.displayName, sizeLabel(candidate.bytes))}</li>)}</ul></>}
     </details>;
 }
