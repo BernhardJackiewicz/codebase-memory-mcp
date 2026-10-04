@@ -641,7 +641,7 @@ describe('system architecture workspace', () => {
 /* Hand test 2026-10-04 (A3): "Refresh analysis" and the Behavior "Refresh" read again and said nothing. */
 describe('system architecture refresh feedback', () => {
     const refresh = (pattern: RegExp) => [...container.querySelectorAll('button')].find(element => pattern.test(element.textContent ?? ''))!;
-    const status = () => container.querySelector('[role="status"].atlas-arch-refresh-status')?.textContent;
+    const status = () => container.querySelector('[role="status"].atlas-refresh-status')?.textContent;
     afterEach(() => { vi.useRealTimers(); });
 
     it('A3: Refresh analysis is busy while it runs, then names the time and whether the index changed', async () => {
@@ -672,7 +672,7 @@ describe('system architecture refresh feedback', () => {
         vi.setSystemTime(new Date(2026, 9, 4, 18, 1, 0));
         const loader = vi.fn<SystemArchitectureLoader>().mockResolvedValue(response(overviewFixture()));
         await render(loader, { view: 'behavior' });
-        const button = () => container.querySelector<HTMLButtonElement>('.behavior-heading .atlas-arch-refresh button')!;
+        const button = () => container.querySelector<HTMLButtonElement>('.behavior-heading .atlas-refresh button')!;
         expect(button()?.textContent).toBe('Refresh');
         let finish!: (value: SystemArchitectureResponse) => void;
         loader.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));

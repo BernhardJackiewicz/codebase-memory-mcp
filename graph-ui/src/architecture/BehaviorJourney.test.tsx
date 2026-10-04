@@ -215,13 +215,16 @@ describe('Behavior start field', () => {
         const props = await render(fixture(), { entries, suggestedEntries: [1, 21] });
         await type('loaddata');
         expect(group(1).label).toBe('Matching operations · 1 of 4');
-        expect(options(1)).toEqual([`handle · ${LOADDATA}`, 'operation1 · src/part1.ts']);
+        expect(options(1)).toEqual([`handle · ${LOADDATA}`]);
+        // The chosen start stands apart while the filter does not match it (review of K43).
+        expect(group(0).label).toBe('Current start, not matching the filter');
         expect(options(0)).toEqual(['operation1 · src/part1.ts']);
         expect(select().value).toBe('1');
         await act(async () => { select().value = '22'; select().dispatchEvent(new Event('change', { bubbles: true })); });
         expect(props.onRequest).toHaveBeenLastCalledWith(expect.objectContaining({ id: 22, file_path: LOADDATA }), undefined, {});
         await type('no such operation');
-        expect(options(1)).toEqual(['operation1 · src/part1.ts', 'No operation matches "no such operation"']);
+        expect(options(0)).toEqual(['operation1 · src/part1.ts']);
+        expect(options(1)).toEqual(['No operation matches "no such operation"']);
         expect(group(1).querySelector('option:last-child')?.hasAttribute('disabled')).toBe(true);
     });
 });

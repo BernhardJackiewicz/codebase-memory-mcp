@@ -12,7 +12,9 @@
  *    the class is the same too, and their position when the index names
  *    neither;
  *  - a filter keeps the operations whose name, class or path contain every
- *    word typed, and always the chosen one, so the field can still show it.
+ *    word typed. The chosen one stays offered so the field can still show it,
+ *    and when it does not match it stands apart (`current`): among the matches
+ *    it made "5 of 61" a group of six (review of K43).
  */
 import type { SystemSymbol } from './system-architecture-source';
 import { architectureText } from './strings';
@@ -21,6 +23,8 @@ const text = architectureText.behaviorStart;
 
 export interface OperationChoice { id: number; label: string; symbol: SystemSymbol }
 export interface OperationChoices {
+    /** The chosen start while a filter it does not match is set; it is in neither list then. */
+    current?: OperationChoice;
     suggested: OperationChoice[];
     all: OperationChoice[];
     /** How many operations there are, and how many of them match the filter (the kept one only when it matches). */
@@ -71,13 +75,14 @@ export function operationChoices(entries: SystemSymbol[], { suggested = [], quer
     const words = query.toLocaleLowerCase().split(/\s+/).filter(Boolean);
     const matches = (entry: SystemSymbol) => words.every(word => `${labels.get(entry.id)} ${entry.qualified_name}`.toLocaleLowerCase().includes(word));
     const choice = (symbol: SystemSymbol): OperationChoice => ({ id: symbol.id, label: labels.get(symbol.id)!, symbol });
-    const shown = (entry: SystemSymbol) => entry.id === keep || matches(entry);
     const byId = new Map(entries.map(entry => [entry.id, entry]));
     const offered = [...new Set(suggested)].filter(id => byId.has(id));
+    const kept = keep === undefined ? undefined : byId.get(keep);
     return {
+        ...(kept && !matches(kept) ? { current: choice(kept) } : {}),
         // Suggestions that name every operation would only repeat the list.
-        suggested: offered.length >= entries.length ? [] : offered.flatMap(id => shown(byId.get(id)!) ? [choice(byId.get(id)!)] : []),
-        all: entries.filter(shown).sort(compare).map(choice),
+        suggested: offered.length >= entries.length ? [] : offered.flatMap(id => matches(byId.get(id)!) ? [choice(byId.get(id)!)] : []),
+        all: entries.filter(matches).sort(compare).map(choice),
         total: entries.length,
         matching: entries.filter(matches).length,
     };

@@ -57,6 +57,31 @@ export function screenBlockers(host: ParentNode): ScreenRect[] {
 /* Nur jedes dritte Bild: die Lage der Namen aendert sich mit der Kamera, nicht schneller. */
 const PLACE_EVERY_FRAMES = 3;
 
+/**
+ * Wo die Kantenlabels des Pfades stehen, in der Reihenfolge des Pfades, und
+ * welches keinen Platz bekommt.
+ *
+ * Review zu K30: fand ein Label keinen freien Platz, stand es dort, wo es am
+ * wenigsten verdeckte, und das konnte die Ueberschrift des Bandes der
+ * Hierarchie sein (ein breiter Titel ueber einer steilen Kante). Wie die
+ * Kantenschilder der Hierarchie (HierarchyEdgeLabels.tsx) faellt es jetzt
+ * weg, statt zwei Texte unlesbar zu machen: die Art der Kante steht weiter in
+ * der Schrittliste, und mit der naechsten Kamera kommt es wieder, sobald es
+ * frei steht. Ein spaeteres Label weicht den frueheren aus wie den Namen.
+ */
+export function pathLabelSpots(labels: readonly { index: number; from: { x: number; y: number }; to: { x: number; y: number }; size: { width: number; height: number } }[],
+    blockers: readonly ScreenRect[]): Map<number, { t: number; rect: ScreenRect }> {
+    const placed: ScreenRect[] = [];
+    const spots = new Map<number, { t: number; rect: ScreenRect }>();
+    for (const { index, from, to, size } of labels) {
+        const choice = placeAlongSegment(from, to, size, blockers, placed);
+        if (choice.overlap > 0) continue;
+        placed.push(choice.rect);
+        spots.set(index, { t: choice.t, rect: choice.rect });
+    }
+    return spots;
+}
+
 export function PathLayer({ nodes, path, namedRoots }: {
     nodes: readonly GraphNode[];
     path: ScenePath;
@@ -90,6 +115,8 @@ export function PathLayer({ nodes, path, namedRoots }: {
 
     const groups = useRef(new Map<number, THREE.Group>());
     const labels = useRef(new Map<number, HTMLElement>());
+    // Die Groesse eines Labels nach seinem Text: ein weggelassenes Label (display: none) hat keine, die man messen koennte.
+    const sizes = useRef(new Map<string, { width: number; height: number }>());
     const camera = useThree((state) => state.camera);
     const gl = useThree((state) => state.gl);
     // drei hangs Html into the element the events are connected to, not into the canvas parent.
@@ -106,17 +133,28 @@ export function PathLayer({ nodes, path, namedRoots }: {
             scratch.point.set(node.x, node.y, node.z).project(camera);
             return { x: box.left + ((scratch.point.x + 1) / 2) * box.width, y: box.top + ((1 - scratch.point.y) / 2) * box.height };
         };
-        const placed: ScreenRect[] = [];
-        for (const { index, from, to } of labelled) {
+        const measured = labelled.flatMap(({ step, index, from, to }) => {
             const group = groups.current.get(index), label = labels.current.get(index);
-            if (!group || !label || label.offsetWidth === 0) continue;
-            const a = toScreen(from), b = toScreen(to);
-            const choice = placeAlongSegment(a, b, { width: label.offsetWidth, height: label.offsetHeight }, blockers, placed);
-            placed.push(choice.rect);
-            group.position.lerpVectors(scratch.from.set(from.x, from.y, from.z), scratch.to.set(to.x, to.y, to.z), choice.t);
+            if (!group || !label) return [];
+            let size = sizes.current.get(step.edge.type);
+            if (!size) {
+                label.style.display = '';
+                size = { width: label.offsetWidth, height: label.offsetHeight };
+                if (size.width === 0) return [];
+                sizes.current.set(step.edge.type, size);
+            }
+            return [{ index, group, label, from, to, a: toScreen(from), b: toScreen(to), size }];
+        });
+        const spots = pathLabelSpots(measured.map(({ index, a, b, size }) => ({ index, from: a, to: b, size })), blockers);
+        for (const { index, group, label, from, to, a, b } of measured) {
+            const spot = spots.get(index);
+            const display = spot ? '' : 'none';
+            if (label.style.display !== display) label.style.display = display;
+            if (!spot) continue;
+            group.position.lerpVectors(scratch.from.set(from.x, from.y, from.z), scratch.to.set(to.x, to.y, to.z), spot.t);
             // The side step from placeAlongSegment, applied in screen space around the point on the edge.
-            const dx = (choice.rect.left + choice.rect.right) / 2, dy = (choice.rect.top + choice.rect.bottom) / 2;
-            const onEdge = { x: a.x + (b.x - a.x) * choice.t, y: a.y + (b.y - a.y) * choice.t };
+            const dx = (spot.rect.left + spot.rect.right) / 2, dy = (spot.rect.top + spot.rect.bottom) / 2;
+            const onEdge = { x: a.x + (b.x - a.x) * spot.t, y: a.y + (b.y - a.y) * spot.t };
             label.style.transform = `translate(${dx - onEdge.x}px, ${dy - onEdge.y}px)`;
         }
     });

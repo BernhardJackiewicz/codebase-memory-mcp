@@ -64,9 +64,11 @@ describe('Behavior start choices (A4)', () => {
     it('narrows to the operations that match every word of the filter, and keeps the chosen one', () => {
         expect(labels(operationChoices(scouted, { query: 'loaddata' }).all)).toEqual(['handle · django/core/management/commands/loaddata.py']);
         expect(operationChoices(scouted, { query: 'handle  MIGRATE' }).all.map(item => item.id)).toEqual([5]);
+        // The chosen start that does not match stands apart (review of K43), so the matches hold what their count says.
         const kept = operationChoices(scouted, { query: 'loaddata', keep: 1, suggested: [1, 3] });
-        expect(kept.all.map(item => item.id)).toEqual([4, 1]);
-        expect(kept.suggested.map(item => item.id)).toEqual([1]);
+        expect(kept.all.map(item => item.id)).toEqual([4]);
+        expect(kept.suggested.map(item => item.id)).toEqual([]);
+        expect(kept.current?.id).toBe(1);
         expect(kept.matching).toBe(1);
         // A chosen start that matches counts as a match (measured in the browser: "0 of 61" after picking loaddata).
         expect(operationChoices(scouted, { query: 'loaddata', keep: 4 }).matching).toBe(1);

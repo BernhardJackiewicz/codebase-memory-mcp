@@ -112,6 +112,9 @@
  *     Wurzel und ihre direkten Nachbarn). Ohne die Prop wie vorher.
  * 22. Neu (Handtest 2026-10-04, G1): die Huelle des Canvas bildet ihren
  *     eigenen Stapelkontext (`isolation: isolate`). Siehe `CANVAS_STYLE`.
+ * 23. Neu (Review zu K29): neben der Huelle steht die Ebene der Hover-Karten,
+ *     damit eine Karte ueber den Flaechen der Galaxie steht und nicht wie die
+ *     Namen darunter. Siehe hover-layer.tsx.
  */
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -136,6 +139,7 @@ import { FRAME_WINDOW_MS, recordFrameWindow, recordSceneFacts } from './frame-ra
 import { springStep } from '../agents/agent-motion';
 import type { GraphData, GraphNode } from './types';
 import { COVERAGE_SHADOW_COLOR, coverageShadowPositions, resolveCoverageShadowNode } from './coverage-shadow';
+import { HOVER_LAYER_STYLE, HoverLayerContext } from './hover-layer';
 import type { CoverageShadow, CoverageShadowNode } from './coverage-shadow';
 import {
     DEFAULT_DISPLAY_SETTINGS,
@@ -1106,8 +1110,10 @@ export function GraphScene({
      * Beweislaeufe von W3 bis W9 gemessen haben.
      */
     const frameloop = !active ? 'never' : frameCap > 0 ? 'never' : 'always';
+    /* Aenderung 23: die Hover-Karten zeichnen ausserhalb der Huelle in diese Ebene. */
+    const [hoverLayer, setHoverLayer] = useState<HTMLDivElement | null>(null);
 
-    return (
+    return (<>
         <Canvas
             {...background}
             frameloop={frameloop}
@@ -1171,8 +1177,10 @@ export function GraphScene({
             </group>}
 
             {overlay}
-            {hovered && renderTooltip !== undefined && renderTooltip(hovered)}
-            {resolveCoverageShadowNode(renderedShadow, hoveredShadow) && hoveredShadow && renderShadowTooltip?.(hoveredShadow)}
+            <HoverLayerContext.Provider value={hoverLayer}>
+                {hovered && renderTooltip !== undefined && renderTooltip(hovered)}
+                {resolveCoverageShadowNode(renderedShadow, hoveredShadow) && hoveredShadow && renderShadowTooltip?.(hoveredShadow)}
+            </HoverLayerContext.Provider>
 
             <CameraAnimator target={sceneTarget} controlsRef={controlsRef} flat={flat} />
             <FitContainment nodes={renderedNodes} target={sceneTarget} controlsRef={controlsRef} moved={moved}
@@ -1229,7 +1237,8 @@ export function GraphScene({
             />
             {flat && <FlatTarget box={flatBox} controlsRef={controlsRef} />}
         </Canvas>
-    );
+        <div ref={setHoverLayer} data-testid="atlas-galaxy-hover-layer" style={HOVER_LAYER_STYLE} />
+    </>);
 }
 
 /*

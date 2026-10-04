@@ -171,6 +171,8 @@ export const galaxyLayerText = {
     },
     expandPartial: 'This layer stopped loading after it passed the render limit, so there is no complete edge to grow from. Raise the limit under Limits first.',
     expandEnd: 'End of trace: no relationship leads further.',
+    /** Review of K31: Expand +1 is blocked while a layer loads, and says why. */
+    expandLoading: (layer: number) => `Layer ${layer} is loading; "−" cancels it.`,
 };
 
 /** Compact toolbar words, so the scoped toolbar keeps to one row at 1600 px. */

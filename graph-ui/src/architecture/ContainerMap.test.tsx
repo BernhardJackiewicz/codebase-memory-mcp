@@ -79,7 +79,7 @@ describe('service map interactions', () => {
 /* Hand test 2026-10-04 (A3): a Refresh that reads everything again says so, and says what it found. */
 describe('service map refresh feedback', () => {
     const refresh = () => [...container.querySelectorAll('button')].find(element => /^Refresh(ing…)?$/.test(element.textContent ?? ''))!;
-    const status = () => container.querySelector('[role="status"].atlas-arch-refresh-status')?.textContent;
+    const status = () => container.querySelector('[role="status"].atlas-refresh-status')?.textContent;
     afterEach(() => { vi.useRealTimers(); });
 
     it('A3: reads the declared services again, busy meanwhile, then names the time and whether anything changed', async () => {

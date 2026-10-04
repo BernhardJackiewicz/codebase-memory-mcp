@@ -16,7 +16,7 @@
  */
 
 import type { JSX } from 'react';
-import { Html } from '@react-three/drei';
+import { HoverCardHtml } from './hover-layer';
 import type { GraphNode } from './types';
 
 /** Der Zeilenbereich, wenn das Layout einen fuehrt. */
@@ -60,11 +60,8 @@ export function NodeTooltipCard({ node }: { node: GraphNode }): JSX.Element {
     const rows = tooltipRows(node);
     const lines = lineRangeOf(node);
     return (
-        <Html
-            position={[node.x, node.y + node.size * 0.7, node.z]}
-            center
-            style={{ pointerEvents: 'none' }}
-        >
+        /* Review zu K29: in der Ebene der Hover-Karten, ueber den Flaechen der Galaxie (hover-layer.tsx). */
+        <HoverCardHtml position={[node.x, node.y + node.size * 0.7, node.z]}>
             <div className="atlas-galaxy-card" data-testid="atlas-galaxy-card">
                 <div className="atlas-galaxy-card-head">
                     <span className="atlas-galaxy-card-dot" style={{ backgroundColor: node.color }} />
@@ -92,7 +89,7 @@ export function NodeTooltipCard({ node }: { node: GraphNode }): JSX.Element {
                 )}
                 <p className="atlas-galaxy-card-action">{tooltipAction(node)}</p>
             </div>
-        </Html>
+        </HoverCardHtml>
     );
 }
 

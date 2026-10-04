@@ -2369,8 +2369,8 @@ button.atlas-galaxy-legend-swatch:hover {
 /*
  * Der Weg zurueck zur eingepassten Ansicht (W10b, AC5).
  *
- * Oben rechts in der Szene, halbtransparent, in derselben Schrift wie alles
- * hier. Er liegt bewusst IM Bild und nicht im Kopf: die Kopfzeile ist bei 440
+ * Oben rechts in der Szene, deckend (Review zu K29: durch 82 % schien ein
+ * Name der Szene hindurch), in derselben Schrift wie alles hier. Er liegt bewusst IM Bild und nicht im Kopf: die Kopfzeile ist bei 440
  * Pixeln Breite voll (siehe .atlas-galaxy-head-row), und ein Wort mehr darin
  * haette den Zuklapper abgeschnitten. Die andere Ecke gehoert dem Instrument
  * der Agentenebene, also stehen sich die beiden nie im Weg.
@@ -2382,7 +2382,7 @@ button.atlas-galaxy-legend-swatch:hover {
     z-index: 3;
     padding: 1px 6px;
     border: 1px solid var(--atlas-line);
-    background: rgb(10 14 13 / 82%);
+    background: rgb(10 14 13);
     color: var(--atlas-dim);
     font: inherit;
     font-size: 11px;
@@ -5881,8 +5881,9 @@ button.atlas-settings-model-pick:focus-visible {
 /*
  * Das Instrument unten rechts.
  *
- * Halbtransparent ueber dem Graphen, in derselben Schrift und mit denselben
- * duennen Raendern wie der Rest der Oberflaeche. Kein Glassmorphism: keine
+ * Deckend ueber dem Graphen (Review zu K29: durch eine halbtransparente
+ * Flaeche schienen die Namen der Szene hindurch), in derselben Schrift und mit
+ * denselben duennen Raendern wie der Rest der Oberflaeche. Kein Glassmorphism: keine
  * Weichzeichnung, kein Verlauf, kein runder Kasten. Was hier "fancy" ist, kommt
  * aus dem Licht der Koerper daneben und nicht aus der Flaeche.
  */
@@ -5897,7 +5898,7 @@ button.atlas-settings-model-pick:focus-visible {
     max-width: calc(100% - 16px);
     max-height: calc(100% - 16px);
     border: 1px solid var(--atlas-line);
-    background: rgb(10 14 13 / 88%);
+    background: rgb(10 14 13);
     color: var(--atlas-fg);
     font-family: var(--atlas-font);
     font-size: 11px;
@@ -6342,7 +6343,7 @@ button.atlas-settings-model-pick:focus-visible {
     margin: 0 0 2px;
     padding: 2px 8px;
     border: 1px solid var(--atlas-line);
-    background: rgb(10 14 13 / 88%);
+    background: rgb(10 14 13);
     color: var(--atlas-agent-color, var(--atlas-fg));
     font-size: 11px;
     white-space: nowrap;
@@ -6366,7 +6367,7 @@ button.atlas-settings-model-pick:focus-visible {
     gap: 2px;
     padding: 3px 8px 4px;
     border-top: 1px solid var(--atlas-line);
-    background: rgb(10 14 13 / 92%);
+    background: rgb(10 14 13);
     font-family: var(--atlas-font);
     font-size: 10px;
 }

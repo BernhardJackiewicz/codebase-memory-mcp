@@ -2,6 +2,8 @@ import { useEffect, useId, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { evidenceTarget, fetchSelectionImpact } from './selection-impact';
 import type { SelectionImpact, SelectionImpactFinding, SelectionImpactTarget } from './selection-impact';
+import { FILE_IMPACT_REFRESH } from './impact-strings';
+import { RefreshControl, useRefreshFeedback } from '../ui/refresh/refresh-feedback';
 import './file-impact-summary.css';
 
 export interface FileImpactSummaryProps {
@@ -63,6 +65,8 @@ function countLabel(count: number, noun: string, incomplete = false): string {
 export default function FileImpactSummary({ project, target, onOpen, expectedGeneration,
     load = fetchSelectionImpact }: FileImpactSummaryProps): JSX.Element {
     const [reading, setReading] = useState<Reading>();
+    // The last ready evidence and the selection it belongs to: a refresh of the same selection shows it until the new one is there.
+    const [lastReady, setLastReady] = useState<{ key: string; data: SelectionImpact }>();
     const [retry, setRetry] = useState({ key: '', count: 0 });
     const [expandedKey, setExpandedKey] = useState('');
     const [limits, setLimits] = useState({ key: '', files: 6, history: 4 });
@@ -74,12 +78,21 @@ export default function FileImpactSummary({ project, target, onOpen, expectedGen
     // Bind every state (including errors) before effects run; a newly selected
     // file or symbol must never inherit the previous selection's evidence.
     const current = reading?.key === requestKey ? reading : undefined;
-    const data = current?.status === 'ready' ? current.data : undefined;
+    const waiting = !current || ['loading', 'pending', 'busy'].includes(current.status);
+    /*
+     * Review of K42: Refresh folded the details into "Reading dependencies…"
+     * and then showed the same numbers, with nothing left to say that it had
+     * run. A refresh of the same selection keeps the last evidence on screen,
+     * the button says that it runs, and the status beside it says when and
+     * whether anything changed. Another selection never shows it.
+     */
+    const kept = waiting && lastReady?.key === selectionKey ? lastReady.data : undefined;
+    const data = current?.status === 'ready' ? current.data : kept;
     const aggregate = useMemo(() => data ? aggregateFileImpact(data) : undefined, [data]);
     const expanded = expandedKey === selectionKey;
     const fileLimit = limits.key === selectionKey ? limits.files : 6;
     const historyLimit = limits.key === selectionKey ? limits.history : 4;
-    const refresh = (): void => setRetry(value => ({ key: selectionKey,
+    const retryNow = (): void => setRetry(value => ({ key: selectionKey,
         count: value.key === selectionKey ? value.count + 1 : 1 }));
 
     useEffect(() => {
@@ -98,6 +111,7 @@ export default function FileImpactSummary({ project, target, onOpen, expectedGen
                     if (reply.project !== project || reply.file_path !== file)
                         throw new Error('The response belongs to another selection.');
                     setReading({ key: requestKey, status: 'ready', data: reply });
+                    setLastReady({ key: selectionKey, data: reply });
                 } else if (reply.status === 'failed') {
                     setReading({ key: requestKey, status: 'failed', error: reply.error });
                 } else if (attempts < 80) {
@@ -111,7 +125,12 @@ export default function FileImpactSummary({ project, target, onOpen, expectedGen
         };
         void read();
         return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer); };
-    }, [project, file, qualifiedName, id, load, requestKey, retryCount]);
+    }, [project, file, qualifiedName, id, load, requestKey, retryCount, selectionKey]);
+    // What counts as a change: the evidence shown, not the time stamp of its computation.
+    const refresh = useRefreshFeedback({ key: requestKey, settled: !waiting, error: current?.status === 'failed' ? '' : undefined,
+        value: data && aggregate ? { generation: data.snapshot.generation, revision: data.snapshot.index_revision, direct: data.structural.direct,
+            files: aggregate.files.map(row => [row.filePath, row.distance, row.symbols, row.testCandidate]), cochanges: aggregate.cochanges.map(row => [row.file_path, row.shared_commits]),
+            commits: data.history.selection_commits } : undefined });
 
     const notes: string[] = [];
     if (data && aggregate) {
@@ -130,10 +149,10 @@ export default function FileImpactSummary({ project, target, onOpen, expectedGen
         <div className="file-impact-summary-row">
             <span className="file-impact-summary-label" title={file}>{scope} impact</span>
             {!file && <span className="file-impact-summary-muted">Select a file to see its dependents.</span>}
-            {file && (!current || ['loading', 'pending', 'busy'].includes(current.status))
+            {file && waiting && !kept
                 && <span role="status" className="file-impact-summary-muted">{current?.status === 'busy' ? 'Waiting for local analysis…' : 'Reading dependencies…'}</span>}
             {current?.status === 'failed' && <><span role="alert" className="file-impact-summary-warning"
-                title={current.error}>Impact unavailable</span><button type="button" onClick={refresh}>Retry</button></>}
+                title={current.error}>Impact unavailable</span><button type="button" onClick={retryNow}>Retry</button></>}
             {data && aggregate && <>
                 <div className="file-impact-summary-metrics">
                     {data.structural.available ? <>
@@ -174,7 +193,7 @@ export default function FileImpactSummary({ project, target, onOpen, expectedGen
                 </section>
             </div>
             <footer><span>Indexed calls/imports · up to {data.structural.max_depth} hops. Test files are candidates; Git co-changes are associations.</span>
-                <button type="button" onClick={refresh}>Refresh</button></footer>
+                <RefreshControl labels={FILE_IMPACT_REFRESH} feedback={refresh.feedback} onRefresh={() => { refresh.begin(); retryNow(); }} /></footer>
         </div>}
     </section>;
 }

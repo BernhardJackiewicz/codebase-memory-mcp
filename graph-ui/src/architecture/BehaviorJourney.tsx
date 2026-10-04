@@ -7,7 +7,7 @@ import { useLiftedPlace, useOnIdentityChange } from './lifted-place';
 import type { SystemProjection, SystemSymbol } from './system-architecture-source';
 import BehaviorSourceEvidence, { type BehaviorSourceSnapshot } from './BehaviorSourceEvidence';
 import { useSelectionEvidence, type SelectionEvidenceListener } from '../galaxy/selection-evidence';
-import { RefreshControl, type RefreshFeedback } from './refresh-feedback';
+import { RefreshControl, type RefreshFeedback } from '../ui/refresh/refresh-feedback';
 import { operationChoices } from './operation-choices';
 import './behavior-journey.css';
 
@@ -181,6 +181,7 @@ export default function BehaviorJourney({ project, generation, data, entries, ta
                 <input type="search" aria-label={startText.filter} placeholder={startText.filterPlaceholder} value={startQuery} onChange={event => setStartQuery(event.target.value)} />
                 <select aria-label={startText.field} value={entry?.id ?? ''} onChange={event => request(availableEntries.find(item => item.id === Number(event.target.value)))}>
                     <option value="">{startText.choose}</option>
+                    {startChoices.current && <optgroup label={startText.current}><option value={startChoices.current.id}>{startChoices.current.label}</option></optgroup>}
                     {startChoices.suggested.length > 0 && <optgroup label={startText.suggested}>{startChoices.suggested.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</optgroup>}
                     <optgroup label={startQuery.trim() ? startText.matching(startChoices.matching, startChoices.total) : startText.all(startChoices.total)}>
                         {startChoices.all.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}

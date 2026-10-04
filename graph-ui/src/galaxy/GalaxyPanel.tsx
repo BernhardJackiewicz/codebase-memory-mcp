@@ -135,6 +135,7 @@ import { GraphScene, computeCameraTarget, computeFitTarget, computeFrameTarget }
 import type { CameraTarget } from './GraphScene';
 import type { LabelBox } from './NodeLabels';
 import { NodeTooltipCard } from './NodeTooltipCard';
+import { HoverCardHtml } from './hover-layer';
 import GalaxyNavigator from './GalaxyNavigator';
 import { TraceEdgeFilter } from './TraceEdgeFilter';
 import { PathPicker, PathSteps } from './ScopePathControls';
@@ -2112,7 +2113,9 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     const expandPast = expandOutlook && expandPastLimit(expandOutlook);
     const expandWarning = Boolean(expandPast);
     const expandBlocked = Boolean(scope.loading || scope.result?.exhausted || scope.result?.partial);
-    const expandTitle = partial ? galaxyLayerText.expandPartial : scope.result?.exhausted ? galaxyLayerText.expandEnd
+    // Review zu K31: gesperrt heisst immer mit Grund, auch waehrend eine Ebene laedt.
+    const expandTitle = scope.loading ? galaxyLayerText.expandLoading(scope.depth)
+        : partial ? galaxyLayerText.expandPartial : scope.result?.exhausted ? galaxyLayerText.expandEnd
         : expandOutlook ? galaxyLayerText.expandHint(expandOutlook, expandPast) : undefined;
 
     /*
@@ -2919,9 +2922,9 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                             props.onSelectShadowNode?.(node);
                             setNote(`${node.file_path ?? node.name}: coverage shadow. Detailed indexing reasons are not included in this layout.`);
                         }}
-                        renderShadowTooltip={(node) => <Html position={[node.x, node.y, node.z]} center style={{ pointerEvents: 'none' }}>
+                        renderShadowTooltip={(node) => <HoverCardHtml position={[node.x, node.y, node.z]}>
                             <div className="atlas-coverage-tooltip"><b>{node.file_path ?? node.name}</b><p>Coverage shadow: not fully indexed.</p></div>
-                        </Html>}
+                        </HoverCardHtml>}
                         onBackgroundClick={handleBackgroundClick}
                         renderTooltip={(node) => <NodeTooltipCard node={node} />}
                         overlay={overlay}
@@ -2943,9 +2946,9 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                   * Das Instrument liegt IM Kasten der Szene und nicht darunter:
                   * es erklaert, was auf dem Graphen zu sehen ist, und ein Kasten
                   * daneben waere eine zweite Flaeche, die man zwischen Bild und
-                  * Text hin und her lesen muesste. Es ist halbtransparent und
-                  * faengt seine eigenen Klicks ab; der Rest der Flaeche bleibt
-                  * die Szene.
+                  * Text hin und her lesen muesste. Es ist deckend (Review zu
+                  * K29) und faengt seine eigenen Klicks ab; der Rest der Flaeche
+                  * bleibt die Szene.
                   */}
                 {liveOn && agentsView !== undefined && props.agents !== undefined && (
                     <AgentsHud

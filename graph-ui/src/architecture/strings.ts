@@ -108,6 +108,8 @@ export const architectureText = {
         filter: 'Filter operations',
         filterPlaceholder: 'Filter operations…',
         suggested: 'Suggested',
+        /** The chosen start while the filter does not match it (review of K43): apart from the matches, so their count holds. */
+        current: 'Current start, not matching the filter',
         all: (total: number) => `All operations · ${total.toLocaleString()}`,
         matching: (shown: number, total: number) => `Matching operations · ${shown.toLocaleString()} of ${total.toLocaleString()}`,
         none: (query: string) => `No operation matches "${query}"`,
@@ -117,14 +119,14 @@ export const architectureText = {
         line: (place: string, line: number) => `${place}:${line}`,
         ordinal: (index: number, count: number) => ` (${index} of ${count})`,
     },
-    /** Each Refresh button says what it did (hand test 2026-10-04, A3): busy while it runs, then when, and whether anything changed. */
+    /** The camera button of the maps: back to the whole map. */
+    fitMap: 'Fit map',
+    /** Each Refresh button says what it did (hand test 2026-10-04, A3): busy while it runs, then when (shared words in ui/refresh/strings.ts). */
     refreshFeedback: {
         routes: { idle: 'Refresh connections', busy: 'Refreshing connections…', done: (time: string) => `Connections refreshed at ${time}` },
         services: { idle: 'Refresh', busy: 'Refreshing…', done: (time: string) => `Service map refreshed at ${time}` },
         structure: { idle: 'Refresh analysis', busy: 'Refreshing analysis…', done: (time: string) => `Analysis refreshed at ${time}` },
         behavior: { idle: 'Refresh', busy: 'Refreshing…', done: (time: string) => `Journey refreshed at ${time}` },
-        unchanged: (time: string) => `Up to date at ${time}: no changes since the last load`,
-        failed: (time: string, error: string) => `Refresh failed at ${time}: ${error}`,
     },
 };
 
