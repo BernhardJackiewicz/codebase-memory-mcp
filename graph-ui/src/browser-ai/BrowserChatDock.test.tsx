@@ -139,7 +139,7 @@ describe('persistent local browser chat', () => {
     it('sends exact selection text once and keeps its immutable snapshot for the sent turn', async () => {
         const { props, runtime } = fixture();
         const original = { ...selection };
-        await render({ ...props, attachment: original }); await click('Download & load'); await type('Explain this part'); await click('Send ↑');
+        await render({ ...props, attachment: original }); await click('Download & load'); await type('How is this part computed?'); await click('Send ↑');
         const sent = runtime.chat.mock.calls[0][0].at(-1)!;
         expect(attachmentData(sent)).toMatchObject({ path: selection.path, sourceVersion: selection.sourceVersion });
         expect(sent.content.includes(selection.text)).toBe(true);
@@ -172,7 +172,7 @@ describe('persistent local browser chat', () => {
 
     it('retries the same request and attachment without consuming a new selection', async () => {
         const { props, runtime } = fixture(); runtime.chat.mockRejectedValueOnce(new Error('GPU interrupted'));
-        await render({ ...props, attachment: selection }); await click('Download & load'); await type('Explain'); await click('Send ↑');
+        await render({ ...props, attachment: selection }); await click('Download & load'); await type('How is it computed?'); await click('Send ↑');
         const request = runtime.chat.mock.calls[0][0];
         expect(container.textContent).toContain('GPU interrupted');
         await render({ ...props, attachment: { ...selection, id: 'new-selection', text: 'new source' } });
@@ -186,7 +186,7 @@ describe('persistent local browser chat', () => {
         const { props, runtime } = fixture();
         const answer = deferred<string>(); let stream!: (chunk: string) => void;
         runtime.chat.mockImplementationOnce((_messages, onToken) => { stream = onToken; return answer.promise; });
-        await render({ ...props, attachment: selection }); await click('Download & load'); await type('Explain'); await click('Send ↑');
+        await render({ ...props, attachment: selection }); await click('Download & load'); await type('How is it computed?'); await click('Send ↑');
         await act(async () => stream('First part.')); await click('Stop');
         expect(runtime.stop).toHaveBeenCalledOnce(); expect(button('Stopping…').disabled).toBe(true);
         await type('Next question');
@@ -238,7 +238,7 @@ describe('persistent local browser chat', () => {
     it('does not move scroll position while the reader is inspecting earlier output', async () => {
         const { props, runtime } = fixture(); const answer = deferred<string>(); let stream!: (chunk: string) => void;
         runtime.chat.mockImplementationOnce((_messages, onToken) => { stream = onToken; return answer.promise; });
-        await render({ ...props, attachment: selection }); await click('Download & load'); await type('Explain'); await click('Send ↑');
+        await render({ ...props, attachment: selection }); await click('Download & load'); await type('How is it computed?'); await click('Send ↑');
         const log = container.querySelector('.cbm-chat-transcript') as HTMLDivElement;
         Object.defineProperties(log, { scrollHeight: { configurable: true, value: 1000 }, clientHeight: { configurable: true, value: 200 } });
         log.scrollTop = 100;
@@ -259,7 +259,7 @@ describe('persistent local browser chat', () => {
     it('unloads an active worker and ignores stale output while retaining its sent question', async () => {
         const { props, runtime } = fixture(); const answer = deferred<string>(); let stream!: (chunk: string) => void;
         runtime.chat.mockImplementationOnce((_messages, onToken) => { stream = onToken; return answer.promise; });
-        await render({ ...props, attachment: selection }); await click('Download & load'); await type('Explain'); await click('Send ↑'); await models();
+        await render({ ...props, attachment: selection }); await click('Download & load'); await type('How is it computed?'); await click('Send ↑'); await models();
         await act(async () => stream('Partial answer')); await click('Unload model');
         await act(async () => { stream('Ignored stale chunk'); answer.resolve('Ignored stale final'); });
         expect(runtime.dispose).toHaveBeenCalledOnce(); expect(container.textContent).toContain('Partial answer');
@@ -281,7 +281,7 @@ describe('persistent local browser chat', () => {
         expect(runtime.chat.mock.calls[0][0].at(-1)?.content).not.toContain('changed graph');
         expect(container.querySelector('.cbm-chat-pending')).toBeNull();
         expect(container.querySelector('.cbm-chat-turn:last-child .cbm-chat-source-content pre')?.textContent).toBe('entry → sum');
-        await click('Retry'); expect(runtime.chat.mock.calls[1][0]).toEqual(runtime.chat.mock.calls[0][0]);
+        await click('Ask again'); expect(runtime.chat.mock.calls[1][0]).toEqual(runtime.chat.mock.calls[0][0]);
     });
 
     it('sends controlled graph selection once with literal code and retains it for retry', async () => {
@@ -291,7 +291,7 @@ describe('persistent local browser chat', () => {
         const first = runtime.chat.mock.calls[0][0].at(-1)!.content;
         expect(first).toContain(selection.text); expect(first).toContain(pendingContext.text); expect(callbacks.onContextConsumed).toHaveBeenCalledExactlyOnceWith('galaxy-1');
         expect(container.querySelector('[aria-label="Remove graph selection"]')).toBeNull();
-        await click('Retry'); expect(runtime.chat.mock.calls[1][0]).toEqual(runtime.chat.mock.calls[0][0]);
+        await click('Ask again'); expect(runtime.chat.mock.calls[1][0]).toEqual(runtime.chat.mock.calls[0][0]);
         await render({ ...props, ...callbacks, pendingContext }); await type('Follow up'); await click('Send ↑');
         expect(runtime.chat.mock.calls[2][0].at(-1)!.content).toBe('Answer in English.\n\nFollow up'); expect(callbacks.onContextConsumed).toHaveBeenCalledOnce();
     });
@@ -359,11 +359,11 @@ describe('persistent local browser chat', () => {
     it('refreshes one system source from file to literal selection to a different file without accumulating code', async () => {
         const { props, runtime } = fixture();
         await render({ ...props, readerContext: reader('WHOLE_FIRST_FILE') });
-        await click('Download & load'); await type('Explain the file'); await click('Send ↑');
+        await click('Download & load'); await type('Which values does the file add?'); await click('Send ↑');
         await render({ ...props, readerContext: reader(selection.text, 'selection') });
-        await type('Explain the marked code'); await click('Send ↑');
+        await type('Which values does the marked code add?'); await click('Send ↑');
         await render({ ...props, readerContext: reader('WHOLE_SECOND_FILE', 'file', 'src/other.ts') });
-        await type('Explain this other file'); await click('Send ↑');
+        await type('Which values does this other file add?'); await click('Send ↑');
         const requests = runtime.chat.mock.calls.map(call => call[0]);
         expect(requests[0][0].content).toContain('WHOLE_FIRST_FILE');
         expect(requests[1][0].content).toContain(selection.text);
@@ -372,8 +372,8 @@ describe('persistent local browser chat', () => {
         expect(requests[2].map(message => message.content).join('\n')).not.toContain('WHOLE_FIRST_FILE');
         expect(requests[2].map(message => message.content).join('\n')).not.toContain(selection.text);
         // The marked code is in the same file and keeps the conversation; another file starts a new topic (K17).
-        expect(requests[1].filter(message => message.role === 'user').map(message => message.content)).toEqual(['Explain the file', 'Answer in English.\n\nExplain the marked code']);
-        expect(requests[2].filter(message => message.role === 'user').map(message => message.content)).toEqual(['Answer in English.\n\nExplain this other file']);
+        expect(requests[1].filter(message => message.role === 'user').map(message => message.content)).toEqual(['Which values does the file add?', 'Answer in English.\n\nWhich values does the marked code add?']);
+        expect(requests[2].filter(message => message.role === 'user').map(message => message.content)).toEqual(['Answer in English.\n\nWhich values does this other file add?']);
         expect(props.onAttachmentConsumed).not.toHaveBeenCalled();
         expect(container.querySelectorAll('.cbm-chat-answer .cbm-chat-attachment')).toHaveLength(3);
         await render(props); await type('Ask from another workspace'); await click('Send ↑');
@@ -385,7 +385,7 @@ describe('persistent local browser chat', () => {
         const { props, runtime } = fixture(); const count = deferred<number>();
         runtime.countTokens.mockReturnValueOnce(count.promise);
         const original = reader('ORIGINAL_LITERAL\r\n\t  ', 'selection');
-        await render({ ...props, readerContext: original }); await click('Download & load'); await type('Explain'); await click('Send ↑');
+        await render({ ...props, readerContext: original }); await click('Download & load'); await type('How is it computed?'); await click('Send ↑');
         const counted = runtime.countTokens.mock.calls[0][0];
         original.source!.text = 'MUTATED_AFTER_COUNT';
         await render({ ...props, readerContext: reader('NEW_CURRENT_FILE', 'file', 'new.ts') });
@@ -400,7 +400,7 @@ describe('persistent local browser chat', () => {
 
     it('retries an automatic request exactly while newer source is loading', async () => {
         const { props, runtime } = fixture(); runtime.chat.mockRejectedValueOnce(new Error('GPU interrupted'));
-        await render({ ...props, readerContext: reader('ORIGINAL_RETRY_SOURCE') }); await click('Download & load'); await type('Explain'); await click('Send ↑');
+        await render({ ...props, readerContext: reader('ORIGINAL_RETRY_SOURCE') }); await click('Download & load'); await type('How is it computed?'); await click('Send ↑');
         const request = runtime.chat.mock.calls[0][0];
         await render({ ...props, readerContext: { project: 'sample', path: 'loading.ts', status: 'loading' } });
         await type('New question');
@@ -1008,7 +1008,7 @@ describe('graph answers and answer limits', () => {
         expect(runtime.chat.mock.calls[2][0].map(message => message.content).join('\n')).not.toContain('flake8');
     });
 
-    it('starts a file or selection fresh when the reader comes back to it, as the divider says (K17)', async () => {
+    it('carries the earlier turns of a file or selection the reader comes back to, as the divider says (K17, B4)', async () => {
         const { props, runtime } = fixture();
         runtime.chat.mockResolvedValueOnce('This runs the flake8 linter on Python files.');
         const workflow = reader('name: New contributor message', 'file', '.github/workflows/new_contributor_pr.yml');
@@ -1019,15 +1019,17 @@ describe('graph answers and answer limits', () => {
         await render({ ...props, selectionScope: 'django-demo:explore', readerContext: workflow });
         await type('Und was noch?'); await click('Send ↑');
         const request = runtime.chat.mock.calls[2][0];
-        expect(request.filter(message => message.role === 'assistant')).toHaveLength(0);
-        expect(request.map(message => message.content).join('\n')).not.toContain('flake8');
-        expect(request.filter(message => message.role === 'user').map(message => message.content.split('\n').at(-1))).toEqual(['Und was noch?']);
+        // Its own earlier turn comes along; nothing of JSONBAgg does.
+        expect(request.filter(message => message.role === 'assistant').map(message => message.content)).toEqual(['This runs the flake8 linter on Python files.']);
+        expect(request.map(message => message.content).join('\n')).not.toContain('JSONBAgg');
+        expect(request.filter(message => message.role === 'user').map(message => message.content.split('\n').at(-1))).toEqual(['welche Aktion nutzt dieses File?', 'Und was noch?']);
         expect([...container.querySelectorAll('.cbm-chat-topic-break')].map(item => item.textContent)).toEqual([
             'New topic: JSONBAgg. Earlier messages are not sent with these questions.',
-            'New topic: .github/workflows/new_contributor_pr.yml. Earlier messages are not sent with these questions.']);
+            'Zurück zu: .github/workflows/new_contributor_pr.yml. Die früheren Nachrichten dazu werden wieder mitgeschickt.']);
         // Within the returned topic the conversation goes on.
         await type('Welche Jobs?'); await click('Send ↑');
-        expect(runtime.chat.mock.calls[3][0].filter(message => message.role === 'user').map(message => message.content.split('\n').at(-1))).toEqual(['Und was noch?', 'Welche Jobs?']);
+        expect(runtime.chat.mock.calls[3][0].filter(message => message.role === 'user').map(message => message.content.split('\n').at(-1)))
+            .toEqual(['welche Aktion nutzt dieses File?', 'Und was noch?', 'Welche Jobs?']);
     });
 
     it('marks names in an answer that are not in the file or the graph facts (K12)', async () => {
@@ -1051,9 +1053,11 @@ describe('graph answers and answer limits', () => {
         expect(request.map(message => message.role)).toEqual(['system', 'user']);
         expect(request[1].content).toContain('Who calls JSONBAgg?');
         expect(request[1].content).toContain('Incoming relationships: 23 from 12 symbols.');
-        expect(container.querySelectorAll('.cbm-chat-turn')).toHaveLength(1);
-        expect(container.querySelector('.cbm-chat-answer-text')?.textContent).toBe('Adds the two values.');
-        expect(button('Retry')).toBeDefined();
+        // The listed answer stays; the model's answer is a turn of its own below it (B1).
+        expect(container.querySelectorAll('.cbm-chat-turn')).toHaveLength(2);
+        expect(container.querySelector('.cbm-chat-answer-text')?.textContent).toContain('not generated by the model');
+        expect([...container.querySelectorAll('.cbm-chat-answer-text')].at(-1)?.textContent).toBe('Adds the two values.');
+        expect(button('Ask again')).toBeDefined();
     });
 
     // 40 callers with long names in their own files: the snapshot names 24, a default prompt fewer.
@@ -1088,7 +1092,7 @@ describe('graph answers and answer limits', () => {
             options?.onComplete?.({ stopReason: 'length' }); return 'A long answer that';
         });
         await render({ ...props, attachment: selection }); await click('Download & load');
-        await type('Explain this part'); await click('Send ↑');
+        await type('How is this part computed?'); await click('Send ↑');
         const note = container.querySelector<HTMLDetailsElement>('.cbm-chat-turn details.cbm-chat-limit-note');
         expect(note?.querySelector('summary')?.textContent).toBe('Token limit reached: the answer was cut short');
         expect(note?.textContent).toContain('all 256 output tokens');
@@ -1108,7 +1112,7 @@ describe('graph answers and answer limits', () => {
             options?.onComplete?.({ stopReason: 'length' }); return 'A long answer that';
         });
         await render({ ...props, attachment: selection }); await click('Download & load');
-        await type('Explain this part'); await click('Send ↑');
+        await type('How is this part computed?'); await click('Send ↑');
         const note = container.querySelector<HTMLDetailsElement>('.cbm-chat-turn details.cbm-chat-limit-note');
         expect(note?.textContent).toContain('The output limit is at the maximum of 512 tokens for this model.');
         expect([...note?.querySelectorAll('button') ?? []].map(item => item.textContent)).not.toContain('Change the output limit');
@@ -1323,7 +1327,7 @@ describe('agent configuration limits', () => {
         await setLimit('cbm-chat-output-tokens', 128); await setLimit('cbm-chat-input-tokens', 1024);
         await click('Download & load');
         runtime.countTokens.mockResolvedValueOnce(1500);
-        await type('Explain'); await click('Send ↑');
+        await type('How is it computed?'); await click('Send ↑');
         expect(runtime.chat).not.toHaveBeenCalled();
         expect(container.textContent).toMatch(/the local working limit is 1\D?024\./);
         await click('Send ↑');
@@ -1587,15 +1591,13 @@ describe('general questions, prompts without a question and configuration files 
         expect(runtime.chat).not.toHaveBeenCalled();
         expect(answer()).toContain('No question was recognized in "test". You can ask, for example:');
         for (const example of ['What does JSONBAgg do?', 'Who calls JSONBAgg?', 'What does JSONBAgg call?']) expect(answer()).toContain(example);
-        expect(buttons()).toEqual(['Ask the model']);
+        // The model only echoed such a prompt, so the hint offers no model (B5).
+        expect(buttons()).toEqual([]);
         await type('hallo'); await click('Send ↑');
-        expect(answer()).toContain('In "hallo" wurde keine Frage erkannt. Frage zum Beispiel:');
+        expect(answer()).toContain('In "hallo" wurde keine Frage erkannt.');
         for (const example of ['Was macht JSONBAgg?', 'Wer ruft JSONBAgg auf?']) expect(answer()).toContain(example);
-        expect(buttons()).toEqual(['Modell fragen']);
+        expect(buttons()).toEqual([]);
         expect(runtime.chat).not.toHaveBeenCalled();
-        await act(async () => button('Modell fragen').click());
-        expect(runtime.chat).toHaveBeenCalledOnce();
-        expect(runtime.chat.mock.calls[0][0].at(-1)!.content).toContain('User question:\nhallo');
         // A follow-up does not carry the hint as an answer.
         await render({ ...props, readerContext: reader('repos:\n  - repo: x\n', 'file', '.pre-commit-config.yaml') });
         await type('?'); await click('Send ↑');
@@ -1609,7 +1611,7 @@ describe('general questions, prompts without a question and configuration files 
         await render({ ...props, selectionScope: 'django-demo:explore', readerContext: reader(text, 'file', '.pre-commit-config.yaml') }); await click('Download & load');
         for (const question of ['was macht diese datei?', 'erklär mir die datei detailliert']) {
             await type(question); await click('Send ↑');
-            expect(answer()).toContain('.pre-commit-config.yaml: YAML-Konfiguration, 9 Zeilen. Aus der Datei gelesen:');
+            expect(answer()).toContain('.pre-commit-config.yaml: YAML-Konfiguration, 9 Zeilen.\npre-commit-Konfiguration: Hooks, die vor jedem Commit laufen.');
             expect(answer()).toContain('repos (Liste mit 2 Einträgen):');
             expect(answer()).toContain('repo https://github.com/PyCQA/flake8; rev 7.1.1; hooks (1): flake8');
             expect(answer()).toContain('Aus der Datei gelesen, nicht vom Modell erzeugt.');
@@ -1617,7 +1619,7 @@ describe('general questions, prompts without a question and configuration files 
         }
         expect(runtime.chat).not.toHaveBeenCalled();
         await type('What does this file do?'); await click('Send ↑');
-        expect(answer()).toContain('.pre-commit-config.yaml: YAML configuration, 9 lines. Read from the file:');
+        expect(answer()).toContain('.pre-commit-config.yaml: YAML configuration, 9 lines.\npre-commit configuration: hooks that run before each commit.');
         expect(runtime.chat).not.toHaveBeenCalled();
         await act(async () => button('Ask the model').click());
         expect(runtime.chat).toHaveBeenCalledOnce();

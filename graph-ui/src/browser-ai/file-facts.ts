@@ -61,21 +61,32 @@ function tomlFacts(text: string): string[] {
         ...tables.length ? [words.tables(tables.length, tables.slice(0, LISTED).map(table => `${quote(table.name)} (${words.keyCount(table.keys)})`))] : []];
 }
 
-/** INI and its relatives: sections with their number of keys, or the keys of a file without sections. */
-function iniFacts(text: string): string[] {
-    const sections: { name: string; keys: number }[] = [];
-    const loose: string[] = [];
+/** One key of an INI file with its value; an indented line below it continues the value. */
+export interface IniEntry { key: string; values: string[] }
+/** INI and its relatives as they are written: the keys before the first section, then each
+ * section with its keys. The automatic card counts them, the outline lists them (B6). */
+export function iniSections(text: string): { loose: IniEntry[]; sections: { name: string; entries: IniEntry[] }[] } {
+    const sections: { name: string; entries: IniEntry[] }[] = [];
+    const loose: IniEntry[] = [];
+    let last: IniEntry | undefined;
     for (const raw of rows(text)) {
         const line = raw.trim();
         if (!line || line.startsWith('#') || line.startsWith(';')) continue;
         const section = /^\[([^\]]+)\]$/.exec(line);
-        if (section) { sections.push({ name: `[${section[1].trim()}]`, keys: 0 }); continue; }
-        const key = /^(?:export\s+)?([^=:\s][^=:]*?)\s*[=:]/.exec(line);
-        if (!key || /^\s/.test(raw)) continue;
-        if (sections.length) sections[sections.length - 1].keys += 1; else loose.push(key[1]);
+        if (section) { sections.push({ name: `[${section[1].trim()}]`, entries: [] }); last = undefined; continue; }
+        if (/^\s/.test(raw)) { last?.values.push(line); continue; }
+        const key = /^(?:export\s+)?([^=:\s][^=:]*?)\s*[=:]\s*(.*)$/.exec(line);
+        last = key ? { key: key[1], values: key[2] ? [key[2]] : [] } : undefined;
+        if (last) (sections.length ? sections[sections.length - 1].entries : loose).push(last);
     }
-    if (sections.length) return [words.sections(sections.length, sections.slice(0, LISTED).map(section => `${quote(section.name)} (${words.keyCount(section.keys)})`))];
-    return loose.length ? [words.keys(loose.length, loose.slice(0, LISTED).map(quote))] : [];
+    return { loose, sections };
+}
+
+/** INI and its relatives: sections with their number of keys, or the keys of a file without sections. */
+function iniFacts(text: string): string[] {
+    const { loose, sections } = iniSections(text);
+    if (sections.length) return [words.sections(sections.length, sections.slice(0, LISTED).map(section => `${quote(section.name)} (${words.keyCount(section.entries.length)})`))];
+    return loose.length ? [words.keys(loose.length, loose.slice(0, LISTED).map(entry => quote(entry.key)))] : [];
 }
 
 /** Markdown: the title, the second-level sections and the code blocks; lines inside a code block are code. */
@@ -129,7 +140,7 @@ function structureFacts(path: string, text: string): string[] {
         case 'yml': case 'yaml': return yamlFacts(text);
         case 'json': return jsonFacts(text);
         case 'toml': return tomlFacts(text);
-        case 'ini': case 'cfg': case 'conf': case 'env': case 'properties': case 'editorconfig': return iniFacts(text);
+        case 'ini': case 'cfg': case 'conf': case 'env': case 'properties': case 'editorconfig': case 'flake8': case 'coveragerc': case 'pylintrc': return iniFacts(text);
         case 'md': return markdownFacts(text);
         case 'rst': return restructuredFacts(text);
         case 'gitignore': case 'dockerignore': case 'gitattributes': return patternFacts(text);

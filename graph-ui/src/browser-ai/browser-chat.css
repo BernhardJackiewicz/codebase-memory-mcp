@@ -99,8 +99,10 @@
 .cbm-chat-code-header > div { display: flex; align-items: center; gap: 7px; flex-shrink: 0; }
 .cbm-chat-dock .cbm-chat-code-header button { padding: 2px 7px; min-width: 44px; font-size: 10px; background: transparent; }
 .cbm-chat-code-copy-error { color: #ffb6bd; font-size: 10px; }
-.cbm-chat-markdown .cbm-chat-code-block pre { margin: 0; padding: 11px; max-width: 100%; max-height: 360px; overflow: auto; overscroll-behavior: contain; white-space: pre; tab-size: 4; }
-.cbm-chat-code-block pre > code { display: block; width: max-content; min-width: 100%; background: transparent; color: #d0e8d8; font: 11px/1.65 ui-monospace, SFMono-Regular, monospace; }
+/* The panel is narrow and macOS hides scrollbars: a long line wraps instead of ending at the
+ * edge, as in the Source block (K15). The lines read from the code ended mid-template (B2). */
+.cbm-chat-markdown .cbm-chat-code-block pre { margin: 0; padding: 11px; max-width: 100%; max-height: 360px; overflow: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
+.cbm-chat-code-block pre > code { display: block; min-width: 100%; background: transparent; color: #d0e8d8; font: 11px/1.65 ui-monospace, SFMono-Regular, monospace; }
 .cbm-chat-table-scroll { max-width: 100%; overflow-x: auto; }
 .cbm-chat-markdown table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .cbm-chat-markdown :is(th, td) { padding: 7px 9px; border: 1px solid var(--chat-border); vertical-align: top; text-align: left; }
@@ -128,3 +130,6 @@
 .cbm-chat-dock .cbm-chat-new { padding: 4px 9px; font-size: 11px; color: #d0e8d8; }
 .cbm-chat-topic-break { display: flex; align-items: center; gap: 8px; margin: 0 0 10px !important; color: var(--chat-muted); font-size: 10px; }
 .cbm-chat-topic-break::before, .cbm-chat-topic-break::after { content: ""; flex: 1 1 16px; border-top: 1px solid var(--chat-border); }
+/* Who wrote an answer reads like the note under a listed answer: quiet, not a warning. */
+.cbm-chat-dock .cbm-chat-model-note { display: block; margin-top: 7px; color: var(--chat-muted); font-size: 11px; font-style: italic; }
+.cbm-chat-dock .cbm-chat-asked-model { display: block; margin-top: 6px; color: var(--chat-muted); font-size: 10px; }

@@ -384,7 +384,7 @@ async function k17(page) {
     const header1 = await page.locator('.cbm-chat-header .cbm-chat-new').boundingBox();
     if (header1) await shot(page, 'K17', 'header-crop', 'Crop of the chat header with the New conversation button.', { clip: { x: header1.x - 260, y: header1.y - 14, width: header1.width + 320, height: header1.height + 28 } });
     const assistantTurns = (request?.messages ?? []).filter((message) => message.role === 'assistant').length;
-    // Back to the same workflow file: its earlier answer is not sent again, as the divider says (review finding).
+    // Back to the same workflow file: "Zurück zu" and its own earlier turn is sent again, nothing of JSONBAgg (B4).
     await tab(page, 'explore');
     await page.waitForFunction(() => /New contributor message/.test(document.body.innerText), null, { timeout: 30000 }).catch(() => {});
     await explanationDone(page);
@@ -393,17 +393,17 @@ async function k17(page) {
     const [back] = await sentSince(page, mark);
     const backText = promptText(back);
     const divider = await page.locator('.cbm-chat-topic-break').allInnerTexts();
-    await shot(page, 'K17', 'explore-return', 'Back in Explore on the same file: a divider "New topic: .github/workflows/new_contributor_pr.yml"; the earlier answer is not in the prompt.');
+    await shot(page, 'K17', 'explore-return', 'Back in Explore on the same file: a divider "Zurück zu: .github/workflows/new_contributor_pr.yml"; the earlier question about the file is in the prompt, nothing of JSONBAgg.');
     const dividerBox = await page.locator('.cbm-chat-topic-break').last().boundingBox();
     if (dividerBox) await shot(page, 'K17', 'explore-return-crop', 'Crop of the divider above the returned question.', { clip: { x: dividerBox.x - 8, y: Math.max(0, dividerBox.y - 8), width: dividerBox.width + 16, height: 220 } });
-    const backAssistant = (back?.messages ?? []).filter((message) => message.role === 'assistant').length;
+    const backAssistant = (back?.messages ?? []).filter((message) => message.role === 'assistant');
     const backUsers = (back?.messages ?? []).filter((message) => message.role === 'user').map((message) => message.content.split('\n').at(-1));
-    check('K17', 'Earlier answers about another file are not resent, also not on the way back; topic breaks and New conversation visible', Boolean(request) && !/Welche Aktion nutzt dieses aktuelle File/.test(text)
-        && !text.includes(exploreAnswer.slice(-60).trim()) && assistantTurns === 0 && /New conversation/.test(header) && divider.some((item) => /New topic: JSONBAgg/.test(item))
-        && Boolean(back) && backAssistant === 0 && !/Welche Aktion nutzt dieses aktuelle File/.test(backText) && !backText.includes(exploreAnswer.slice(-60).trim())
-        && JSON.stringify(backUsers) === JSON.stringify(['Und was noch?']) && divider.some((item) => /New topic: \.github\/workflows\/new_contributor_pr\.yml\. Earlier messages are not sent/.test(item)),
+    check('K17', 'Earlier answers about another topic are not sent; coming back to a file says "Zurück zu" and sends that file\'s own earlier turn; topic breaks and New conversation visible', Boolean(request) && !/Welche Aktion nutzt dieses aktuelle File/.test(text)
+        && assistantTurns === 0 && /New conversation/.test(header) && divider.some((item) => /New topic: JSONBAgg/.test(item))
+        && Boolean(back) && backAssistant.length === 1 && !/JSONBAgg/.test(backText)
+        && JSON.stringify(backUsers) === JSON.stringify(['Welche Aktion nutzt dieses aktuelle File?', 'Und was noch?']) && divider.some((item) => /Zurück zu: \.github\/workflows\/new_contributor_pr\.yml\. Die früheren Nachrichten dazu werden wieder mitgeschickt/.test(item)),
     { assistantMessagesInPrompt: assistantTurns, flake8InPrompt: /flake8/i.test(text), exploreQuestionInPrompt: /aktuelle File/.test(text), header, divider, exploreAnswer: exploreAnswer.slice(0, 200), galaxyAnswer: galaxyAnswer.slice(0, 200),
-        returnPrompt: { assistantMessages: backAssistant, userMessages: backUsers, earlierExploreAnswerInPrompt: backText.includes(exploreAnswer.slice(-60).trim()) }, returnAnswer: returnAnswer.slice(0, 200) });
+        returnPrompt: { assistantMessages: backAssistant.map((message) => message.content.slice(0, 160)), userMessages: backUsers, jsonbAggInPrompt: /JSONBAgg/.test(backText) }, returnAnswer: returnAnswer.slice(0, 200) });
     await save('K17', 'prompt-galaxy.txt', text);
     await save('K17', 'prompt-explore-return.txt', backText);
 }

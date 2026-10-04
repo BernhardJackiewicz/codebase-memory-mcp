@@ -3,23 +3,24 @@ import type { BrowserAiProgress } from './browser-ai-controller';
 import { createBrowserChatRuntime, type BrowserChatRuntime } from './browser-ai-runtime';
 import { BROWSER_MODELS, getBrowserModel, isBrowserModelCached, removeBrowserModelCache, type BrowserModel } from './model-policy';
 import { keepAgent, loadProgress, offerAgent, peekAgent, takeAgent, type AgentHandover, type LoadProgress } from './agent-handover';
-import { buildChatMessages, selectionLocation, snapshotAttachment, snapshotReaderContext, trimChatHistory, type BrowserChatAttachment, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatSource, type BrowserChatTurn } from './chat-model';
+import { buildChatMessages, selectionLocation, sentInHistory, snapshotAttachment, snapshotReaderContext, trimChatHistory, type BrowserChatAttachment, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatSource, type BrowserChatTurn } from './chat-model';
 import { explanationInput, EXPLANATION_DELAY_MS, type ExplanationInput } from './proactive-selection';
 import { prepareExplanationContext, selectionSummary, type PreparedExplanationContext } from './explanation-context';
 import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, citedInterpretation, explanationMode, explanationSentence, namesNotIn, parseExplanationResponse, explanationMessages, formatExplanationEvidence } from './explanation-response';
 import { carriedSource, selectionSubject, SYMBOL_SOURCE_LINES, sourceTargetOf, symbolSource, type SymbolSourceReader } from './symbol-source';
+import { codeFacts, codeFactsMarkdown, codeSourceFacts } from './code-facts';
 import { relationshipAnswer, relationshipSuggestion } from './relationship-answer';
 import { clampTokenLimits, tokenLimitBounds, tokenLimitsFor, useAgentPreferences, type TokenLimits } from './agent-preferences';
-import { browserChatText, groundedText, relationshipWords } from './strings';
+import { browserChatText, chatRound3Text, groundedText, relationshipWords } from './strings';
 import { isGpuRuntimeFailure, BrowserRuntimeFatalError } from './runtime-fault';
 import ChatMarkdown from './ChatMarkdown';
 import AgentSettingsDialog from './AgentSettingsDialog';
 import { useChatHistory } from './use-chat-history';
-import { chatTopic, followedTopic, missingContextAnswer, questionLanguage, topicHistory } from './chat-context';
+import { chatTopic, contextFreeFollowUp, followedTopic, missingContextAnswer, questionLanguage, topicDivider, topicHistory } from './chat-context';
 import { isDataFile, readerFacts } from './file-facts';
 import { fileOutline } from './file-outline';
 import { readGalaxyEvidence, type GalaxyEvidence } from './galaxy-evidence';
-import { generalQuestion, knownNames, noQuestion, noQuestionAnswer } from './question-intent';
+import { followUpAnswer, generalQuestion, knownNames, noQuestion, noQuestionAnswer, type ExampleSubject } from './question-intent';
 import './browser-chat.css';
 
 export type { BrowserChatAttachment, BrowserChatContext, BrowserChatReaderContext, BrowserChatSource } from './chat-model';
@@ -56,7 +57,13 @@ type ChatTurn = BrowserChatTurn & { evidence?: PreparedExplanationContext };
 /** `grounded`: the facts are listed in the card, so the prompt's name budget is not the reader's limit. */
 type Explanation = { key: string; label: string; answer: string; status: string; error?: string; packet?: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; mode?: 'interpretation'; shortened?: boolean; limit?: TokenLimits; evidence?: string; grounded?: boolean;
     /** The facts of a configuration or text file, which the model was not asked about (K12). */
-    askable?: boolean };
+    askable?: boolean;
+    /** The answer is the model's text alone, without listed facts: it says so (B1). */
+    generated?: boolean };
+/** The shape of an explanation for a short general question: facts listed from the graph or read
+ * from an open code file or marked code, the lines of the selected code, one checked sentence (C5, B3). */
+type Grounded = { summary: string[]; code?: string; subject?: { name: string; kind?: string } }
+    & ({ from: 'graph'; graph: BrowserChatContext; reader?: undefined } | { from: 'file'; reader: BrowserChatReaderContext; graph?: undefined });
 /** Finished explanations per selection, so returning to one does not run the model again. */
 const EXPLANATION_CACHE_SIZE = 32;
 const initialModel = BROWSER_MODELS.find(model => model.availability === 'available')!;
@@ -64,21 +71,26 @@ const cachedInBrowser = (modelId: string) => isBrowserModelCached(getBrowserMode
 const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error);
 /** The names a Galaxy selection goes by: its label and its symbols with their qualified names. */
 const galaxyNames = (galaxy: GalaxyEvidence): string[] => [galaxy.label, ...galaxy.roots.flatMap(root => [root.name, root.qualifiedName ?? ''])].filter(Boolean);
-/** Answers the chat gives itself, which "Ask the model" sends to the model as the question they answer. */
-const ASKABLE = new Set(['graph', 'suggestion', 'grounded', 'file', 'hint']);
+/** Answers the chat gives itself, which "Ask the model" sends to the model as the question they answer.
+ * Not the hint to a prompt without a question: the model only echoed "test" or "hallo" (B5). */
+const ASKABLE = new Set(['graph', 'suggestion', 'grounded', 'file']);
 const sizeLabel = (bytes: number): string => bytes >= 1_000_000_000 ? `${(bytes / 1_000_000_000).toFixed(2)} GB` : `${Math.ceil(bytes / 1_000_000)} MB`;
 /** Symbol sources read for explanations and questions, newest last. */
 const SOURCE_CACHE_SIZE = 32;
 
-/** The listed facts first, then the model's sentence if it stood the check, then who wrote what (K7).
- * The facts come from the indexed graph, or for an open workflow from the file itself (K12). The
- * answer to a general question says it in the language of that question (C5). */
-function groundedExplanation(summary: readonly string[], sentence: string | undefined, dropped: boolean, from: 'graph' | 'file' = 'graph', language: 'en' | 'de' = 'en'): string {
-    const words = groundedText[language];
-    const note = from === 'file' ? sentence ? browserChatText.fileFactsAndSentence : dropped ? browserChatText.fileSentenceDropped : browserChatText.fileFactsOnly
-        : sentence ? words.factsAndSentence : dropped ? words.sentenceDropped : words.factsOnly;
-    return [summary.map(line => `- ${line}`).join('\n'), ...sentence ? [sentence] : [], `_${note}_`].join('\n\n');
+/** The listed facts first, then the lines read from the selected code, then the model's sentence
+ * if it stood the check, then who wrote what (K7). The facts come from the indexed graph, or for
+ * an open workflow from the file itself (K12). The answer to a general question says it in the
+ * language of that question (C5). `code` says what the code declares when the sentence is
+ * dropped, as it was for JSONBAgg every time (B2). */
+function groundedExplanation(summary: readonly string[], sentence: string | undefined, dropped: boolean, from: 'graph' | 'file' = 'graph', language: 'en' | 'de' = 'en', code?: string): string {
+    const words = from === 'file' ? chatRound3Text[language].fileNotes : groundedText[language];
+    const note = sentence ? words.factsAndSentence : dropped ? words.sentenceDropped : words.factsOnly;
+    return [summary.map(line => `- ${line}`).join('\n'), ...code ? [code] : [], ...sentence ? [sentence] : [], `_${note}_`].join('\n\n');
 }
+/** The same while the model writes its sentence. */
+const writingExplanation = (summary: readonly string[], note: string, code?: string): string =>
+    summary.length ? [summary.map(line => `- ${line}`).join('\n'), ...code ? [code] : [], `_${note}_`].join('\n\n') : '';
 
 function Attachment({ attachment, label }: { attachment: BrowserChatAttachment; label?: string }): JSX.Element {
     return <details className="cbm-chat-attachment">
@@ -414,6 +426,9 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 return;
             }
             const subject = snapshot.reader ? undefined : selectionSubject(snapshot.graph);
+            // What the selected symbol's code declares stands under the facts, whatever the model writes (B2).
+            const facts = summary.length && symbol && subject ? codeFacts(symbol, subject) : undefined;
+            const code = facts ? codeFactsMarkdown(facts, 'en') : undefined;
             let request = explanationMessages(packet, subject);
             let count = await currentRuntime.countTokens(request);
             if (!valid()) return;
@@ -427,7 +442,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 setExplanation({ key: snapshot.key, label: snapshot.label, answer: '', status: 'error', packet, error: !packet.evidence.length ? 'No source or graph evidence is available for this selection.' : 'This selection is too large for the local agent. Select a smaller code range and try again.' });
                 return;
             }
-            setExplanation({ key: snapshot.key, label: snapshot.label, answer: writing, status: 'generating', packet });
+            setExplanation({ key: snapshot.key, label: snapshot.label, answer: code ? writingExplanation(summary, browserChatText.writingSentence, code) : writing, status: 'generating', packet });
             setPhase('generating');
             // Keep an explanation together and ignore output from superseded selections.
             let shortened = false;
@@ -439,12 +454,12 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 // One sentence beside the facts (two for reader code), and none that names what the evidence lacks.
                 const checked = result.status === 'generated' ? explanationSentence(result.markdown, packet, request.map(message => message.content).join('\n')) : {};
                 if (summary.length || (result.status === 'generated' && checked.dropped)) {
-                    const markdown = summary.length ? groundedExplanation(summary, checked.sentence, checked.dropped !== undefined, from) : `_${browserChatText.explanationDropped}_`;
+                    const markdown = summary.length ? groundedExplanation(summary, checked.sentence, checked.dropped !== undefined, from, 'en', code) : `_${browserChatText.explanationDropped}_`;
                     const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: markdown, status: 'complete', mode: 'interpretation', packet, grounded: summary.length > 0,
                         ...shortened && checked.sentence ? { shortened, limit: { inputTokens: autoInput, outputTokens: autoOutput } } : {}, ...snapshot.evidence ? { evidence: snapshot.evidence } : {} };
                     remember(complete); setExplanation(complete);
                 } else if (result.status === 'generated') {
-                    const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: checked.sentence ?? result.markdown, status: 'complete', mode: 'interpretation', packet, citation: result.citation,
+                    const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: checked.sentence ?? result.markdown, status: 'complete', mode: 'interpretation', packet, citation: result.citation, generated: true,
                         ...shortened ? { shortened, limit: { inputTokens: autoInput, outputTokens: autoOutput } } : {}, ...snapshot.evidence ? { evidence: snapshot.evidence } : {} };
                     remember(complete); setExplanation(complete);
                 } else setExplanation({ key: snapshot.key, label: snapshot.label, answer: '', status: 'error', packet, error: result.reason });
@@ -643,11 +658,16 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         // A prompt that asks nothing ("test", "hallo") gets questions it could ask, not an echo of the model (C6).
         const known = knownNames({ galaxy, names: galaxy ? galaxyNames(galaxy) : fileSource ? [fileSource.path] : [],
             texts: [fileSource?.text ?? '', source?.text ?? '', ...currentGraph.filter(() => !galaxy).map(item => item.label), ...extra.map(item => item.label)] });
-        if (!retry && noQuestion(prompt, known)) {
-            const subject = galaxy ? { kind: 'galaxy' as const, name: galaxy.label } : fileSource?.kind === 'selection' || source ? { kind: 'marked' as const }
-                : { kind: 'other' as const, name: fileSource ? fileSource.path.split('/').pop()! : topic?.label ?? '' };
+        const subject: ExampleSubject = galaxy ? { kind: 'galaxy', name: galaxy.label } : fileSource?.kind === 'selection' || source ? { kind: 'marked' }
+            : { kind: 'other', name: fileSource ? fileSource.path.split('/').pop()! : topic?.label ?? '' };
+        // "und was noch?" right after a change of topic would reach the model without context:
+        // this topic has no earlier turn, and those of other topics are not sent (B4).
+        const hint = !retry && noQuestion(prompt, known) ? noQuestionAnswer(prompt, language, subject)
+            : !retry && topic && contextFreeFollowUp(prompt) && !topicHistory(turns, topic).some(sentInHistory) && turns.some(item => item.topic && item.topic.key !== topic.key)
+                ? followUpAnswer(prompt, language, subject, topic.label) : undefined;
+        if (hint) {
             setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, attachment: source, readerContext: reader, context: extra, topic, replyLanguage: language,
-                ...currentGraph[0] ? { listedFrom: currentGraph[0] } : {}, modelId: model.id, request: [], answer: noQuestionAnswer(prompt, language, subject), status: 'complete', answeredFrom: 'hint' }]);
+                ...currentGraph[0] ? { listedFrom: currentGraph[0] } : {}, modelId: model.id, request: [], answer: hint, status: 'complete', answeredFrom: 'hint' }]);
             consume();
             return;
         }
@@ -661,11 +681,19 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             return;
         }
         // A short general question about a Galaxy selection gets the shape of its explanation: the
-        // listed facts and one checked model sentence, in the language of the question (C5).
-        const grounded = !retry && !source && !extra.length && galaxy && generalQuestion(prompt, galaxyNames(galaxy)) === 'general'
-            ? { graph: currentGraph[0], summary: selectionSummary(currentGraph[0], language), subject: selectionSubject(currentGraph[0]) } : undefined;
-        // Answers about another file or selection stay out, and so do those from before the
-        // last change of topic: an earlier wrong answer must not become evidence for this one (K17).
+        // listed facts and one checked model sentence, in the language of the question (C5). So
+        // does one about an open code file or marked code, with the facts read from it (B3).
+        const codeSource: BrowserChatSource | undefined = !retry && !extra.length && !galaxy
+            ? fileSource ? !isDataFile(fileSource.path) && !fileSource.partial ? fileSource : undefined : source ? { ...source, kind: 'selection' } : undefined : undefined;
+        const codeFound = codeSource ? codeSourceFacts(codeSource, language) : undefined;
+        const grounded: Grounded | undefined = !retry && !source && !extra.length && galaxy && generalQuestion(prompt, galaxyNames(galaxy)) === 'general'
+            ? { from: 'graph', graph: currentGraph[0], summary: selectionSummary(currentGraph[0], language), subject: selectionSubject(currentGraph[0]) }
+            : codeSource && codeFound && generalQuestion(prompt, [codeSource.path, ...codeFound.names]) === 'general'
+                ? { from: 'file', reader: { project: codeSource.project, path: codeSource.path, status: 'ready', source: codeSource }, summary: codeFound.summary, code: codeFound.code } : undefined;
+        const groundedPacket = (budget: number, symbol?: BrowserChatSource) => grounded?.from === 'file' ? prepareExplanationContext(grounded.reader, [], budget)
+            : prepareExplanationContext(undefined, packetGraph, budget, symbol);
+        // Answers about another file or selection stay out (K17); those of this topic come along,
+        // also from before the reader went elsewhere and came back (B4).
         const earlier = topicHistory(ask ? turns.filter(item => item.id !== retry.id) : turns, topic);
         let history: ChatTurn[] = earlier;
         const makeRequest = () => buildChatMessages(history, prompt, source, extra, reader, currentGraph, packet ? formatExplanationEvidence(packet) : undefined, questionLanguage(prompt));
@@ -677,13 +705,16 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             if (manualRequest.current === queued) manualRequest.current = undefined;
             return;
         }
-        if (grounded) packet = prepareExplanationContext(undefined, packetGraph, 3200, symbol);
+        if (grounded) packet = groundedPacket(3200, symbol);
         else if ((!retry || askFrom) && ((reader?.source?.text.length ?? 0) > 5000 || packetGraph.length)) packet = prepareExplanationContext(reader, packetGraph, chatEvidence, symbol);
+        // What the selected symbol's code declares, whatever the model's sentence says (B2).
+        const declared = grounded?.from === 'graph' && symbol && grounded.subject ? codeFacts(symbol, grounded.subject) : undefined;
+        const code = grounded?.code ?? (declared ? codeFactsMarkdown(declared, language) : undefined);
         // Without source the model could only restate the facts: they are the answer (K7).
         if (grounded && explanationMode(packet!) === 'graph') {
             if (manualRequest.current === queued) manualRequest.current = undefined;
-            setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, context: extra, topic, listedFrom: grounded.graph, replyLanguage: language, evidence: packet,
-                modelId: model.id, request: [], answer: groundedExplanation(grounded.summary, undefined, false, 'graph', language), status: 'complete', answeredFrom: 'grounded' }]);
+            setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, context: extra, topic, ...grounded.graph ? { listedFrom: grounded.graph } : {}, replyLanguage: language, evidence: packet,
+                modelId: model.id, request: [], answer: groundedExplanation(grounded.summary, undefined, false, grounded.from, language), status: 'complete', answeredFrom: 'grounded' }]);
             consume();
             return;
         }
@@ -707,7 +738,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             const limit = grounded ? autoInput : Math.min(limits.inputTokens, model.contextTokens - limits.outputTokens);
             // The sentence of a general question is bounded like that of an automatic explanation.
             for (let budget = 1900; grounded && count > limit && budget >= 300; budget = Math.floor(budget * .6)) {
-                packet = prepareExplanationContext(undefined, packetGraph, budget, symbol);
+                packet = groundedPacket(budget, symbol);
                 request = explanationMessages(packet, grounded.subject, language); count = await currentRuntime.countTokens(request);
                 if (epoch.current !== ticket || stopRequested.current) return;
             }
@@ -727,16 +758,19 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 setError(`This prompt needs ${count.toLocaleString()} input tokens; the local working limit is ${limit.toLocaleString()}. Select less code or start a new conversation. Nothing was sent or shortened without disclosure.`);
                 return;
             }
-            const id = retry?.id ?? `local-turn-${crypto.randomUUID()}`;
+            // The model's answer to a listed, grounded or file answer is a turn of its own below it:
+            // the facts stay where they were (B1). Asking again repeats a model answer in place.
+            const id = retry && !ask ? retry.id : `local-turn-${crypto.randomUUID()}`;
             const historyOmitted = retry && !ask ? retry.historyOmitted
                 : earlier.filter(item => item.status !== 'error' && item.status !== 'generating' && !history.includes(item)).length;
             // A general question shows its facts at once; the model only adds a sentence.
-            const writing = grounded ? `${grounded.summary.map(line => `- ${line}`).join('\n')}\n\n_${groundedText[language].writingSentence}_` : '';
+            const writing = grounded ? writingExplanation(grounded.summary, groundedText[language].writingSentence, code) : '';
             const turn: ChatTurn = { id, prompt, attachment: source, readerContext: reader, context: extra, evidence: packet, modelId: model.id, request, answer: writing, status: 'generating', topic,
-                ...historyOmitted ? { historyOmitted } : {}, ...grounded ? { answeredFrom: 'grounded' as const, listedFrom: grounded.graph, replyLanguage: language } : {} };
+                ...historyOmitted ? { historyOmitted } : {}, ...grounded ? { answeredFrom: 'grounded' as const, ...grounded.graph ? { listedFrom: grounded.graph } : {}, replyLanguage: language } : {},
+                ...ask || retry?.askedModel ? { askedModel: true } : {} };
             activeTurn.current = id;
-            if (retry) setTurns(previous => previous.map(item => item.id === id ? turn : item));
-            else { setTurns(previous => [...previous, turn]); consume(); }
+            if (retry && !ask) setTurns(previous => previous.map(item => item.id === id ? turn : item));
+            else { setTurns(previous => [...previous, turn]); if (!retry) consume(); }
             setPhase('generating');
             let shortened = false;
             const onComplete = ({ stopReason }: { stopReason: string }) => { shortened = stopReason === 'length'; };
@@ -749,7 +783,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 // One sentence beside the facts, checked like the sentence of the explanation card.
                 const result = parseExplanationResponse(output, packet!);
                 const checked = !stopRequested.current && result.status === 'generated' ? explanationSentence(result.markdown, packet!, request.map(message => message.content).join('\n')) : {};
-                const answer = groundedExplanation(grounded.summary, checked.sentence, checked.dropped !== undefined, 'graph', language);
+                const answer = groundedExplanation(grounded.summary, checked.sentence, checked.dropped !== undefined, grounded.from, language, code);
                 setTurns(previous => previous.map(item => item.id === id ? { ...item, answer, status: stopRequested.current ? 'stopped' : 'complete' } : item));
                 return;
             }
@@ -761,7 +795,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             const explanation = messageOf(failure);
             const id = activeTurn.current;
             if (id) setTurns(previous => previous.map(turn => turn.id === id ? { ...turn, status: stopRequested.current ? 'stopped' : 'error', error: stopRequested.current ? undefined : explanation,
-                ...grounded ? { answer: groundedExplanation(grounded.summary, undefined, false, 'graph', language) } : {} } : turn));
+                ...grounded ? { answer: groundedExplanation(grounded.summary, undefined, false, grounded.from, language, code) } : {} } : turn));
             else if (!stopRequested.current) setError(explanation);
         } finally {
             if (manualRequest.current === queued) manualRequest.current = undefined;
@@ -862,6 +896,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 </SourceDisclosure>
                 {explanation?.key === selected.key ? <>
                     <ChatMarkdown text={explanation.answer || (explanation.status === 'generating' ? 'Explaining selection…' : explanation.status === 'stopped' ? 'Explanation stopped.' : '')} />
+                    {explanation.generated && explanation.status === 'complete' && <small className="cbm-chat-model-note">{chatRound3Text.en.modelNote}</small>}
                     {explanation.status !== 'generating' && <AnswerNotes shortened={limitNote(explanation.shortened, explanation.limit, true)} packet={explanation.grounded ? undefined : explanation.packet} model={model.displayName} />}
                     {explanation.error && <p className="cbm-chat-turn-error" role="alert">{explanation.error}</p>}
                     {explanation.status !== 'generating' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready' || !!selected.waiting} onClick={() => {
@@ -872,10 +907,14 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                     : manualRequest.current ? 'This selection will be explained after your answer.' : 'Preparing explanation…'}</p>}
             </section>}
             {turns.length === 0 && !(proactive && automatic && selected) && <div className="cbm-chat-empty"><span aria-hidden="true">⌁</span><h3>Ask about the code.</h3><p>{readerContext ? 'The current file is included automatically. Mark code to focus your next message on that exact selection.' : 'Ask a question, or add source and graph context to your next message.'}</p></div>}
-            {turns.map((turn, index) => { const replyWords = relationshipWords[turn.replyLanguage === 'de' ? 'de' : 'en']; return <article className="cbm-chat-turn" key={turn.id}>
-                {turn.topic && index > 0 && turn.topic.key !== turns.slice(0, index).reverse().find(item => item.topic)?.topic?.key
-                    && <p className="cbm-chat-topic-break">{browserChatText.topicBreak(turn.topic.label)}</p>}
-                <div className="cbm-chat-question"><span className="cbm-chat-speaker">You</span><ChatMarkdown text={turn.prompt} /></div>
+            {turns.map((turn, index) => { const replyWords = relationshipWords[turn.replyLanguage === 'de' ? 'de' : 'en'];
+                // The model's own answers carry their note in the language of the question (B1).
+                const ownWords = chatRound3Text[turn.replyLanguage ?? questionLanguage(turn.prompt)];
+                const divider = topicDivider(turns, index);
+                return <article className="cbm-chat-turn" key={turn.id}>
+                {turn.topic && divider && <p className="cbm-chat-topic-break">{divider === 'back' ? ownWords.backTo(turn.topic.label) : browserChatText.topicBreak(turn.topic.label)}</p>}
+                <div className="cbm-chat-question"><span className="cbm-chat-speaker">You</span><ChatMarkdown text={turn.prompt} />
+                    {turn.askedModel && <small className="cbm-chat-asked-model">{ownWords.askedModel}</small>}</div>
                 <div className="cbm-chat-answer"><SourceDisclosure>
                     {turn.evidence || turn.attachment || turn.readerContext?.source || turn.context?.length ? <>
                         {turn.evidence ? <PacketSource packet={turn.evidence} /> : <>
@@ -886,12 +925,13 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                     </> : null}
                 </SourceDisclosure><div className="cbm-chat-answer-text"><ChatMarkdown text={turn.answer || (turn.status === 'generating' ? 'Thinking…' : turn.status === 'stopped' ? 'Stopped before an answer.' : '')} /></div>
                     {turn.status === 'stopped' && turn.answer && <small>Stopped · partial answer</small>}
+                    {!turn.answeredFrom && turn.answer && (turn.status === 'complete' || turn.status === 'stopped') && <small className="cbm-chat-model-note">{ownWords.modelNote}</small>}
                     {turn.status !== 'generating' && !turn.answeredFrom && <AnswerNotes shortened={limitNote(turn.shortened, turn.limit)} packet={turn.evidence}
                         unsupported={turn.answer ? namesNotIn(turn.answer, turn.request.map(message => message.content).join('\n')) : []} model={BROWSER_MODELS.find(candidate => candidate.id === turn.modelId)?.displayName ?? turn.modelId} historyOmitted={turn.historyOmitted} />}
                     {turn.status === 'error' && <p className="cbm-chat-turn-error" role="alert">{turn.error}</p>}
                     {index === turns.length - 1 && turn.answeredFrom === 'suggestion' && turn.suggestion && <button type="button" className="cbm-chat-retry"
                         onClick={() => showSuggestedList(turn)}>{replyWords.showList}</button>}
-                    {index === turns.length - 1 && turn.status !== 'generating' && turn.answeredFrom !== 'local' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { void send(turn); }}>{turn.answeredFrom ? replyWords.askModel : 'Retry'}</button>}
+                    {index === turns.length - 1 && turn.status !== 'generating' && (!turn.answeredFrom || ASKABLE.has(turn.answeredFrom)) && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { void send(turn); }}>{turn.answeredFrom ? replyWords.askModel : turn.status === 'error' ? 'Retry' : ownWords.askAgain}</button>}
                 </div>
             </article>; })}
         </div>}

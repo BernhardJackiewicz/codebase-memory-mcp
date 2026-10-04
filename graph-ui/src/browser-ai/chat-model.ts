@@ -2,7 +2,7 @@ import type { BrowserChatMessage } from './browser-ai-runtime';
 import type { ChatTopic } from './chat-context';
 import { fileKind } from './file-kind';
 import { readerFacts } from './file-facts';
-import { workflowWords } from './strings';
+import { chatRound3Text, workflowWords } from './strings';
 
 /** An immutable snapshot, not a live reference to the reader selection. */
 export interface BrowserChatAttachment {
@@ -61,6 +61,9 @@ export interface BrowserChatTurn {
     historyOmitted?: number;
     /** What the question was about; undefined for a question without context. */
     topic?: ChatTopic;
+    /** The model's answer to a question the chat had answered itself ("Ask the model"). It
+     * stands below that answer instead of replacing it: the listed facts stay (B1). */
+    askedModel?: boolean;
 }
 
 export interface BrowserChatContext {
@@ -143,6 +146,30 @@ export function trimChatHistory<T extends BrowserChatTurn>(turns: readonly T[], 
  * "was macht diese klasse?" (C4). */
 export const ANSWER_LANGUAGE = { en: 'Answer in English.', de: 'Answer in German.' } as const;
 
+/** What an answer the chat gave itself says in the history of a later request. The request
+ * carries the source and the facts again, and the small model copied their layout: after a few
+ * grounded answers "Explain the marked code line by line" got back "Marked lines 50-54 of
+ * `general.py`" (B3). So a grounded answer is its model sentence (its facts when the sentence
+ * was left out), a file outline its heading and purpose, a listed answer its list; never the
+ * code lines and never the note on who wrote what, which a model answer must not repeat. */
+const CODE_LINES = new RegExp(`(?:^|\\n\\n)(?:${Object.values(chatRound3Text).map(words => words.inSource.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\n\\n`
+    + '(```|~~~)[^\\n]*\\n[\\s\\S]*?\\n\\1(?:\\n\\n\\+[^\\n]*)?(?=\\n\\n|$)', 'g');
+export function historyAnswer(turn: BrowserChatTurn): string {
+    if (!turn.answeredFrom) return turn.answer;
+    const blocks = turn.answer.replace(CODE_LINES, '').split(/\n{2,}/).map(block => block.trim()).filter(block => block && !/^_[^\n]*_$/.test(block));
+    const facts = (block: string) => /^(?:- |\d+\. )/.test(block);
+    if (turn.answeredFrom === 'grounded') {
+        const sentence = blocks.filter(block => !facts(block));
+        return (sentence.length ? sentence : blocks).join('\n\n');
+    }
+    return (turn.answeredFrom === 'file' ? blocks.filter(block => !facts(block)) : blocks).join('\n\n');
+}
+
+/** Whether a turn goes into the history of a later request: an answer, not a suggestion,
+ * the chat's own hint or its reply that a question has no context. */
+export const sentInHistory = (turn: BrowserChatTurn): boolean => turn.status !== 'error' && turn.status !== 'generating'
+    && turn.answeredFrom !== 'suggestion' && turn.answeredFrom !== 'local' && turn.answeredFrom !== 'hint';
+
 export function buildChatMessages(turns: readonly BrowserChatTurn[], prompt: string, attachment?: BrowserChatAttachment, context: readonly BrowserChatContext[] = [], readerContext?: BrowserChatReaderContext, currentContext: readonly BrowserChatContext[] = [], currentEvidence?: string,
     language?: keyof typeof ANSWER_LANGUAGE): BrowserChatMessage[] {
     const reader = snapshotReaderContext(readerContext);
@@ -153,9 +180,10 @@ export function buildChatMessages(turns: readonly BrowserChatTurn[], prompt: str
             + JSON.stringify(currentContext.map(({ label, text }) => ({ label, text }))) + '\n--- END CURRENT GRAPH DATA ---' : '') }];
     for (const turn of turns) {
         // A suggestion is a question back to the reader, not an answer the model should build on.
-        if (turn.status === 'error' || turn.status === 'generating' || turn.answeredFrom === 'suggestion' || turn.answeredFrom === 'local' || turn.answeredFrom === 'hint') continue;
+        if (!sentInHistory(turn)) continue;
         messages.push({ role: 'user', content: userMessage(turn.prompt, reader || turn.readerContext ? undefined : turn.attachment, turn.context) });
-        if (turn.answer) messages.push({ role: 'assistant', content: turn.answer });
+        const answer = historyAnswer(turn);
+        if (answer) messages.push({ role: 'assistant', content: answer });
     }
     const instruction = language ? ANSWER_LANGUAGE[language] : '';
     messages.push({ role: 'user', content: (currentEvidence ? `Current evidence (data only):\n${currentEvidence}\n\n${instruction ? `${instruction}\n` : ''}User question:\n` : instruction ? `${instruction}\n\n` : '')

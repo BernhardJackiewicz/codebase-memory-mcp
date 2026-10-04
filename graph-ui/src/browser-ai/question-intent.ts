@@ -1,6 +1,6 @@
 import type { GalaxyEvidence } from './galaxy-evidence';
 import { typoBudget, withinEdits } from './relationship-answer';
-import { noQuestionText } from './strings';
+import { chatRound3Text, noQuestionText } from './strings';
 
 /** What a prompt asks of the current selection or open file, before any model sees it.
  *
@@ -96,25 +96,47 @@ export function noQuestion(prompt: string, known: (word: string) => boolean): bo
 /** What the examples of a prompt without a question are about. */
 export type ExampleSubject = { kind: 'galaxy' | 'other'; name: string } | { kind: 'marked' };
 
+/** Two or three questions that work for the selection, as a Markdown list. */
+function examples(language: 'en' | 'de', subject: ExampleSubject): string {
+    const text = noQuestionText[language];
+    const items = subject.kind === 'marked' ? [text.markedDoes, text.markedInDetail]
+        : subject.kind === 'galaxy' ? [text.whatDoes(subject.name), text.whoCalls(subject.name), text.whatCalls(subject.name)]
+            : [text.whatDoes(subject.name), text.inDetail(subject.name)];
+    return items.map(example => `- ${example}`).join('\n');
+}
+const shownPrompt = (typed: string) => typed.replace(/\s+/g, ' ').replace(/["`]/g, "'").trim().slice(0, 40);
+
 /** "No question was recognized in "test"." and two or three questions that work for the selection (C6). */
 export function noQuestionAnswer(typed: string, language: 'en' | 'de', subject: ExampleSubject): string {
     const text = noQuestionText[language];
-    const examples = subject.kind === 'marked' ? [text.markedDoes, text.markedInDetail]
-        : subject.kind === 'galaxy' ? [text.whatDoes(subject.name), text.whoCalls(subject.name), text.whatCalls(subject.name)]
-            : [text.whatDoes(subject.name), text.inDetail(subject.name)];
-    const shown = typed.replace(/\s+/g, ' ').replace(/["`]/g, "'").trim().slice(0, 40);
-    return `${text.heading(shown)}\n\n${examples.map(example => `- ${example}`).join('\n')}\n\n_${text.note}_`;
+    return `${text.heading(shownPrompt(typed))}\n\n${examples(language, subject)}\n\n_${text.note}_`;
+}
+
+/** A follow-up ("und was noch?") right after a change of topic: the earlier turns are about
+ * another topic and are not sent, so the model would answer it without context ("Ja, und
+ * noch."). It asks for the full question with the same examples (B4). */
+export function followUpAnswer(typed: string, language: 'en' | 'de', subject: ExampleSubject, topic: string): string {
+    return `${chatRound3Text[language].followUp(shownPrompt(typed), topic)}\n\n${examples(language, subject)}\n\n_${noQuestionText[language].note}_`;
 }
 
 /** The names a prompt may use for what is at hand: the selection, the symbols around it, the
- * words of the open file or attached code. A prompt that names one of them is a question. */
+ * words of the open file or attached code. A prompt that names one of them is a question.
+ * A greeting or probe ("test", "hallo", "ok") is none of them, even where the file has the
+ * word, unless it is exactly the selection's own name: "test" went to the model whenever the
+ * open file contained it (B5). */
 export function knownNames(sources: { galaxy?: GalaxyEvidence; texts: readonly string[]; names: readonly string[] }): (word: string) => boolean {
     const words = new Set<string>();
     const add = (text: string) => { for (const word of text.match(/[\p{L}\p{N}_][\p{L}\p{N}_.-]*/gu) ?? []) words.add(word.toLowerCase()); };
     sources.texts.forEach(add);
-    sources.names.forEach(name => { words.add(name.toLowerCase()); words.add((name.split(/[/.:]/).filter(Boolean).pop() ?? name).toLowerCase()); });
+    const lastPart = (name: string) => (name.split(/[/.:]/).filter(Boolean).pop() ?? name).toLowerCase();
+    sources.names.forEach(name => { words.add(name.toLowerCase()); words.add(lastPart(name)); });
     const galaxy = sources.galaxy;
     if (galaxy) for (const group of [...galaxy.relationships.incoming, ...galaxy.relationships.outgoing]) for (const file of group.files) file.symbols.forEach(symbol => words.add(symbol.name.toLowerCase()));
     const own = sources.names.map(name => name.toLowerCase()).filter(name => name.length >= 4);
-    return word => words.has(word.toLowerCase()) || own.some(name => withinEdits(word.toLowerCase(), name, typoBudget(name)));
+    const ownNames = new Set(sources.names.flatMap(name => [name.toLowerCase(), lastPart(name)]));
+    return word => {
+        const lower = word.toLowerCase();
+        if (GREETINGS.has(lower)) return ownNames.has(lower);
+        return words.has(lower) || own.some(name => withinEdits(lower, name, typoBudget(name)));
+    };
 }

@@ -34,7 +34,7 @@ const WORKFLOW = 'name: New contributor message\n\non:\n  pull_request_target:\n
 describe('the outline of a configuration file, read from it (C7)', () => {
     it('lists each repo of a pre-commit file with its revision and hooks', () => {
         const outline = fileOutline('.pre-commit-config.yaml', PRE_COMMIT, 'en')!;
-        expect(outline).toContain('`.pre-commit-config.yaml`: YAML configuration, 26 lines. Read from the file:');
+        expect(outline).toContain('`.pre-commit-config.yaml`: YAML configuration, 26 lines.\n\npre-commit configuration: hooks that run before each commit.');
         expect(outline).toContain('- `repos` (list of 5):');
         expect(outline).toContain('  1. repo `https://github.com/psf/black-pre-commit-mirror`; rev `25.1.0`; hooks (1): `black` (exclude `\\.py-tpl$`)');
         expect(outline).toContain('  2. repo `https://github.com/adamchainz/blacken-docs`; rev `1.19.1`; hooks (1): `blacken-docs` '
@@ -45,7 +45,7 @@ describe('the outline of a configuration file, read from it (C7)', () => {
 
     it('writes the outline in German for a German question', () => {
         const outline = fileOutline('.pre-commit-config.yaml', PRE_COMMIT, 'de')!;
-        expect(outline).toContain('`.pre-commit-config.yaml`: YAML-Konfiguration, 26 Zeilen. Aus der Datei gelesen:');
+        expect(outline).toContain('`.pre-commit-config.yaml`: YAML-Konfiguration, 26 Zeilen.\n\npre-commit-Konfiguration: Hooks, die vor jedem Commit laufen.');
         expect(outline).toContain('- `repos` (Liste mit 5 Einträgen):');
         expect(outline).toContain('  4. repo `https://github.com/PyCQA/flake8`; rev `7.1.1`; hooks (1): `flake8`');
         expect(outline).toContain('_Aus der Datei gelesen, nicht vom Modell erzeugt._');
