@@ -61,6 +61,9 @@ export interface BrowserChatTurn {
     historyOmitted?: number;
     /** What the question was about; undefined for a question without context. */
     topic?: ChatTopic;
+    /** The model's answer to a question the chat had answered itself ("Ask the model"). It
+     * stands below that answer instead of replacing it: the listed facts stay (B1). */
+    askedModel?: boolean;
 }
 
 export interface BrowserChatContext {

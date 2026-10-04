@@ -128,3 +128,6 @@
 .cbm-chat-dock .cbm-chat-new { padding: 4px 9px; font-size: 11px; color: #d0e8d8; }
 .cbm-chat-topic-break { display: flex; align-items: center; gap: 8px; margin: 0 0 10px !important; color: var(--chat-muted); font-size: 10px; }
 .cbm-chat-topic-break::before, .cbm-chat-topic-break::after { content: ""; flex: 1 1 16px; border-top: 1px solid var(--chat-border); }
+/* Who wrote an answer reads like the note under a listed answer: quiet, not a warning. */
+.cbm-chat-dock .cbm-chat-model-note { display: block; margin-top: 7px; color: var(--chat-muted); font-size: 11px; font-style: italic; }
+.cbm-chat-dock .cbm-chat-asked-model { display: block; margin-top: 6px; color: var(--chat-muted); font-size: 10px; }

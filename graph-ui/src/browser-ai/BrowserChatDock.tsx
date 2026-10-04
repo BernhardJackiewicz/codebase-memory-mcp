@@ -10,7 +10,7 @@ import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, citedInterpretation, explanation
 import { carriedSource, selectionSubject, SYMBOL_SOURCE_LINES, sourceTargetOf, symbolSource, type SymbolSourceReader } from './symbol-source';
 import { relationshipAnswer, relationshipSuggestion } from './relationship-answer';
 import { clampTokenLimits, tokenLimitBounds, tokenLimitsFor, useAgentPreferences, type TokenLimits } from './agent-preferences';
-import { browserChatText, groundedText, relationshipWords } from './strings';
+import { browserChatText, chatRound3Text, groundedText, relationshipWords } from './strings';
 import { isGpuRuntimeFailure, BrowserRuntimeFatalError } from './runtime-fault';
 import ChatMarkdown from './ChatMarkdown';
 import AgentSettingsDialog from './AgentSettingsDialog';
@@ -56,7 +56,9 @@ type ChatTurn = BrowserChatTurn & { evidence?: PreparedExplanationContext };
 /** `grounded`: the facts are listed in the card, so the prompt's name budget is not the reader's limit. */
 type Explanation = { key: string; label: string; answer: string; status: string; error?: string; packet?: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; mode?: 'interpretation'; shortened?: boolean; limit?: TokenLimits; evidence?: string; grounded?: boolean;
     /** The facts of a configuration or text file, which the model was not asked about (K12). */
-    askable?: boolean };
+    askable?: boolean;
+    /** The answer is the model's text alone, without listed facts: it says so (B1). */
+    generated?: boolean };
 /** Finished explanations per selection, so returning to one does not run the model again. */
 const EXPLANATION_CACHE_SIZE = 32;
 const initialModel = BROWSER_MODELS.find(model => model.availability === 'available')!;
@@ -444,7 +446,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                         ...shortened && checked.sentence ? { shortened, limit: { inputTokens: autoInput, outputTokens: autoOutput } } : {}, ...snapshot.evidence ? { evidence: snapshot.evidence } : {} };
                     remember(complete); setExplanation(complete);
                 } else if (result.status === 'generated') {
-                    const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: checked.sentence ?? result.markdown, status: 'complete', mode: 'interpretation', packet, citation: result.citation,
+                    const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: checked.sentence ?? result.markdown, status: 'complete', mode: 'interpretation', packet, citation: result.citation, generated: true,
                         ...shortened ? { shortened, limit: { inputTokens: autoInput, outputTokens: autoOutput } } : {}, ...snapshot.evidence ? { evidence: snapshot.evidence } : {} };
                     remember(complete); setExplanation(complete);
                 } else setExplanation({ key: snapshot.key, label: snapshot.label, answer: '', status: 'error', packet, error: result.reason });
@@ -727,16 +729,19 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 setError(`This prompt needs ${count.toLocaleString()} input tokens; the local working limit is ${limit.toLocaleString()}. Select less code or start a new conversation. Nothing was sent or shortened without disclosure.`);
                 return;
             }
-            const id = retry?.id ?? `local-turn-${crypto.randomUUID()}`;
+            // The model's answer to a listed, grounded or file answer is a turn of its own below it:
+            // the facts stay where they were (B1). Asking again repeats a model answer in place.
+            const id = retry && !ask ? retry.id : `local-turn-${crypto.randomUUID()}`;
             const historyOmitted = retry && !ask ? retry.historyOmitted
                 : earlier.filter(item => item.status !== 'error' && item.status !== 'generating' && !history.includes(item)).length;
             // A general question shows its facts at once; the model only adds a sentence.
             const writing = grounded ? `${grounded.summary.map(line => `- ${line}`).join('\n')}\n\n_${groundedText[language].writingSentence}_` : '';
             const turn: ChatTurn = { id, prompt, attachment: source, readerContext: reader, context: extra, evidence: packet, modelId: model.id, request, answer: writing, status: 'generating', topic,
-                ...historyOmitted ? { historyOmitted } : {}, ...grounded ? { answeredFrom: 'grounded' as const, listedFrom: grounded.graph, replyLanguage: language } : {} };
+                ...historyOmitted ? { historyOmitted } : {}, ...grounded ? { answeredFrom: 'grounded' as const, listedFrom: grounded.graph, replyLanguage: language } : {},
+                ...ask || retry?.askedModel ? { askedModel: true } : {} };
             activeTurn.current = id;
-            if (retry) setTurns(previous => previous.map(item => item.id === id ? turn : item));
-            else { setTurns(previous => [...previous, turn]); consume(); }
+            if (retry && !ask) setTurns(previous => previous.map(item => item.id === id ? turn : item));
+            else { setTurns(previous => [...previous, turn]); if (!retry) consume(); }
             setPhase('generating');
             let shortened = false;
             const onComplete = ({ stopReason }: { stopReason: string }) => { shortened = stopReason === 'length'; };
@@ -862,6 +867,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 </SourceDisclosure>
                 {explanation?.key === selected.key ? <>
                     <ChatMarkdown text={explanation.answer || (explanation.status === 'generating' ? 'Explaining selection…' : explanation.status === 'stopped' ? 'Explanation stopped.' : '')} />
+                    {explanation.generated && explanation.status === 'complete' && <small className="cbm-chat-model-note">{chatRound3Text.en.modelNote}</small>}
                     {explanation.status !== 'generating' && <AnswerNotes shortened={limitNote(explanation.shortened, explanation.limit, true)} packet={explanation.grounded ? undefined : explanation.packet} model={model.displayName} />}
                     {explanation.error && <p className="cbm-chat-turn-error" role="alert">{explanation.error}</p>}
                     {explanation.status !== 'generating' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready' || !!selected.waiting} onClick={() => {
@@ -872,10 +878,14 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                     : manualRequest.current ? 'This selection will be explained after your answer.' : 'Preparing explanation…'}</p>}
             </section>}
             {turns.length === 0 && !(proactive && automatic && selected) && <div className="cbm-chat-empty"><span aria-hidden="true">⌁</span><h3>Ask about the code.</h3><p>{readerContext ? 'The current file is included automatically. Mark code to focus your next message on that exact selection.' : 'Ask a question, or add source and graph context to your next message.'}</p></div>}
-            {turns.map((turn, index) => { const replyWords = relationshipWords[turn.replyLanguage === 'de' ? 'de' : 'en']; return <article className="cbm-chat-turn" key={turn.id}>
+            {turns.map((turn, index) => { const replyWords = relationshipWords[turn.replyLanguage === 'de' ? 'de' : 'en'];
+                // The model's own answers carry their note in the language of the question (B1).
+                const ownWords = chatRound3Text[turn.replyLanguage ?? questionLanguage(turn.prompt)];
+                return <article className="cbm-chat-turn" key={turn.id}>
                 {turn.topic && index > 0 && turn.topic.key !== turns.slice(0, index).reverse().find(item => item.topic)?.topic?.key
                     && <p className="cbm-chat-topic-break">{browserChatText.topicBreak(turn.topic.label)}</p>}
-                <div className="cbm-chat-question"><span className="cbm-chat-speaker">You</span><ChatMarkdown text={turn.prompt} /></div>
+                <div className="cbm-chat-question"><span className="cbm-chat-speaker">You</span><ChatMarkdown text={turn.prompt} />
+                    {turn.askedModel && <small className="cbm-chat-asked-model">{ownWords.askedModel}</small>}</div>
                 <div className="cbm-chat-answer"><SourceDisclosure>
                     {turn.evidence || turn.attachment || turn.readerContext?.source || turn.context?.length ? <>
                         {turn.evidence ? <PacketSource packet={turn.evidence} /> : <>
@@ -886,12 +896,13 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                     </> : null}
                 </SourceDisclosure><div className="cbm-chat-answer-text"><ChatMarkdown text={turn.answer || (turn.status === 'generating' ? 'Thinking…' : turn.status === 'stopped' ? 'Stopped before an answer.' : '')} /></div>
                     {turn.status === 'stopped' && turn.answer && <small>Stopped · partial answer</small>}
+                    {!turn.answeredFrom && turn.answer && (turn.status === 'complete' || turn.status === 'stopped') && <small className="cbm-chat-model-note">{ownWords.modelNote}</small>}
                     {turn.status !== 'generating' && !turn.answeredFrom && <AnswerNotes shortened={limitNote(turn.shortened, turn.limit)} packet={turn.evidence}
                         unsupported={turn.answer ? namesNotIn(turn.answer, turn.request.map(message => message.content).join('\n')) : []} model={BROWSER_MODELS.find(candidate => candidate.id === turn.modelId)?.displayName ?? turn.modelId} historyOmitted={turn.historyOmitted} />}
                     {turn.status === 'error' && <p className="cbm-chat-turn-error" role="alert">{turn.error}</p>}
                     {index === turns.length - 1 && turn.answeredFrom === 'suggestion' && turn.suggestion && <button type="button" className="cbm-chat-retry"
                         onClick={() => showSuggestedList(turn)}>{replyWords.showList}</button>}
-                    {index === turns.length - 1 && turn.status !== 'generating' && turn.answeredFrom !== 'local' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { void send(turn); }}>{turn.answeredFrom ? replyWords.askModel : 'Retry'}</button>}
+                    {index === turns.length - 1 && turn.status !== 'generating' && turn.answeredFrom !== 'local' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { void send(turn); }}>{turn.answeredFrom ? replyWords.askModel : turn.status === 'error' ? 'Retry' : ownWords.askAgain}</button>}
                 </div>
             </article>; })}
         </div>}
