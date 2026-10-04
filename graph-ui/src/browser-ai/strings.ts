@@ -44,7 +44,8 @@ const englishRelationshipWords = {
     allTypes: 'all relationship types',
     onlyTypes: (types: readonly string[]) => types.length ? `only ${types.join(', ')}` : 'no relationship types',
     size: (nodes: number, edges: number) => `${en(nodes)} ${nodes === 1 ? 'symbol' : 'symbols'} and ${en(edges)} ${edges === 1 ? 'relationship' : 'relationships'}`,
-    complete: 'complete for the indexed graph',
+    /** The scope finished loading; it is not the whole graph (W4). */
+    complete: 'fully loaded',
     loading: 'still loading, so this is a partial preview',
     partial: (error?: string) => `incomplete${error ? `: ${error}` : ''}`,
     /** A layer stopped at the render limit: the layers inside it are whole, it and those further out are not (C1). As the
@@ -110,7 +111,7 @@ export const relationshipWords: { en: RelationshipWords; de: RelationshipWords }
         allTypes: 'alle Beziehungstypen',
         onlyTypes: (types: readonly string[]) => types.length ? `nur ${types.join(', ')}` : 'keine Beziehungstypen',
         size: (nodes: number, edges: number) => `${de(nodes)} ${nodes === 1 ? 'Symbol' : 'Symbole'} und ${de(edges)} ${edges === 1 ? 'Beziehung' : 'Beziehungen'}`,
-        complete: 'vollständig für den indizierten Graphen',
+        complete: 'vollständig geladen',
         loading: 'lädt noch, das ist eine Vorschau',
         partial: (error?: string) => `unvollständig${error ? `: ${error}` : ''}`,
         renderLimited: (layer: number, limit: number, kind: 'nodes' | 'edges') => {

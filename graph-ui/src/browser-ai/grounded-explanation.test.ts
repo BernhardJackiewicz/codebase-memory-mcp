@@ -109,7 +109,7 @@ describe('the selected symbol source in a Galaxy explanation (K14)', () => {
             'Selected: JSONBAgg (Class) in django/contrib/postgres/aggregates/general.py:50-54.',
             'Incoming relationships: 23 from 12 symbols (CALLS 11, TESTS 11, DEFINES 1).',
             'Outgoing relationships: 2 to 2 symbols (INHERITS 2).',
-            'Scope: 1 hop in both directions, all relationship types; 15 symbols and 25 relationships; complete for the indexed graph.',
+            'Scope: 1 hop in both directions, all relationship types; 15 symbols and 25 relationships; fully loaded.',
         ]);
         expect(selectionSummary(djangoAreaEvidence())[0]).toBe('Selected source area: `django` (2310 files · 15299 indexed nodes).');
     });
@@ -120,7 +120,7 @@ describe('the selected symbol source in a Galaxy explanation (K14)', () => {
             + 'so counts and names further out can be incomplete.';
         expect(selectionSummary(jsonbAggRenderLimited()).at(-1)).toBe(partial);
         expect(formatExplanationEvidence(prepareExplanationContext(undefined, jsonbAggRenderLimited(), 3200))).toContain(partial);
-        expect(selectionSummary(jsonbAggRenderLimited()).join('\n')).not.toContain('complete for the indexed graph');
+        expect(selectionSummary(jsonbAggRenderLimited()).join('\n')).not.toContain('fully loaded');
     });
 
     it('checks a German sentence for the same unsupported claims and asks for it in German (C5)', () => {
@@ -140,7 +140,7 @@ describe('the selected symbol source in a Galaxy explanation (K14)', () => {
             'Ausgewählt: JSONBAgg (Class) in django/contrib/postgres/aggregates/general.py:50-54.',
             'Eingehende Beziehungen: 23 aus 12 Symbolen (CALLS 11, TESTS 11, DEFINES 1).',
             'Ausgehende Beziehungen: 2 zu 2 Symbolen (INHERITS 2).',
-            'Ausschnitt: 1 Schritt in beide Richtungen, alle Beziehungstypen; 15 Symbole und 25 Beziehungen; vollständig für den indizierten Graphen.',
+            'Ausschnitt: 1 Schritt in beide Richtungen, alle Beziehungstypen; 15 Symbole und 25 Beziehungen; vollständig geladen.',
         ]);
     });
 });

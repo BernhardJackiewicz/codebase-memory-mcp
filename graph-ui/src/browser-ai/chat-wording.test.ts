@@ -41,3 +41,14 @@ describe('the render limit in the scope sentence (W1)', () => {
             + 'daher können Anzahlen und Namen fehlen, auch bei den direkten Beziehungen.');
     });
 });
+
+describe('a scope that finished loading (W4)', () => {
+    it('says it is fully loaded, not complete for the whole graph', () => {
+        expect(selectionSummary(jsonbAggEvidence()).at(-1)).toBe('Scope: 1 hop in both directions, all relationship types; 15 symbols and 25 relationships; fully loaded.');
+        expect(selectionSummary(jsonbAggEvidence(), 'de').at(-1)).toBe('Ausschnitt: 1 Schritt in beide Richtungen, alle Beziehungstypen; 15 Symbole und 25 Beziehungen; vollständig geladen.');
+        const listed = relationshipAnswer('Who calls JSONBAgg?', [jsonbAggEvidence()])!.markdown + relationshipAnswer('Wer ruft JSONBAgg auf?', [jsonbAggEvidence()])!.markdown;
+        expect(listed).not.toMatch(/complete for the indexed graph|vollständig für den indizierten Graphen/);
+        expect(listed).toContain('fully loaded.');
+        expect(listed).toContain('vollständig geladen.');
+    });
+});

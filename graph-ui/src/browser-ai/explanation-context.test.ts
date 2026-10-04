@@ -145,7 +145,7 @@ describe('bounded explanation evidence', () => {
         const prepared = prepareExplanationContext(undefined, jsonbAggEvidence(), 3200);
         const text = outputText(prepared);
         expect(text).toContain('Selected: JSONBAgg (Class) in django/contrib/postgres/aggregates/general.py:50-54.');
-        expect(text).toContain('Scope: 1 hop in both directions, all relationship types; 15 symbols and 25 relationships; complete for the indexed graph.');
+        expect(text).toContain('Scope: 1 hop in both directions, all relationship types; 15 symbols and 25 relationships; fully loaded.');
         expect(text).toContain('Incoming relationships: 23 from 12 symbols.');
         const line = (type: string) => text.split('\n').find(item => item.startsWith(`- ${type} `)) ?? '';
         for (const type of ['CALLS', 'TESTS']) {
