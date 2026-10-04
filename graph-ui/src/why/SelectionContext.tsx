@@ -3,6 +3,7 @@ import type { GraphData, GraphNode } from '../galaxy/types';
 import type { AgentsState } from '../agents/agent-store';
 import { selectionContext } from './selection-context';
 import { selectionScopeText } from './selection-strings';
+import { graphNodeName } from '../galaxy/node-names';
 import { RelationshipEvidence } from '../architecture/RepositoryMap';
 import type { MapEvidence } from '../architecture/repository-map';
 import type { ScopePartial, TraceDirection } from '../galaxy/graph-scope';
@@ -29,15 +30,16 @@ export default function SelectionContextPanel({ graph, selected, path, agents, o
     scope?: SelectionScope;
 }) {
     const inScope = Boolean(scope && selected && scope.graph.nodes.some(node => selected.qualified_name
-        ? node.qualified_name === selected.qualified_name && node.file_path === path : node.id === selected.id));
+        ? node.qualified_name === selected.qualified_name && (node.file_path ?? '') === path : node.id === selected.id));
     const source = inScope ? scope!.graph : graph;
     const context = useMemo(() => selectionContext(source, selected, path, agents, { allRelations: inScope }), [source, selected, path, agents, inScope]);
     const callers = context.incoming.filter(edge => edge.type === 'CALLS');
     const callerFiles = new Set(callers.map(edge => edge.source.file_path).filter(Boolean));
     return <section className="selection-context" aria-label="Selection context" data-testid="selection-context">
         <h3>Selection context</h3>
-        {!path ? <p>Select a file or symbol to inspect its indexed connections.</p> : <>
-            <p className="selection-context-subject">{selected?.name ?? path}</p>
+        {/* Round 4 (N1): a selected node without a file, such as a Branch node, keeps its connections and its shown name. */}
+        {!path && !selected ? <p>{selectionScopeText.selectSomething}</p> : <>
+            <p className="selection-context-subject">{selected ? graphNodeName(selected) : path}</p>
             <h4>Graph evidence</h4>
             {!source ? <p>The repository graph is not available. Relevance cannot be established yet.</p> : <>
                 {scope && <p className="selection-context-source" data-source={inScope ? 'scope' : 'snapshot'}>{inScope ? selectionScopeText.fromScope(scope.depth) : selectionScopeText.fromSnapshot}</p>}
@@ -71,7 +73,7 @@ export default function SelectionContextPanel({ graph, selected, path, agents, o
                     </details>
                 </li>)}</ul>}
             </details>}
-            <div className="selection-context-actions"><button onClick={() => onNavigate(path, context.selected?.start_line, context.selected?.name)}>Read source evidence</button>
+            <div className="selection-context-actions">{path && <button onClick={() => onNavigate(path, context.selected?.start_line, context.selected?.name)}>{selectionScopeText.readSource}</button>}
                 {onImpact && <button onClick={onImpact}>Assess change impact</button>}</div>
         </>}
     </section>;

@@ -656,7 +656,8 @@ describe('GalaxyPanel und die Hierarchie', () => {
     it('sagt es, wenn nichts von diesem Walk im Fokus steht', async () => {
         await render(props({ walk: walkOf() }));
         expect(seam().pulsedQn).toBe('');
-        expect(noteText()).toContain('nothing of this walk is in focus');
+        // Runde 4 (N2): in einfachen Worten, und nur neben dem Reader von Explore.
+        expect(noteText()).toBe('None of these nodes is open in Explore; the ring marks the symbol open there.');
     });
 
     it('oeffnet einen angeklickten Knoten der Projektion ueber denselben Weg', async () => {

@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import type { BrowserChatContext } from '../browser-ai/chat-model';
 import { fairShares } from '../browser-ai/galaxy-evidence';
 import type { GraphScope } from './graph-scope';
+import { scopeDisplayName } from './node-names';
 import type { GraphEdge, GraphNode } from './types';
 
 export type SelectionEvidenceListener = (context: BrowserChatContext | undefined) => void;
@@ -26,8 +27,9 @@ export function graphNodeEvidence(node: GraphNode) {
 }
 
 /** Related symbols of one edge type and direction, grouped by file. `count` is
- * complete; `files` lists at most `RELATED_NAMES_PER_GROUP` symbols. */
-export interface RelationshipGroup { type: string; count: number; files: { path: string; symbols: { name: string; kind?: string }[] }[] }
+ * complete; `files` lists at most `RELATED_NAMES_PER_GROUP` symbols. A reader
+ * gives a Branch symbol the `project` of the snapshot, for its shown name. */
+export interface RelationshipGroup { type: string; count: number; files: { path: string; symbols: { name: string; kind?: string; project?: string }[] }[] }
 export interface ScopeRelationships {
     incomingSymbols: number;
     outgoingSymbols: number;
@@ -124,10 +126,12 @@ export interface GalaxyScope {
 }
 
 /** Every scope edge is classified against the roots first; only the names are
- * bounded afterwards. Render budgets are a drawing concern and stay out of it. */
+ * bounded afterwards. Render budgets are a drawing concern and stay out of it.
+ * The label is the name the Galaxy shows ("django-demo · detached HEAD" for a
+ * Branch node, round 4, N1); the snapshot keeps the names of the index. */
 export function galaxyScopeEvidence(scope: GalaxyScope): SelectionEvidence {
     const roots = scope.nodes.filter(node => scope.roots.has(node.id));
-    return { project: scope.project, view: 'galaxy', source: 'query_graph scoped indexed relationships', label: scope.identity.name,
+    return { project: scope.project, view: 'galaxy', source: 'query_graph scoped indexed relationships', label: scopeDisplayName(scope.identity),
         selected: { scope: scope.identity, rootCount: roots.length, roots: roots.slice(0, ROOTS_LISTED).map(root => ({ ...graphNodeEvidence(root),
             documentation: root.documentation?.slice(0, ROOT_DOCUMENTATION_CHARACTERS) })), omittedRoots: Math.max(0, roots.length - ROOTS_LISTED) },
         scope: { depth: scope.depth, direction: scope.direction, edgeTypes: scope.edgeTypes, nodes: scope.nodes.length, edges: scope.edges.length },

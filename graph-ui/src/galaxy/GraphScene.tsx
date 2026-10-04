@@ -132,6 +132,7 @@ import { ScreenNodeSeparation } from './ScreenNodeSeparation';
 import { PathLayer, pathNodeIds, type ScenePath } from './PathLayer';
 import { pathFrame } from './path-frame';
 import { markerNameRect, placeMarkerNames, type MarkerName } from './marker-names';
+import { graphNodeName } from './node-names';
 import type { LabelBox } from './NodeLabels';
 import { FRAME_MIN_DISTANCE, containShift, fitCamera, flatBounds, frameDistance, orthographicZoom } from './camera-frame';
 import type { CameraFit, FrameBox } from './camera-frame';
@@ -483,8 +484,9 @@ export function RootMarkers({ nodes }: { nodes: readonly GraphNode[] }): JSX.Ele
         for (const node of nodes) {
             const name = markers.current.get(node.id)?.querySelector('b');
             if (!name) continue;
-            let size = sizes.current.get(node.name);
-            if (!size && name.offsetWidth > 0) { size = { width: name.offsetWidth, height: name.offsetHeight }; sizes.current.set(node.name, size); }
+            const shown = graphNodeName(node);
+            let size = sizes.current.get(shown);
+            if (!size && name.offsetWidth > 0) { size = { width: name.offsetWidth, height: name.offsetHeight }; sizes.current.set(shown, size); }
             if (!size) continue;
             point.set(node.x, node.y, node.z).project(camera);
             if (!(point.z >= -1 && point.z <= 1)) continue;
@@ -514,7 +516,7 @@ export function RootMarkers({ nodes }: { nodes: readonly GraphNode[] }): JSX.Ele
                     <span className="atlas-galaxy-root-marker" data-testid="atlas-galaxy-root-marker" data-qn={node.qualified_name ?? node.name}
                         ref={(element) => { if (element) markers.current.set(node.id, element); else markers.current.delete(node.id); }}>
                         <i aria-hidden="true" />
-                        <b>{node.name}</b>
+                        <b>{graphNodeName(node)}</b>
                     </span>
                 </Html>
             ))}

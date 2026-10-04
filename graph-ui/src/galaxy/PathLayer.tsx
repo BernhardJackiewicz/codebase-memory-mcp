@@ -21,6 +21,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { edgeColor } from '../graph/edge-style';
+import { graphNodeName } from './node-names';
 import { placeAlongSegment, type ScreenRect } from './path-frame';
 import type { ScopePathStep } from './scope-path';
 import type { GraphNode } from './types';
@@ -180,7 +181,7 @@ export function PathLayer({ nodes, path, namedRoots }: {
                         <span className="atlas-galaxy-path-node" data-active={active} data-node={node.id}
                             {...(active ? { 'data-testid': 'atlas-galaxy-path-step' } : {})}>
                             <i aria-hidden="true" />
-                            <b>{node.name}</b>
+                            <b>{graphNodeName(node)}</b>
                         </span>
                     </Html>
                 );

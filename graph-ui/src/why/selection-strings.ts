@@ -6,6 +6,8 @@
 const byType = (types: readonly [string, number][]) => types.map(([type, count]) => `${type} ${count.toLocaleString()}`).join(' · ');
 
 export const selectionScopeText = {
+    selectSomething: 'Select a file or symbol to inspect its indexed connections.',
+    readSource: 'Read source evidence',
     incoming: (count: number, types: readonly [string, number][]) =>
         `Incoming relationships · ${count.toLocaleString()}${types.length ? ` (${byType(types)})` : ''}`,
     outgoing: (count: number, types: readonly [string, number][]) =>

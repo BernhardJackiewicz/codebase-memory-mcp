@@ -42,7 +42,9 @@ export function scopeFetch({ nodes, edges, gate, degrees = {} }: ScopeFetchOptio
             rows = nodes.filter(entry => names.includes(entry.qualified_name ?? ''))
                 .map(entry => [String(entry.id), String(degrees[entry.id]?.in ?? 0), String(degrees[entry.id]?.out ?? 0)]);
         } else if (query.startsWith('MATCH (n)')) {
-            cols = columns(''); rows = nodes.filter(entry => names.includes(entry.qualified_name ?? '')).map(values);
+            // A file scope finds its roots by path.
+            const files = [...query.matchAll(/n\.file_path = "([^"]+)"/g)].map(match => match[1]);
+            cols = columns(''); rows = nodes.filter(entry => names.includes(entry.qualified_name ?? '') || files.includes(entry.file_path ?? '')).map(values);
         } else {
             if (gate) await gate();
             const inbound = query.startsWith('MATCH (b)<-');

@@ -2,19 +2,25 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { RpcIntelligenceClient } from '../provider/rpc-client';
 import type { SearchGraphHit } from '../provider/rpc-schemas';
 import type { GraphScope } from './graph-scope';
+import { galaxyNodeNameText } from './galaxy-strings';
+import { graphNodeName, graphNodeTitle, nodeDisplayName, nodeFilePath } from './node-names';
 import type { GraphNode } from './types';
 
 export const FOCUS_GALAXY_SEARCH = 'cbm:focus-galaxy-search';
-interface Choice { key: string; name: string; detail: string; kind: string; scope: GraphScope; node?: GraphNode }
+/** `name` is the shown name (a Branch node reads "django-demo · detached HEAD", round 4, N1); `title` keeps the one of the index. */
+interface Choice { key: string; name: string; title?: string; detail: string; kind: string; scope: GraphScope; node?: GraphNode }
 /** Server hits also expose selectable file/folder clusters outside the layout. */
 export function choicesFromSearchHits(hits: readonly SearchGraphHit[]): Choice[] {
     const choices = new Map<string, Choice>();
     for (const hit of hits) {
-        if (hit.qualified_name) choices.set(hit.qualified_name, { key: hit.qualified_name, name: hit.name,
-            detail: hit.file_path ?? hit.qualified_name, kind: hit.label ?? 'Symbol',
+        const file = nodeFilePath({ ...hit });
+        const shown = nodeDisplayName({ name: hit.name, label: hit.label, qualifiedName: hit.qualified_name });
+        if (hit.qualified_name) choices.set(hit.qualified_name, { key: hit.qualified_name, name: shown,
+            ...shown !== hit.name ? { title: galaxyNodeNameText.branchTitle(shown, hit.name, hit.qualified_name) } : {},
+            detail: file ?? hit.qualified_name, kind: hit.label ?? 'Symbol',
             scope: { kind: 'symbol', qualifiedName: hit.qualified_name, name: hit.name } });
-        if (!hit.file_path) continue;
-        const path = hit.file_path.replace(/\\/g, '/');
+        if (!file) continue;
+        const path = file.replace(/\\/g, '/');
         choices.set(path, { key: path, name: path, kind: 'File', detail: 'Indexed file', scope: { kind: 'file', path, name: path } });
         const parts = path.split('/');
         for (let i = 1; i < parts.length; i++) {
@@ -70,16 +76,19 @@ export default function GalaxyNavigator({ nodes, onSelect, onSelectScope, projec
         const needle = query.trim().toLocaleLowerCase();
         const choices: Choice[] = [], paths = new Map<string, number>();
         for (const node of nodes) {
-            if (node.file_path) {
-                paths.set(node.file_path, (paths.get(node.file_path) ?? 0) + 1);
-                const parts = node.file_path.split('/');
+            const file = nodeFilePath(node);
+            if (file) {
+                paths.set(file, (paths.get(file) ?? 0) + 1);
+                const parts = file.split('/');
                 for (let i = 1; i < parts.length; i++) {
                     const directory = parts.slice(0, i).join('/') + '/'; paths.set(directory, (paths.get(directory) ?? 0) + 1);
                 }
             }
-            if (!needle || [node.name, node.qualified_name, node.file_path].some(value => value?.toLocaleLowerCase().includes(needle))) {
-                choices.push({ key: node.qualified_name ?? `node:${node.id}`, name: node.name,
-                    detail: node.file_path ?? node.qualified_name ?? node.label, kind: node.label,
+            const shown = graphNodeName(node);
+            if (!needle || [shown, node.name, node.qualified_name, file].some(value => value?.toLocaleLowerCase().includes(needle))) {
+                choices.push({ key: node.qualified_name ?? `node:${node.id}`, name: shown,
+                    ...shown !== node.name ? { title: graphNodeTitle(node) } : {},
+                    detail: file ?? node.qualified_name ?? node.label, kind: node.label,
                     scope: { kind: 'node', id: node.id, name: node.name, qualifiedName: node.qualified_name }, node });
             }
         }
@@ -97,7 +106,7 @@ export default function GalaxyNavigator({ nodes, onSelect, onSelectScope, projec
     const results = <>
         {status && <small role="status">{status}</small>}
         <ul>{matches.map(choice => <li key={choice.key}>
-            <button type="button" onClick={() => {
+            <button type="button" title={choice.title} onClick={() => {
                 if (choice.node) onSelect(choice.node); else onSelectScope?.(choice.scope);
                 if (details.current) details.current.open = false;
                 setPickerOpen(false);

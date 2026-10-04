@@ -1,6 +1,6 @@
 import type { BrowserChatAttachment, BrowserChatContext, BrowserChatReaderContext, BrowserChatTurn } from './chat-model';
-import { readGalaxyEvidence } from './galaxy-evidence';
-import { browserChatContextText } from './strings';
+import { readGalaxyEvidence, selectionName } from './galaxy-evidence';
+import { browserChatContextText, relationshipWords } from './strings';
 
 /** What a question is about: the open file, the selected graph item, attached code or
  * attached context, within one project and view. Turns about another one are another
@@ -14,7 +14,8 @@ export function chatTopic(scope: string, sources: { reader?: BrowserChatReaderCo
     if (graph) {
         // The selected item itself; depth, direction and edge types only redraw its scope.
         const galaxy = readGalaxyEvidence(graph.text);
-        return { kind: 'graph', label: galaxy?.label ?? graph.label, key: JSON.stringify([scope, 'graph', galaxy ? galaxy.identity : graph.label]) };
+        // Named as the Galaxy names it, a Branch node "django-demo · detached HEAD" (round 4, N1); the key stays the identity.
+        return { kind: 'graph', label: galaxy ? selectionName(galaxy, relationshipWords.en) : graph.label, key: JSON.stringify([scope, 'graph', galaxy ? galaxy.identity : graph.label]) };
     }
     if (attachment) return { kind: 'attachment', label: attachment.path, key: JSON.stringify([scope, 'attachment', attachment.path]) };
     if (context.length) return { kind: 'context', label: context.map(item => item.label).join(', '), key: JSON.stringify([scope, 'context', ...context.map(item => item.id)]) };

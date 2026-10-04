@@ -1,7 +1,7 @@
 import { identifierNamesIn, mentionsIn, quotedNamesIn } from '../compiler/question-classifier';
 import type { BrowserChatContext } from './chat-model';
 import type { RelationshipGroup } from '../galaxy/selection-evidence';
-import { readGalaxyEvidence, relationshipLine, scopeSentence, sideLoaded, type GalaxyEvidence } from './galaxy-evidence';
+import { readGalaxyEvidence, relationshipLine, scopeSentence, selectionName, sideLoaded, type GalaxyEvidence } from './galaxy-evidence';
 import { relationshipWords, type RelationshipWords } from './strings';
 
 type Side = 'incoming' | 'outgoing';
@@ -179,7 +179,8 @@ function listedLine(group: RelationshipGroup, side: Side, words: RelationshipWor
  * reads as a caller (C2). */
 function listed(question: RelationshipQuestion, evidence: GalaxyEvidence): string {
     const words = relationshipWords[question.language];
-    const name = quote(evidence.label);
+    // The selection as the Galaxy names it: a Branch node is "django-demo · detached HEAD" (round 4, N1).
+    const name = quote(selectionName(evidence, words));
     const sections: string[] = [];
     for (const side of question.sides) {
         const unlisted = words.unlisted(side, name);

@@ -22,8 +22,9 @@ export interface SelectionContext {
 export function selectionContext(graph: GraphData | undefined, selected: GraphNode | undefined,
     path: string, agents?: AgentsState, options: { allRelations?: boolean } = {}): SelectionContext {
     const result: SelectionContext = { selected, incoming: [], outgoing: [], incomingByType: [], outgoingByType: [], entryPath: [], pathSearchLimited: false, activity: [] };
-    if (!path) return result;
-    for (const actor of agents?.actors ?? []) {
+    // A selected node without a file (a Branch node, round 4, N1) still has its relationships; only a file has activity.
+    if (!path && !selected) return result;
+    for (const actor of path ? agents?.actors ?? [] : []) {
         if (actor.you) continue;
         for (const event of actor.events) {
             if (event.path === path) result.activity.push({ agent: actor.name, event });
@@ -37,8 +38,8 @@ export function selectionContext(graph: GraphData | undefined, selected: GraphNo
     // against this snapshot before attributing any relationship to a selection.
     if (selected) {
         selected = graph.nodes.find(candidate => selected!.qualified_name
-            ? candidate.qualified_name === selected!.qualified_name && candidate.file_path === path
-            : candidate.id === selected!.id && candidate.name === selected!.name && candidate.file_path === path);
+            ? candidate.qualified_name === selected!.qualified_name && (candidate.file_path ?? '') === path
+            : candidate.id === selected!.id && candidate.name === selected!.name && (candidate.file_path ?? '') === path);
         result.selected = selected;
         if (!selected) return result;
     }

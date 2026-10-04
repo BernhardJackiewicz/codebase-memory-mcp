@@ -193,3 +193,55 @@ export const galaxyToolbarText = {
     expandNarrow: '+1',
     outsideLimits: (nodes: number, edges: number) => `${nodes.toLocaleString()} nodes · ${edges.toLocaleString()} edges outside render limits`,
 };
+
+/**
+ * The names of Branch nodes (hand test 2026-10-04, round 4, N1). The index
+ * puts one Branch node above the top level folders and files: the checkout it
+ * read. Its own name is the branch, "DETACHED" for a detached HEAD or
+ * "working-tree" where no branch is known, and on its own that read like a
+ * folder of that name. The shown name says what it is; the real one stays in
+ * the tooltip and the detail line (node-names.ts).
+ */
+export interface BranchNameWords {
+    detached: string;
+    workingTree: string;
+    branch: (name: string) => string;
+    /** The project in front: "django-demo · detached HEAD". */
+    inProject: (project: string, what: string) => string;
+}
+
+export const galaxyNodeNameText: BranchNameWords & {
+    indexName: (name: string, qualifiedName?: string) => string;
+    branchTitle: (shown: string, name: string, qualifiedName?: string) => string;
+} = {
+    detached: 'detached HEAD',
+    workingTree: 'working tree',
+    branch: (name: string) => `branch ${name}`,
+    inProject: (project: string, what: string) => `${project} · ${what}`,
+    /** The detail line of the hover card. */
+    indexName: (name: string, qualifiedName?: string) => `Name in the index: ${name}${qualifiedName ? ` (${qualifiedName})` : ''}`,
+    /** The tooltip wherever the shown name stands. */
+    branchTitle: (shown: string, name: string, qualifiedName?: string) =>
+        `${shown}: the checkout the index read, above its top level folders and files. Name in the index: ${name}${qualifiedName ? ` (${qualifiedName})` : ''}.`,
+};
+
+/** What a click on a node in the hover card will do. */
+export const galaxyCardText = {
+    nothingToOpen: 'no file in the index: nothing to open',
+    openFile: 'click to open the file and follow the twin',
+};
+
+/**
+ * The hierarchy without anything to show, and its ring (hand test
+ * 2026-10-04, round 4, N2). The ring follows the symbol open in Explore's
+ * reader, so the note about it stands only beside that reader; in the Galaxy
+ * tab the root of a scope stands in the middle of its hierarchy.
+ */
+export const galaxyHierarchyNoteText = {
+    /** The hierarchy chip beside Explore while there is no walk and no open symbol. */
+    unavailable: 'hierarchy: open a symbol or choose where to start, then this shows what it reaches',
+    /** The hierarchy chip in the Galaxy tab before a node is selected. */
+    unavailableWorkspace: 'hierarchy: select a node first, then this shows what reaches it and what it reaches',
+    /** Beside Explore, when no node of the walk is the symbol open there. */
+    noFocus: 'None of these nodes is open in Explore; the ring marks the symbol open there.',
+};

@@ -140,7 +140,8 @@ import GalaxyNavigator from './GalaxyNavigator';
 import { TraceEdgeFilter } from './TraceEdgeFilter';
 import { PathPicker, PathSteps } from './ScopePathControls';
 import { callOrder, pathNodes, shortestScopePath, type ScopePathStep } from './scope-path';
-import { galaxyHierarchyText, galaxyHistoryText, galaxyLayerText, galaxyPathText, galaxyToolbarText } from './galaxy-strings';
+import { galaxyHierarchyNoteText, galaxyHierarchyText, galaxyHistoryText, galaxyLayerText, galaxyPathText, galaxyToolbarText } from './galaxy-strings';
+import { graphNodeName, nodeFilePath, scopeDisplayName, scopeTitle } from './node-names';
 import { HierarchyBandLabel, HierarchyEdgeLabels } from './HierarchyEdgeLabels';
 import { FitLabel, useToolbarFit } from './toolbar-fit';
 import { emptyNavigationHistory, moveNavigation, peekNavigation, pushNavigation } from '../graph/navigation-history';
@@ -149,7 +150,7 @@ import { galaxyHistoryOptions, historyEntryDetail, historyEntryLabel, scopeIdent
 import { useOrganicLayout } from './use-organic-layout';
 import RenderProgress from './RenderProgress';
 import { useGraphScope } from './use-graph-scope';
-import { SCOPED_HIERARCHY_LABEL_BUDGET, SCOPED_HIERARCHY_LABEL_MAX_TEXT_WIDTH, expandPastLimit, limitGraphRender, nextLayerEstimate, scenePictureFor, scopedHierarchy, type ExpandOutlook } from './graph-scope';
+import { SCOPED_HIERARCHY_LABEL_BUDGET, SCOPED_HIERARCHY_LABEL_MAX_TEXT_WIDTH, expandPastLimit, hierarchyLabelWidth, limitGraphRender, nextLayerEstimate, scenePictureFor, scopedHierarchy, type ExpandOutlook } from './graph-scope';
 import './graph-exploration.css';
 import { layoutNodeForSelection } from './selected-node';
 import { galaxyScopeEvidence, useSelectionEvidence, type SelectionEvidenceListener } from './selection-evidence';
@@ -238,20 +239,14 @@ export type GraphMode = 'galaxy' | 'hierarchy';
 /** Die beiden Chips, in der Reihenfolge, in der sie im Kopf stehen. */
 export const GRAPH_MODES: readonly GraphMode[] = ['galaxy', 'hierarchy'];
 
-/**
- * Was der `hierarchy`-Chip sagt, solange es weder Walk noch Fokus gibt.
- *
- * Seit W10b nennt er BEIDE Wege, weil es seitdem beide gibt (AC3): ein Symbol
- * im Fokus genuegt, ein Einstiegs-Spaziergang ist der andere Weg. Ein Knopf, der
- * nur den umstaendlicheren nennt, schickt den Leser auf den Umweg, den dieser
- * Zyklus gerade abgeschafft hat.
+/*
+ * Was der `hierarchy`-Chip sagt, solange es weder Walk noch Fokus gibt, und
+ * was das Panel sagt, wenn kein Knoten des Walks im Reader offen ist, stehen
+ * seit Runde 4 (N2) in galaxy-strings.ts (`galaxyHierarchyNoteText`). Seit
+ * W10b nennt der Chip BEIDE Wege (AC3): ein offenes Symbol genuegt, ein
+ * gewaehlter Start ist der andere Weg; im Galaxy-Tab ist es ein gewaehlter
+ * Knoten.
  */
-export const HIERARCHY_UNAVAILABLE_TITLE =
-    'hierarchy: open a symbol or pick a way in first, then this shows what it reaches';
-
-/** Was das Panel in der Hierarchie sagt, wenn der Leser ausserhalb des Walks steht. */
-export const HIERARCHY_NO_FOCUS_NOTE =
-    'nothing of this walk is in focus: the ring follows the symbol in front of the reader';
 
 /**
  * Wie die Szene im hierarchy-Modus eingestellt ist.
@@ -1271,7 +1266,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     const trailView = useMemo(() => {
         // Handtest K5: Pfad und Aufrufreihe auch in der Hierarchie eines Ausschnitts.
         if (!props.workspaceExpanded || (mode !== 'galaxy' && !scopedProjection) || trail?.key !== organicKey || !data || !scope.result) return undefined;
-        const names = new Map(data.nodes.map(node => [node.id, node.name]));
+        const names = new Map(data.nodes.map(node => [node.id, graphNodeName(node)]));
         const nameOf = (id: number) => names.get(id) ?? `#${id}`;
         if (trail.kind === 'calls') {
             return { nameOf, lines: true, labels: 'active' as const, steps: rootCalls,
@@ -1626,7 +1621,11 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
             return;
         }
         if (mode === 'hierarchy' && projection !== undefined) {
-            const box = hierarchyFrame(projection);
+            // In der Hierarchie eines Ausschnitts rahmt die Kamera die Namen in ihrer Breite (Runde 4, N1); ohne Namen zaehlt der Punkt.
+            const box = hierarchyFrame(projection, projection === scopedProjection ? (placement) => {
+                const node = projection.data.nodes[placement.id];
+                return node === undefined || (scopedNamedIds !== undefined && !scopedNamedIds.has(placement.id)) ? 0 : hierarchyLabelWidth(graphNodeName(node));
+            } : undefined);
             const target = computeFrameTarget(box, aspect);
             // Erst eine Einpassung, die wirklich lief, verbraucht die Anfrage:
             // ein Scope, dessen Bild noch angeordnet wird, passt danach ein.
@@ -1688,7 +1687,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         };
         // `scope.result` folgt dem Bild und loest selbst keine Einpassung aus.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [visible, mode, projection, picture, aspect, requestedFit, ownFit, coverageShadow, fitRequest, props.workspaceExpanded, fitScope]);
+    }, [visible, mode, projection, picture, aspect, requestedFit, ownFit, coverageShadow, fitRequest, props.workspaceExpanded, fitScope, scopedProjection, scopedNamedIds]);
 
     const [backgroundCleared, setBackgroundCleared] = useState(false);
     useEffect(() => {
@@ -1857,6 +1856,18 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     }, [backgroundCleared, mode, readerHierarchyActive, focusQualifiedName, stepQualifiedName, index]);
 
     /*
+     * Ob die Notiz zum Ring gilt (Runde 4, N2). Der Ring folgt dem Symbol, das
+     * im Reader von Explore offen ist; die Notiz sagt, dass keiner der Knoten
+     * dieses ist. Das gilt nur neben dem Reader: im Galaxy-Tab steht die
+     * Wurzel eines Ausschnitts markiert in der Mitte, und Explore ist dort
+     * nicht zu sehen. Ein Klick ins Leere blendet den Ring aus, macht die
+     * Notiz aber nicht wahr; darum zaehlt hier das Bild und nicht der Ring.
+     */
+    const hierarchyNoFocusNote = useMemo(() => !props.workspaceExpanded
+        && ![focusQualifiedName, stepQualifiedName].some((candidate) => candidate !== undefined && candidate.length > 0 && index.has(candidate))
+        ? galaxyHierarchyNoteText.noFocus : '', [props.workspaceExpanded, focusQualifiedName, stepQualifiedName, index]);
+
+    /*
      * In der Hierarchie bleibt alles hell.
      *
      * In der Galaxie dunkelt die Szene alles ausser der Nachbarschaft ab, und
@@ -1872,8 +1883,8 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
             return;
         }
         setHighlighted(new Set(projection.data.nodes.map((node) => node.id)));
-        setNote(readerProjection ? readerProjection.message : pulsedNode === undefined ? HIERARCHY_NO_FOCUS_NOTE : '');
-    }, [mode, projection, pulsedNode, readerProjection]);
+        setNote(readerProjection ? readerProjection.message : hierarchyNoFocusNote);
+    }, [mode, projection, pulsedNode, readerProjection, hierarchyNoFocusNote]);
 
     // Rueck-Richtung: ein Klick in die Szene oeffnet die Datei.
     const handleNodeClick = useCallback(
@@ -1896,7 +1907,8 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                 setNote('');
                 return;
             }
-            if (node.file_path === undefined || node.file_path.length === 0) {
+            const file = nodeFilePath(node);
+            if (file === undefined || file.length === 0) {
                 setNote(unopenableNodeNote(node));
                 return;
             }
@@ -1914,10 +1926,10 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
         scope.reset();
         changeTraceTypes(undefined);
         setHighlighted(null);
-        setNote(props.workspaceExpanded ? '' : mode === 'hierarchy' ? readerProjection?.message ?? HIERARCHY_NO_FOCUS_NOTE : GALAXY_NO_FOCUS_NOTE);
+        setNote(props.workspaceExpanded ? '' : mode === 'hierarchy' ? readerProjection?.message ?? hierarchyNoFocusNote : GALAXY_NO_FOCUS_NOTE);
         refitNow();
         props.onClearSelection?.();
-    }, [mode, refitNow, props.onClearSelection, readerProjection, scope.reset, props.workspaceExpanded, changeTraceTypes, clearTrail]);
+    }, [mode, refitNow, props.onClearSelection, readerProjection, scope.reset, props.workspaceExpanded, changeTraceTypes, clearTrail, hierarchyNoFocusNote]);
     /*
      * Ein Klick ins Leere hebt im Ausschnitt nur die Markierung auf (Handtest
      * K9). Bis dahin verliess er den Ausschnitt samt Ebenen und Pfad, ohne
@@ -2055,7 +2067,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                     <button type="button" disabled={current} aria-current={current ? 'true' : undefined} onClick={() => {
                         recentMenu.close();
                         jumpToRecent(entry);
-                    }}><strong>{entry.scope?.name}</strong><span>{historyEntryDetail(entry)}</span></button>
+                    }}><strong>{entry.scope && scopeDisplayName(entry.scope)}</strong><span>{historyEntryDetail(entry)}</span></button>
                 </li>;
             })}</ul>
         </details>}
@@ -2073,8 +2085,13 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     useToolbarFit(explorationBar, Boolean(props.workspaceExpanded && scope.scope));
 
     /* Was die Leiste sonst noch braucht (K3): Quelle der Wurzel, Gruppen und was ausserhalb der Limits liegt. */
-    const openRoot = props.workspaceExpanded && scopedRoot?.file_path
+    const openRoot = props.workspaceExpanded && scopedRoot && nodeFilePath(scopedRoot)
         ? () => props.onOpenNode(layoutNodeForSelection(layout, scopedRoot) ?? scopedRoot) : undefined;
+    /* Runde 4 (N1): die Wurzel heisst, wie die Galaxie sie zeigt; ein Branch-Knoten "django-demo · detached HEAD". */
+    // Ordner und Dateien behalten ihren Pfad; ein Knoten nimmt seine Art von der geladenen Wurzel, wo es sie gibt.
+    const rootShown = !scope.scope ? ''
+        : (scope.scope.kind === 'node' || scope.scope.kind === 'symbol') && scopedRoot && scopedRoot.qualified_name === scope.scope.qualifiedName
+            ? graphNodeName(scopedRoot) : scopeDisplayName(scope.scope);
     const groupCount = mode === 'galaxy' && organic ? organic.groups.length : 0;
     const groupsText = groupCount > 1 ? galaxyToolbarText.groupsTitle(groupCount) : undefined;
     const outsideLimits = props.workspaceExpanded && data && shown && (shown.nodes.length < data.nodes.length || shown.edges.length < data.edges.length)
@@ -2493,7 +2510,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                                     name={`graph-mode-${candidate}`}
                                     text={
                                         candidate === 'hierarchy' && projection === undefined
-                                            ? HIERARCHY_UNAVAILABLE_TITLE
+                                            ? props.workspaceExpanded ? galaxyHierarchyNoteText.unavailableWorkspace : galaxyHierarchyNoteText.unavailable
                                             : !visible
                                                 ? graphModeCollapsedTitle(candidate)
                                                 : mode === candidate && candidate === 'galaxy' && !props.workspaceExpanded
@@ -2626,9 +2643,9 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                       * die Tastatur weiter im Menue "⋯".
                       */}
                     {props.workspaceExpanded && openRoot
-                        ? <button type="button" className="atlas-graph-scope-name" data-fit-whole="" onClick={openRoot} aria-label={galaxyToolbarText.openRootLabel(scope.scope.name)}
-                            title={galaxyToolbarText.openRootTitle(scope.scope.name, scopedRoot?.file_path ?? '', scopedRoot?.start_line)}>{scope.scope.name}</button>
-                        : <strong className="atlas-graph-scope-name" data-fit-whole="" title={scope.scope.name}>{scope.scope.name}</strong>}
+                        ? <button type="button" className="atlas-graph-scope-name" data-fit-whole="" onClick={openRoot} aria-label={galaxyToolbarText.openRootLabel(rootShown)}
+                            title={galaxyToolbarText.openRootTitle(rootShown, scopedRoot?.file_path ?? '', scopedRoot?.start_line)}>{rootShown}</button>
+                        : <strong className="atlas-graph-scope-name" data-fit-whole="" title={scopeTitle(scope.scope)}>{rootShown}</strong>}
                     {props.workspaceExpanded && <select aria-label="Trace direction" title={galaxyToolbarText.traceTitle} value={scope.direction}
                         onChange={event => scope.setDirection(event.target.value as 'both' | 'inbound' | 'outbound')}>
                         <option value="both">Both directions</option><option value="inbound">Incoming</option><option value="outbound">Outgoing</option>
@@ -2660,7 +2677,7 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                             <FitLabel wide={galaxyToolbarText.expand} narrow={galaxyToolbarText.expandNarrow} /></button>
                     </Hint>
                     {props.workspaceExpanded && (mode === 'galaxy' || scopedProjection) && <>
-                        <PathPicker nodes={pathCandidates} onPick={node => { setTrail({ key: organicKey, kind: 'path', target: node.id, name: node.name }); setTrailStep(0); }} />
+                        <PathPicker nodes={pathCandidates} onPick={node => { setTrail({ key: organicKey, kind: 'path', target: node.id, name: graphNodeName(node) }); setTrailStep(0); }} />
                         <button type="button" disabled={rootCalls.length === 0} aria-pressed={trail?.key === organicKey && trail.kind === 'calls'}
                             title={rootCalls.length ? galaxyPathText.callOrderTitle : galaxyPathText.callOrderUnavailable}
                             onClick={() => { if (trail?.key === organicKey && trail.kind === 'calls') clearTrail(); else { setTrail({ key: organicKey, kind: 'calls' }); setTrailStep(0); } }}>
