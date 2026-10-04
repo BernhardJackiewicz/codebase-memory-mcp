@@ -395,6 +395,10 @@ const englishRound3Text = {
     backTo: (label: string) => `Back to: ${label}. Earlier messages about it are sent again.`,
     /** A follow-up ("und was noch?") right after a change of topic (B4). */
     followUp: (typed: string, label: string) => `"${typed}" refers to earlier messages. Those were about another topic and are not sent with questions about ${label}. Please ask the full question, for example:`,
+    /** Above the lines read from the selected code (B2). */
+    inSource: 'In the source:',
+    moreMembers: (total: number) => `+${total.toLocaleString('en-US')} more ${total === 1 ? 'attribute or method' : 'attributes and methods'}`,
+    moreLines: (total: number) => `+${counted(total, 'more line', 'more lines')}`,
     /** The first line of a file outline; the note under it says where it was read (B7). */
     outlineHeading: (name: string, kind: string, lines: number) => `${name}: ${kind}, ${counted(lines, 'line', 'lines')}.`,
     iniKind: 'INI configuration',
@@ -423,6 +427,9 @@ export const chatRound3Text: { en: typeof englishRound3Text; de: typeof englishR
         askAgain: 'Erneut fragen',
         backTo: (label: string) => `Zurück zu: ${label}. Die früheren Nachrichten dazu werden wieder mitgeschickt.`,
         followUp: (typed: string, label: string) => `"${typed}" bezieht sich auf frühere Nachrichten. Die betrafen ein anderes Thema und werden mit Fragen zu ${label} nicht mitgeschickt. Stell die Frage bitte vollständig, zum Beispiel:`,
+        inSource: 'Im Quelltext:',
+        moreMembers: (total: number) => `+${total.toLocaleString('de-DE')} ${total === 1 ? 'weiteres Attribut oder weitere Methode' : 'weitere Attribute und Methoden'}`,
+        moreLines: (total: number) => `+${gezaehlt(total, 'weitere Zeile', 'weitere Zeilen')}`,
         outlineHeading: (name: string, kind: string, lines: number) => `${name}: ${kind}, ${gezaehlt(lines, 'Zeile', 'Zeilen')}.`,
         iniKind: 'INI-Konfiguration',
         purposes: {
