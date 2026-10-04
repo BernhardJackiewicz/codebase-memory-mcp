@@ -132,6 +132,55 @@ export function codeFacts(source: { text: string; path: string }, subject?: { na
     return (fence === 'python' ? pythonFacts(lines, subject?.name) : undefined) ?? definitionLine(lines, subject?.name, fence);
 }
 
+const LANGUAGES: Readonly<Record<string, string>> = { python: 'Python', typescript: 'TypeScript', javascript: 'JavaScript', go: 'Go', rust: 'Rust', java: 'Java', c: 'C', cpp: 'C++',
+    ruby: 'Ruby', bash: 'Shell', kotlin: 'Kotlin', csharp: 'C#', php: 'PHP', swift: 'Swift' };
+/** At most this many definitions are named; the rest is counted. */
+const DEFINITIONS = 8;
+const PYTHON_DEFINITION = /^(?:async\s+)?(def|class)\s+([A-Za-z_]\w*)/;
+const DEFINITION = /^(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:abstract\s+)?(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(function\*?|class|interface|type|enum|struct|trait|fn|func|const|let|var)\s+([A-Za-z_$][\w$]*)/;
+
+/** The definitions at the outermost indent of the code: "class ArrayAgg", "def ordered". */
+function definitionsOf(lines: readonly string[], fence: string): string[] {
+    const code = lines.filter(line => line.trim() && !/^\s*(?:#|\/\/|\/\*|\*)/.test(line));
+    const outer = Math.min(...code.map(indentOf));
+    return code.filter(line => indentOf(line) === outer).flatMap(line => {
+        const match = (fence === 'python' ? PYTHON_DEFINITION : DEFINITION).exec(line.trim());
+        return match ? [`${match[1]} ${match[2]}`] : [];
+    });
+}
+
+/** The first line of a Python module docstring. */
+function moduleDocstring(lines: readonly string[]): string | undefined {
+    const at = lines.findIndex(line => line.trim() && !line.trim().startsWith('#'));
+    const doc = at >= 0 ? docstring(lines, at - 1, '') : [];
+    const text = doc.at(-1)?.replace(/^[rubRUB]{0,2}("""|''')/, '').replace(/("""|''')$/, '').trim();
+    return text || undefined;
+}
+
+/** An open code file or marked code as facts read from it, for a short general question: what it
+ * is and how long, a module's docstring, its definitions, and the code facts of a single marked
+ * symbol (B3). `names` are the definitions' names, by which a question may ask about it. */
+export function codeSourceFacts(source: { text: string; path: string; kind: 'file' | 'selection'; startLine: number; endLine: number }, language: 'en' | 'de'): { summary: string[]; code?: string; names: string[] } {
+    const words = chatRound3Text[language];
+    const fence = FENCES[extension(source.path)] ?? '';
+    const kind = words.codeKind(LANGUAGES[fence] ?? '');
+    const name = `\`${(source.path.split('/').pop() ?? source.path).replace(/`/g, "'")}\``;
+    const lines = source.text.replace(/\r\n?/g, '\n').replace(/\n$/, '').split('\n');
+    const defined = source.text.trim() ? definitionsOf(lines, fence) : [];
+    const names = defined.map(item => item.split(' ').pop()!);
+    const listed = (where: 'file' | 'marked') => defined.length ? [words.definitions(defined.length, defined.slice(0, DEFINITIONS).map(item => `\`${item}\``), where)] : [];
+    if (source.kind === 'file') {
+        const doc = fence === 'python' ? moduleDocstring(lines) : undefined;
+        return { summary: [words.outlineHeading(name, kind, lines.length), ...doc ? [words.moduleDocstring(bounded(doc))] : [], ...listed('file')], names };
+    }
+    const marked = words.marked(source.startLine, source.endLine, name, kind);
+    // One marked class or function: its own lines say what it declares (B2).
+    const first = lines.find(line => line.trim() && !/^\s*(?:#|\/\/|@)/.test(line));
+    const single = defined.length === 1 && first !== undefined && (fence === 'python' ? PYTHON_DEFINITION : DEFINITION).test(first.trim());
+    const facts = single ? codeFacts(source, { name: names[0] }) : undefined;
+    return { summary: [marked, ...single ? [] : listed('marked')], ...facts ? { code: codeFactsMarkdown(facts, language) } : {}, names };
+}
+
 /** "In the source:" with the lines as a code block and what did not fit, in the language of the question. */
 export function codeFactsMarkdown(facts: CodeFacts, language: 'en' | 'de'): string {
     const words = chatRound3Text[language];

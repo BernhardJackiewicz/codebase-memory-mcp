@@ -139,7 +139,7 @@ describe('persistent local browser chat', () => {
     it('sends exact selection text once and keeps its immutable snapshot for the sent turn', async () => {
         const { props, runtime } = fixture();
         const original = { ...selection };
-        await render({ ...props, attachment: original }); await click('Download & load'); await type('Explain this part'); await click('Send ↑');
+        await render({ ...props, attachment: original }); await click('Download & load'); await type('How is this part computed?'); await click('Send ↑');
         const sent = runtime.chat.mock.calls[0][0].at(-1)!;
         expect(attachmentData(sent)).toMatchObject({ path: selection.path, sourceVersion: selection.sourceVersion });
         expect(sent.content.includes(selection.text)).toBe(true);
@@ -172,7 +172,7 @@ describe('persistent local browser chat', () => {
 
     it('retries the same request and attachment without consuming a new selection', async () => {
         const { props, runtime } = fixture(); runtime.chat.mockRejectedValueOnce(new Error('GPU interrupted'));
-        await render({ ...props, attachment: selection }); await click('Download & load'); await type('Explain'); await click('Send ↑');
+        await render({ ...props, attachment: selection }); await click('Download & load'); await type('How is it computed?'); await click('Send ↑');
         const request = runtime.chat.mock.calls[0][0];
         expect(container.textContent).toContain('GPU interrupted');
         await render({ ...props, attachment: { ...selection, id: 'new-selection', text: 'new source' } });
@@ -186,7 +186,7 @@ describe('persistent local browser chat', () => {
         const { props, runtime } = fixture();
         const answer = deferred<string>(); let stream!: (chunk: string) => void;
         runtime.chat.mockImplementationOnce((_messages, onToken) => { stream = onToken; return answer.promise; });
-        await render({ ...props, attachment: selection }); await click('Download & load'); await type('Explain'); await click('Send ↑');
+        await render({ ...props, attachment: selection }); await click('Download & load'); await type('How is it computed?'); await click('Send ↑');
         await act(async () => stream('First part.')); await click('Stop');
         expect(runtime.stop).toHaveBeenCalledOnce(); expect(button('Stopping…').disabled).toBe(true);
         await type('Next question');
@@ -238,7 +238,7 @@ describe('persistent local browser chat', () => {
     it('does not move scroll position while the reader is inspecting earlier output', async () => {
         const { props, runtime } = fixture(); const answer = deferred<string>(); let stream!: (chunk: string) => void;
         runtime.chat.mockImplementationOnce((_messages, onToken) => { stream = onToken; return answer.promise; });
-        await render({ ...props, attachment: selection }); await click('Download & load'); await type('Explain'); await click('Send ↑');
+        await render({ ...props, attachment: selection }); await click('Download & load'); await type('How is it computed?'); await click('Send ↑');
         const log = container.querySelector('.cbm-chat-transcript') as HTMLDivElement;
         Object.defineProperties(log, { scrollHeight: { configurable: true, value: 1000 }, clientHeight: { configurable: true, value: 200 } });
         log.scrollTop = 100;
@@ -259,7 +259,7 @@ describe('persistent local browser chat', () => {
     it('unloads an active worker and ignores stale output while retaining its sent question', async () => {
         const { props, runtime } = fixture(); const answer = deferred<string>(); let stream!: (chunk: string) => void;
         runtime.chat.mockImplementationOnce((_messages, onToken) => { stream = onToken; return answer.promise; });
-        await render({ ...props, attachment: selection }); await click('Download & load'); await type('Explain'); await click('Send ↑'); await models();
+        await render({ ...props, attachment: selection }); await click('Download & load'); await type('How is it computed?'); await click('Send ↑'); await models();
         await act(async () => stream('Partial answer')); await click('Unload model');
         await act(async () => { stream('Ignored stale chunk'); answer.resolve('Ignored stale final'); });
         expect(runtime.dispose).toHaveBeenCalledOnce(); expect(container.textContent).toContain('Partial answer');
@@ -359,11 +359,11 @@ describe('persistent local browser chat', () => {
     it('refreshes one system source from file to literal selection to a different file without accumulating code', async () => {
         const { props, runtime } = fixture();
         await render({ ...props, readerContext: reader('WHOLE_FIRST_FILE') });
-        await click('Download & load'); await type('Explain the file'); await click('Send ↑');
+        await click('Download & load'); await type('Which values does the file add?'); await click('Send ↑');
         await render({ ...props, readerContext: reader(selection.text, 'selection') });
-        await type('Explain the marked code'); await click('Send ↑');
+        await type('Which values does the marked code add?'); await click('Send ↑');
         await render({ ...props, readerContext: reader('WHOLE_SECOND_FILE', 'file', 'src/other.ts') });
-        await type('Explain this other file'); await click('Send ↑');
+        await type('Which values does this other file add?'); await click('Send ↑');
         const requests = runtime.chat.mock.calls.map(call => call[0]);
         expect(requests[0][0].content).toContain('WHOLE_FIRST_FILE');
         expect(requests[1][0].content).toContain(selection.text);
@@ -372,8 +372,8 @@ describe('persistent local browser chat', () => {
         expect(requests[2].map(message => message.content).join('\n')).not.toContain('WHOLE_FIRST_FILE');
         expect(requests[2].map(message => message.content).join('\n')).not.toContain(selection.text);
         // The marked code is in the same file and keeps the conversation; another file starts a new topic (K17).
-        expect(requests[1].filter(message => message.role === 'user').map(message => message.content)).toEqual(['Explain the file', 'Answer in English.\n\nExplain the marked code']);
-        expect(requests[2].filter(message => message.role === 'user').map(message => message.content)).toEqual(['Answer in English.\n\nExplain this other file']);
+        expect(requests[1].filter(message => message.role === 'user').map(message => message.content)).toEqual(['Which values does the file add?', 'Answer in English.\n\nWhich values does the marked code add?']);
+        expect(requests[2].filter(message => message.role === 'user').map(message => message.content)).toEqual(['Answer in English.\n\nWhich values does this other file add?']);
         expect(props.onAttachmentConsumed).not.toHaveBeenCalled();
         expect(container.querySelectorAll('.cbm-chat-answer .cbm-chat-attachment')).toHaveLength(3);
         await render(props); await type('Ask from another workspace'); await click('Send ↑');
@@ -385,7 +385,7 @@ describe('persistent local browser chat', () => {
         const { props, runtime } = fixture(); const count = deferred<number>();
         runtime.countTokens.mockReturnValueOnce(count.promise);
         const original = reader('ORIGINAL_LITERAL\r\n\t  ', 'selection');
-        await render({ ...props, readerContext: original }); await click('Download & load'); await type('Explain'); await click('Send ↑');
+        await render({ ...props, readerContext: original }); await click('Download & load'); await type('How is it computed?'); await click('Send ↑');
         const counted = runtime.countTokens.mock.calls[0][0];
         original.source!.text = 'MUTATED_AFTER_COUNT';
         await render({ ...props, readerContext: reader('NEW_CURRENT_FILE', 'file', 'new.ts') });
@@ -400,7 +400,7 @@ describe('persistent local browser chat', () => {
 
     it('retries an automatic request exactly while newer source is loading', async () => {
         const { props, runtime } = fixture(); runtime.chat.mockRejectedValueOnce(new Error('GPU interrupted'));
-        await render({ ...props, readerContext: reader('ORIGINAL_RETRY_SOURCE') }); await click('Download & load'); await type('Explain'); await click('Send ↑');
+        await render({ ...props, readerContext: reader('ORIGINAL_RETRY_SOURCE') }); await click('Download & load'); await type('How is it computed?'); await click('Send ↑');
         const request = runtime.chat.mock.calls[0][0];
         await render({ ...props, readerContext: { project: 'sample', path: 'loading.ts', status: 'loading' } });
         await type('New question');
@@ -1092,7 +1092,7 @@ describe('graph answers and answer limits', () => {
             options?.onComplete?.({ stopReason: 'length' }); return 'A long answer that';
         });
         await render({ ...props, attachment: selection }); await click('Download & load');
-        await type('Explain this part'); await click('Send ↑');
+        await type('How is this part computed?'); await click('Send ↑');
         const note = container.querySelector<HTMLDetailsElement>('.cbm-chat-turn details.cbm-chat-limit-note');
         expect(note?.querySelector('summary')?.textContent).toBe('Token limit reached: the answer was cut short');
         expect(note?.textContent).toContain('all 256 output tokens');
@@ -1112,7 +1112,7 @@ describe('graph answers and answer limits', () => {
             options?.onComplete?.({ stopReason: 'length' }); return 'A long answer that';
         });
         await render({ ...props, attachment: selection }); await click('Download & load');
-        await type('Explain this part'); await click('Send ↑');
+        await type('How is this part computed?'); await click('Send ↑');
         const note = container.querySelector<HTMLDetailsElement>('.cbm-chat-turn details.cbm-chat-limit-note');
         expect(note?.textContent).toContain('The output limit is at the maximum of 512 tokens for this model.');
         expect([...note?.querySelectorAll('button') ?? []].map(item => item.textContent)).not.toContain('Change the output limit');
@@ -1327,7 +1327,7 @@ describe('agent configuration limits', () => {
         await setLimit('cbm-chat-output-tokens', 128); await setLimit('cbm-chat-input-tokens', 1024);
         await click('Download & load');
         runtime.countTokens.mockResolvedValueOnce(1500);
-        await type('Explain'); await click('Send ↑');
+        await type('How is it computed?'); await click('Send ↑');
         expect(runtime.chat).not.toHaveBeenCalled();
         expect(container.textContent).toMatch(/the local working limit is 1\D?024\./);
         await click('Send ↑');

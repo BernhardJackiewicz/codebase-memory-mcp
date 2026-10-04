@@ -8,7 +8,7 @@ import { explanationInput, EXPLANATION_DELAY_MS, type ExplanationInput } from '.
 import { prepareExplanationContext, selectionSummary, type PreparedExplanationContext } from './explanation-context';
 import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, citedInterpretation, explanationMode, explanationSentence, namesNotIn, parseExplanationResponse, explanationMessages, formatExplanationEvidence } from './explanation-response';
 import { carriedSource, selectionSubject, SYMBOL_SOURCE_LINES, sourceTargetOf, symbolSource, type SymbolSourceReader } from './symbol-source';
-import { codeFacts, codeFactsMarkdown } from './code-facts';
+import { codeFacts, codeFactsMarkdown, codeSourceFacts } from './code-facts';
 import { relationshipAnswer, relationshipSuggestion } from './relationship-answer';
 import { clampTokenLimits, tokenLimitBounds, tokenLimitsFor, useAgentPreferences, type TokenLimits } from './agent-preferences';
 import { browserChatText, chatRound3Text, groundedText, relationshipWords } from './strings';
@@ -60,6 +60,10 @@ type Explanation = { key: string; label: string; answer: string; status: string;
     askable?: boolean;
     /** The answer is the model's text alone, without listed facts: it says so (B1). */
     generated?: boolean };
+/** The shape of an explanation for a short general question: facts listed from the graph or read
+ * from an open code file or marked code, the lines of the selected code, one checked sentence (C5, B3). */
+type Grounded = { summary: string[]; code?: string; subject?: { name: string; kind?: string } }
+    & ({ from: 'graph'; graph: BrowserChatContext; reader?: undefined } | { from: 'file'; reader: BrowserChatReaderContext; graph?: undefined });
 /** Finished explanations per selection, so returning to one does not run the model again. */
 const EXPLANATION_CACHE_SIZE = 32;
 const initialModel = BROWSER_MODELS.find(model => model.availability === 'available')!;
@@ -80,9 +84,8 @@ const SOURCE_CACHE_SIZE = 32;
  * language of that question (C5). `code` says what the code declares when the sentence is
  * dropped, as it was for JSONBAgg every time (B2). */
 function groundedExplanation(summary: readonly string[], sentence: string | undefined, dropped: boolean, from: 'graph' | 'file' = 'graph', language: 'en' | 'de' = 'en', code?: string): string {
-    const words = groundedText[language];
-    const note = from === 'file' ? sentence ? browserChatText.fileFactsAndSentence : dropped ? browserChatText.fileSentenceDropped : browserChatText.fileFactsOnly
-        : sentence ? words.factsAndSentence : dropped ? words.sentenceDropped : words.factsOnly;
+    const words = from === 'file' ? chatRound3Text[language].fileNotes : groundedText[language];
+    const note = sentence ? words.factsAndSentence : dropped ? words.sentenceDropped : words.factsOnly;
     return [summary.map(line => `- ${line}`).join('\n'), ...code ? [code] : [], ...sentence ? [sentence] : [], `_${note}_`].join('\n\n');
 }
 /** The same while the model writes its sentence. */
@@ -678,9 +681,17 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             return;
         }
         // A short general question about a Galaxy selection gets the shape of its explanation: the
-        // listed facts and one checked model sentence, in the language of the question (C5).
-        const grounded = !retry && !source && !extra.length && galaxy && generalQuestion(prompt, galaxyNames(galaxy)) === 'general'
-            ? { graph: currentGraph[0], summary: selectionSummary(currentGraph[0], language), subject: selectionSubject(currentGraph[0]) } : undefined;
+        // listed facts and one checked model sentence, in the language of the question (C5). So
+        // does one about an open code file or marked code, with the facts read from it (B3).
+        const codeSource: BrowserChatSource | undefined = !retry && !extra.length && !galaxy
+            ? fileSource ? !isDataFile(fileSource.path) && !fileSource.partial ? fileSource : undefined : source ? { ...source, kind: 'selection' } : undefined : undefined;
+        const codeFound = codeSource ? codeSourceFacts(codeSource, language) : undefined;
+        const grounded: Grounded | undefined = !retry && !source && !extra.length && galaxy && generalQuestion(prompt, galaxyNames(galaxy)) === 'general'
+            ? { from: 'graph', graph: currentGraph[0], summary: selectionSummary(currentGraph[0], language), subject: selectionSubject(currentGraph[0]) }
+            : codeSource && codeFound && generalQuestion(prompt, [codeSource.path, ...codeFound.names]) === 'general'
+                ? { from: 'file', reader: { project: codeSource.project, path: codeSource.path, status: 'ready', source: codeSource }, summary: codeFound.summary, code: codeFound.code } : undefined;
+        const groundedPacket = (budget: number, symbol?: BrowserChatSource) => grounded?.from === 'file' ? prepareExplanationContext(grounded.reader, [], budget)
+            : prepareExplanationContext(undefined, packetGraph, budget, symbol);
         // Answers about another file or selection stay out (K17); those of this topic come along,
         // also from before the reader went elsewhere and came back (B4).
         const earlier = topicHistory(ask ? turns.filter(item => item.id !== retry.id) : turns, topic);
@@ -694,16 +705,16 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             if (manualRequest.current === queued) manualRequest.current = undefined;
             return;
         }
-        if (grounded) packet = prepareExplanationContext(undefined, packetGraph, 3200, symbol);
+        if (grounded) packet = groundedPacket(3200, symbol);
         else if ((!retry || askFrom) && ((reader?.source?.text.length ?? 0) > 5000 || packetGraph.length)) packet = prepareExplanationContext(reader, packetGraph, chatEvidence, symbol);
         // What the selected symbol's code declares, whatever the model's sentence says (B2).
-        const declared = grounded && symbol && grounded.subject ? codeFacts(symbol, grounded.subject) : undefined;
-        const code = declared ? codeFactsMarkdown(declared, language) : undefined;
+        const declared = grounded?.from === 'graph' && symbol && grounded.subject ? codeFacts(symbol, grounded.subject) : undefined;
+        const code = grounded?.code ?? (declared ? codeFactsMarkdown(declared, language) : undefined);
         // Without source the model could only restate the facts: they are the answer (K7).
         if (grounded && explanationMode(packet!) === 'graph') {
             if (manualRequest.current === queued) manualRequest.current = undefined;
-            setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, context: extra, topic, listedFrom: grounded.graph, replyLanguage: language, evidence: packet,
-                modelId: model.id, request: [], answer: groundedExplanation(grounded.summary, undefined, false, 'graph', language), status: 'complete', answeredFrom: 'grounded' }]);
+            setTurns(previous => [...previous, { id: `local-turn-${crypto.randomUUID()}`, prompt, context: extra, topic, ...grounded.graph ? { listedFrom: grounded.graph } : {}, replyLanguage: language, evidence: packet,
+                modelId: model.id, request: [], answer: groundedExplanation(grounded.summary, undefined, false, grounded.from, language), status: 'complete', answeredFrom: 'grounded' }]);
             consume();
             return;
         }
@@ -727,7 +738,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             const limit = grounded ? autoInput : Math.min(limits.inputTokens, model.contextTokens - limits.outputTokens);
             // The sentence of a general question is bounded like that of an automatic explanation.
             for (let budget = 1900; grounded && count > limit && budget >= 300; budget = Math.floor(budget * .6)) {
-                packet = prepareExplanationContext(undefined, packetGraph, budget, symbol);
+                packet = groundedPacket(budget, symbol);
                 request = explanationMessages(packet, grounded.subject, language); count = await currentRuntime.countTokens(request);
                 if (epoch.current !== ticket || stopRequested.current) return;
             }
@@ -755,7 +766,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             // A general question shows its facts at once; the model only adds a sentence.
             const writing = grounded ? writingExplanation(grounded.summary, groundedText[language].writingSentence, code) : '';
             const turn: ChatTurn = { id, prompt, attachment: source, readerContext: reader, context: extra, evidence: packet, modelId: model.id, request, answer: writing, status: 'generating', topic,
-                ...historyOmitted ? { historyOmitted } : {}, ...grounded ? { answeredFrom: 'grounded' as const, listedFrom: grounded.graph, replyLanguage: language } : {},
+                ...historyOmitted ? { historyOmitted } : {}, ...grounded ? { answeredFrom: 'grounded' as const, ...grounded.graph ? { listedFrom: grounded.graph } : {}, replyLanguage: language } : {},
                 ...ask || retry?.askedModel ? { askedModel: true } : {} };
             activeTurn.current = id;
             if (retry && !ask) setTurns(previous => previous.map(item => item.id === id ? turn : item));
@@ -772,7 +783,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 // One sentence beside the facts, checked like the sentence of the explanation card.
                 const result = parseExplanationResponse(output, packet!);
                 const checked = !stopRequested.current && result.status === 'generated' ? explanationSentence(result.markdown, packet!, request.map(message => message.content).join('\n')) : {};
-                const answer = groundedExplanation(grounded.summary, checked.sentence, checked.dropped !== undefined, 'graph', language, code);
+                const answer = groundedExplanation(grounded.summary, checked.sentence, checked.dropped !== undefined, grounded.from, language, code);
                 setTurns(previous => previous.map(item => item.id === id ? { ...item, answer, status: stopRequested.current ? 'stopped' : 'complete' } : item));
                 return;
             }
@@ -784,7 +795,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
             const explanation = messageOf(failure);
             const id = activeTurn.current;
             if (id) setTurns(previous => previous.map(turn => turn.id === id ? { ...turn, status: stopRequested.current ? 'stopped' : 'error', error: stopRequested.current ? undefined : explanation,
-                ...grounded ? { answer: groundedExplanation(grounded.summary, undefined, false, 'graph', language, code) } : {} } : turn));
+                ...grounded ? { answer: groundedExplanation(grounded.summary, undefined, false, grounded.from, language, code) } : {} } : turn));
             else if (!stopRequested.current) setError(explanation);
         } finally {
             if (manualRequest.current === queued) manualRequest.current = undefined;

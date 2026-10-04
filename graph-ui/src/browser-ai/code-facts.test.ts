@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { codeFacts, codeFactsMarkdown } from './code-facts';
+import { codeFacts, codeFactsMarkdown, codeSourceFacts } from './code-facts';
 
 const JSONB_AGG = 'class JSONBAgg(OrderableAggMixin, Aggregate):\n    function = "JSONB_AGG"\n    template = "%(function)s(%(distinct)s%(expressions)s %(order_by)s)"\n'
     + '    allow_distinct = True\n    output_field = JSONField()\n';
@@ -43,6 +43,20 @@ describe('facts read from the selected code (B2)', () => {
         const ts = '/** Adds. */\nexport function sum(a: number, b: number): number {\n    return a + b;\n}\n';
         expect(codeFacts(at(ts, 'src/sum.ts'), { name: 'sum', kind: 'Function' })).toEqual({ fence: 'typescript', more: 0, unit: 'lines', lines: ['export function sum(a: number, b: number): number'] });
         expect(codeFacts(at('', 'src/sum.ts'), { name: 'sum' })).toBeUndefined();
+    });
+
+    it('describes an open code file and marked code by what is read from them (B3)', () => {
+        const file = { text: `"""\nPostgreSQL aggregates.\n"""\n\n${JSONB_AGG}\n\n${ARRAY_AGG}\ndef helper():\n    pass\n`, path: 'django/contrib/postgres/aggregates/general.py', kind: 'file' as const, startLine: 1, endLine: 20 };
+        expect(codeSourceFacts(file, 'en')).toEqual({ names: ['JSONBAgg', 'ArrayAgg', 'helper'], summary: ['`general.py`: Python source file, 22 lines.',
+            'Module docstring: "PostgreSQL aggregates."', 'Top-level definitions (3): `class JSONBAgg`, `class ArrayAgg`, `def helper`.'] });
+        const marked = { ...file, kind: 'selection' as const, text: TEST_METHOD, path: 'tests/postgres_tests/test_aggregates.py', startLine: 200, endLine: 202 };
+        const one = codeSourceFacts(marked, 'de');
+        expect(one.summary).toEqual(['Markierte Zeilen 200 bis 202 von `test_aggregates.py` (Python-Quelltext).']);
+        expect(one.code).toContain('Im Quelltext:\n\n```python\ndef test_jsonb_agg(self):');
+        const two = codeSourceFacts({ ...marked, text: `${TEST_METHOD}\n    def test_other(self):\n        pass\n`, startLine: 200, endLine: 205 }, 'en');
+        expect(two).toEqual({ names: ['test_jsonb_agg', 'test_other'], summary: ['Marked lines 200-205 of `test_aggregates.py` (Python source file).',
+            'Definitions in the marked code (2): `def test_jsonb_agg`, `def test_other`.'] });
+        expect(codeSourceFacts({ ...marked, text: 'a + b', path: 'src/sum.ts', startLine: 3, endLine: 3 }, 'en').summary).toEqual(['Marked line 3 of `sum.ts` (TypeScript source file).']);
     });
 
     it('writes the facts as a code block under "In the source:" in the language of the question', () => {

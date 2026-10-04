@@ -399,6 +399,14 @@ const englishRound3Text = {
     inSource: 'In the source:',
     moreMembers: (total: number) => `+${total.toLocaleString('en-US')} more ${total === 1 ? 'attribute or method' : 'attributes and methods'}`,
     moreLines: (total: number) => `+${counted(total, 'more line', 'more lines')}`,
+    /** An open code file or marked code as facts read from it, for a short general question (B3). */
+    codeKind: (language: string) => language ? `${language} source file` : 'source file',
+    marked: (start: number, end: number, name: string, kind: string) => `${start === end ? `Marked line ${start}` : `Marked lines ${start}-${end}`} of ${name} (${kind}).`,
+    moduleDocstring: (text: string) => `Module docstring: "${text}"`,
+    definitions: (total: number, items: readonly string[], where: 'file' | 'marked') =>
+        `${where === 'file' ? 'Top-level definitions' : 'Definitions in the marked code'} (${total.toLocaleString('en-US')}): ${items.join(', ')}${total > items.length ? `, +${(total - items.length).toLocaleString('en-US')} more` : ''}.`,
+    /** Who wrote which part of an answer about a file (K12), in the language of the question. */
+    fileNotes: { factsAndSentence: browserChatText.fileFactsAndSentence, factsOnly: browserChatText.fileFactsOnly, sentenceDropped: browserChatText.fileSentenceDropped },
     /** The first line of a file outline; the note under it says where it was read (B7). */
     outlineHeading: (name: string, kind: string, lines: number) => `${name}: ${kind}, ${counted(lines, 'line', 'lines')}.`,
     iniKind: 'INI configuration',
@@ -430,6 +438,16 @@ export const chatRound3Text: { en: typeof englishRound3Text; de: typeof englishR
         inSource: 'Im Quelltext:',
         moreMembers: (total: number) => `+${total.toLocaleString('de-DE')} ${total === 1 ? 'weiteres Attribut oder weitere Methode' : 'weitere Attribute und Methoden'}`,
         moreLines: (total: number) => `+${gezaehlt(total, 'weitere Zeile', 'weitere Zeilen')}`,
+        codeKind: (language: string) => language ? `${language}-Quelltext` : 'Quelltext',
+        marked: (start: number, end: number, name: string, kind: string) => `${start === end ? `Markierte Zeile ${start}` : `Markierte Zeilen ${start} bis ${end}`} von ${name} (${kind}).`,
+        moduleDocstring: (text: string) => `Docstring des Moduls: "${text}"`,
+        definitions: (total: number, items: readonly string[], where: 'file' | 'marked') =>
+            `${where === 'file' ? 'Definitionen auf oberster Ebene' : 'Definitionen im markierten Code'} (${total.toLocaleString('de-DE')}): ${items.join(', ')}${total > items.length ? `, +${(total - items.length).toLocaleString('de-DE')} weitere` : ''}.`,
+        fileNotes: {
+            factsAndSentence: 'Fakten aus der Datei gelesen; der Text danach ist vom Modell erzeugt.',
+            factsOnly: 'Aus der Datei gelesen, nicht vom Modell erzeugt.',
+            sentenceDropped: 'Aus der Datei gelesen. Der Text des Modells nannte etwas, das die Datei nicht zeigt, und wurde weggelassen.',
+        },
         outlineHeading: (name: string, kind: string, lines: number) => `${name}: ${kind}, ${gezaehlt(lines, 'Zeile', 'Zeilen')}.`,
         iniKind: 'INI-Konfiguration',
         purposes: {
