@@ -64,10 +64,17 @@ const englishRelationshipWords = {
     internal: (summary: string) => `Between the selected symbols: ${summary}.`,
     beyond: (summary: string) => `Further out in the scope: ${summary}.`,
     callersOf: (name: string) => `Callers of ${name} in the loaded graph`,
-    calleesOf: (name: string) => `Called by ${name} in the loaded graph`,
+    calleesOf: (name: string) => `What ${name} calls in the loaded graph`,
+    /** The total of a listed answer: "23 incoming relationships from 12 symbols", never "23 from 12" (C2). */
+    total: (side: 'incoming' | 'outgoing', total: number, symbols?: number) => `${en(total)} ${side} ${total === 1 ? 'relationship' : 'relationships'}`
+        + `${symbols === undefined ? '' : ` ${side === 'incoming' ? 'from' : 'to'} ${en(symbols)} ${symbols === 1 ? 'symbol' : 'symbols'}`}.`,
+    /** One edge type of a listed answer with the number of its symbols: "TESTS (11)". */
+    typeCount: (type: string, count: number) => `${type} (${en(count)})`,
+    /** What an incoming DEFINES edge from a file, module or class says about the selection. */
+    definer: (kind: string, count: number, name: string) => count === 1 ? `the ${kind.toLowerCase()} that defines ${name}` : `the ${kind.toLowerCase()}s that define ${name}`,
     noCalls: (name: string, side: 'incoming' | 'outgoing') => side === 'incoming'
         ? `No CALLS edge reaches ${name} in this scope.` : `${name} has no outgoing CALLS edge in this scope.`,
-    otherRelationships: 'Other relationships in the same direction:',
+    otherRelationships: (side: 'incoming' | 'outgoing') => `Other ${side} relationships:`,
     noRelationships: 'None in this scope.',
     notLoaded: (side: 'incoming' | 'outgoing'): string => side === 'incoming'
         ? 'The current scope does not follow incoming relationships. Trace incoming or both directions, then ask again.'
@@ -102,7 +109,7 @@ export const relationshipWords: { en: RelationshipWords; de: RelationshipWords }
             + (layer > 1 ? 'Anzahlen und Namen weiter außen können daher fehlen' : 'Anzahlen und Namen können daher fehlen, auch bei den direkten Beziehungen'),
         exhausted: 'dahinter folgt nichts mehr',
         scope: (shape: string, size: string, state: string) => `Ausschnitt: ${shape}; ${size}; ${state}.`,
-        incoming: (total: number, symbols?: number) => `Eingehende Beziehungen: ${de(total)}${symbols === undefined ? '' : ` von ${de(symbols)} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
+        incoming: (total: number, symbols?: number) => `Eingehende Beziehungen: ${de(total)}${symbols === undefined ? '' : ` aus ${de(symbols)} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
         outgoing: (total: number, symbols?: number) => `Ausgehende Beziehungen: ${de(total)}${symbols === undefined ? '' : ` zu ${de(symbols)} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
         noIncoming: 'Eingehende Beziehungen: keine in diesem Ausschnitt.',
         noOutgoing: 'Ausgehende Beziehungen: keine in diesem Ausschnitt.',
@@ -114,10 +121,18 @@ export const relationshipWords: { en: RelationshipWords; de: RelationshipWords }
         internal: (summary: string) => `Zwischen den ausgewählten Symbolen: ${summary}.`,
         beyond: (summary: string) => `Weiter außen im Ausschnitt: ${summary}.`,
         callersOf: (name: string) => `Aufrufer von ${name} im geladenen Graphen`,
-        calleesOf: (name: string) => `Von ${name} aufgerufen, im geladenen Graphen`,
+        calleesOf: (name: string) => `Was ${name} im geladenen Graphen aufruft`,
+        total: (side: 'incoming' | 'outgoing', total: number, symbols?: number) => `${de(total)} ${side === 'incoming' ? 'eingehende' : 'ausgehende'} ${total === 1 ? 'Beziehung' : 'Beziehungen'}`
+            + `${symbols === undefined ? '' : ` ${side === 'incoming' ? 'aus' : 'zu'} ${de(symbols)} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
+        typeCount: (type: string, count: number) => `${type} (${de(count)})`,
+        definer: (kind: string, count: number, name: string) => {
+            const noun = ({ file: ['die Datei', 'die Dateien'], module: ['das Modul', 'die Module'], class: ['die Klasse', 'die Klassen'] } as Record<string, string[]>)[kind.toLowerCase()]
+                ?? [`${kind}`, `${kind}`];
+            return count === 1 ? `${noun[0]}, ${noun[0].startsWith('das') ? 'das' : 'die'} ${name} definiert` : `${noun[1]}, die ${name} definieren`;
+        },
         noCalls: (name: string, side: 'incoming' | 'outgoing') => side === 'incoming'
             ? `Keine CALLS-Kante führt in diesem Ausschnitt zu ${name}.` : `${name} hat in diesem Ausschnitt keine ausgehende CALLS-Kante.`,
-        otherRelationships: 'Weitere Beziehungen in derselben Richtung:',
+        otherRelationships: (side: 'incoming' | 'outgoing') => `Weitere ${side === 'incoming' ? 'eingehende' : 'ausgehende'} Beziehungen:`,
         noRelationships: 'Keine in diesem Ausschnitt.',
         notLoaded: (side: 'incoming' | 'outgoing') => side === 'incoming'
             ? 'Der aktuelle Ausschnitt folgt keinen eingehenden Beziehungen. Verfolge eingehend oder beide Richtungen und frage noch einmal.'

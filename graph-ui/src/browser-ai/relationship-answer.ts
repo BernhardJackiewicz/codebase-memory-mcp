@@ -1,7 +1,8 @@
 import { identifierNamesIn, mentionsIn, quotedNamesIn } from '../compiler/question-classifier';
 import type { BrowserChatContext } from './chat-model';
+import type { RelationshipGroup } from '../galaxy/selection-evidence';
 import { readGalaxyEvidence, relationshipLine, scopeSentence, sideLoaded, type GalaxyEvidence } from './galaxy-evidence';
-import { relationshipWords } from './strings';
+import { relationshipWords, type RelationshipWords } from './strings';
 
 type Side = 'incoming' | 'outgoing';
 export interface RelationshipQuestion {
@@ -158,6 +159,24 @@ function aboutSelection(prompt: string, question: RelationshipQuestion, evidence
 
 const quote = (value: string) => `\`${value.replace(/`/g, "'")}\``;
 
+/** Kinds whose incoming DEFINES edge is where the selection is defined, not a use of it. */
+const DEFINERS = new Set(['file', 'module', 'class', 'interface']);
+/** One edge type of a listed answer. An incoming DEFINES from a file names it as the file that
+ * defines the selection: "`general.py`, the file that defines `JSONBAgg`" (C2). */
+function listedLine(group: RelationshipGroup, side: Side, words: RelationshipWords, name: string): string {
+    const symbols = group.files.flatMap(file => file.symbols);
+    const kinds = new Set(symbols.map(symbol => symbol.kind));
+    const [kind] = kinds;
+    if (side === 'incoming' && /^DEFINES/.test(group.type) && kinds.size === 1 && kind && DEFINERS.has(kind.toLowerCase())) {
+        const more = group.count > symbols.length ? `; ${words.more(group.count - symbols.length)}` : '';
+        return `- **${words.typeCount(group.type, group.count)}:** ${symbols.map(symbol => quote(symbol.name)).join(', ')}, ${words.definer(kind, group.count, name)}${more}`;
+    }
+    return relationshipLine(group, side, Infinity, words, true).text;
+}
+
+/** Callers are the CALLS edges: they come first with their count. Every other edge type of
+ * the same direction follows under its own heading, so a test or the defining file never
+ * reads as a caller (C2). */
 function listed(question: RelationshipQuestion, evidence: GalaxyEvidence): string {
     const words = relationshipWords[question.language];
     const name = quote(evidence.label);
@@ -171,11 +190,10 @@ function listed(question: RelationshipQuestion, evidence: GalaxyEvidence): strin
         const symbols = side === 'incoming' ? evidence.relationships.incomingSymbols : evidence.relationships.outgoingSymbols;
         const total = groups.reduce((sum, group) => sum + group.count, 0);
         const calls = groups.find(group => group.type === 'CALLS');
-        // A caller question is answered with CALLS first; other edge types follow, never hidden.
-        const ordered = calls ? [calls, ...groups.filter(group => group !== calls)] : groups;
-        sections.push(`${heading}. ${side === 'incoming' ? words.incoming(total, symbols) : words.outgoing(total, symbols)}`
-            + (calls ? '' : ` ${words.noCalls(name, side)} ${words.otherRelationships}`),
-        ordered.map(group => relationshipLine(group, side, Infinity, words, true).text).join('\n'));
+        const others = groups.filter(group => group !== calls);
+        sections.push(`${heading}. ${words.total(side, total, symbols)}${calls ? '' : ` ${words.noCalls(name, side)}`}`);
+        if (calls) sections.push(listedLine(calls, side, words, name));
+        if (others.length) sections.push(`${words.otherRelationships(side)}\n${others.map(group => listedLine(group, side, words, name)).join('\n')}`);
     }
     sections.push(scopeSentence(evidence, words));
     if (evidence.state === 'loading') sections.push(words.stillLoading);

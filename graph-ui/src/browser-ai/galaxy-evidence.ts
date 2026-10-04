@@ -103,11 +103,12 @@ export function fairShares(natural: readonly number[], budget: number): number[]
     return shares;
 }
 
-/** One edge type: complete count, then names until the budget, then an explicit "+N more". */
+/** One edge type: complete count, then names until the budget, then an explicit "+N more".
+ * A listed answer heads it "**TESTS (11):**", the prompt "TESTS from 11:" (C2). */
 export function relationshipLine(group: RelationshipGroup, side: 'incoming' | 'outgoing', budget: number,
     words: RelationshipWords, markdown = false): { text: string; listed: number } {
     const quote = (value: string) => markdown ? `\`${value.replace(/`/g, "'")}\`` : value;
-    const head = `- ${markdown ? `**${group.type}**` : group.type} ${side === 'incoming' ? words.from : words.to} ${group.count}: `;
+    const head = markdown ? `- **${words.typeCount(group.type, group.count)}:** ` : `- ${group.type} ${side === 'incoming' ? words.from : words.to} ${group.count}: `;
     let body = '', listed = 0;
     const more = (shown: number) => group.count > shown ? `${body ? '; ' : ''}${words.more(group.count - shown)}` : '';
     if (head.length + more(0).length > budget) return { text: '', listed: 0 };

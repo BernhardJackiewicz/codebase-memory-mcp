@@ -3,7 +3,7 @@ import { selectionEvidenceContext } from '../galaxy/selection-evidence';
 import { JSONB_AGG_CALLERS, jsonbAggEvidence, jsonbAggRenderLimited, largeFolderScope } from './galaxy-evidence.fixture';
 import { correctRelationWords, relationshipAnswer, relationshipQuestion, relationshipSuggestion } from './relationship-answer';
 
-const line = (markdown: string, type: string) => markdown.split('\n').find(item => item.startsWith(`- **${type}** `)) ?? '';
+const line = (markdown: string, type: string) => markdown.split('\n').find(item => item.startsWith(`- **${type} (`)) ?? '';
 
 describe('caller and callee questions', () => {
     it.each([
@@ -47,18 +47,21 @@ describe('caller and callee questions', () => {
 });
 
 describe('listed relationship answers', () => {
-    it('lists every incoming relationship of JSONBAgg by edge type, CALLS first, with complete counts', () => {
+    it('lists the callers first with their count and every other incoming relationship under its own heading (C2)', () => {
         const answer = relationshipAnswer('Who calls JSONBAgg? List every caller and the edge type.', [jsonbAggEvidence()])!;
-        expect(answer.markdown).toContain('Callers of `JSONBAgg` in the loaded graph. Incoming relationships: 23 from 12 symbols.');
+        expect(answer.markdown).toContain('Callers of `JSONBAgg` in the loaded graph. 23 incoming relationships from 12 symbols.');
         const calls = line(answer.markdown, 'CALLS'), tests = line(answer.markdown, 'TESTS');
-        expect(answer.markdown.indexOf(calls)).toBeLessThan(answer.markdown.indexOf(tests));
-        for (const text of [calls, tests]) {
-            expect(text).toMatch(/from 11: /);
+        // TESTS and DEFINES are no callers: they follow under their own heading.
+        expect(answer.markdown.indexOf(calls)).toBeLessThan(answer.markdown.indexOf('Other incoming relationships:'));
+        expect(answer.markdown.indexOf('Other incoming relationships:')).toBeLessThan(answer.markdown.indexOf(tests));
+        for (const [text, type] of [[calls, 'CALLS'], [tests, 'TESTS']]) {
+            expect(text.startsWith(`- **${type} (11):** `)).toBe(true);
             for (const name of JSONB_AGG_CALLERS) expect(text).toContain(`\`${name}\``);
             expect(text).toContain('(Method, `tests/postgres_tests/test_aggregates.py`)');
             expect(text).not.toContain('more');
         }
-        expect(line(answer.markdown, 'DEFINES')).toBe('- **DEFINES** from 1: `general.py` (File, `django/contrib/postgres/aggregates/general.py`)');
+        expect(line(answer.markdown, 'DEFINES')).toBe('- **DEFINES (1):** `general.py`, the file that defines `JSONBAgg`');
+        expect(answer.markdown).not.toMatch(/\bfrom 11\b/);
         // The outgoing INHERITS edges answer another question.
         expect(answer.markdown).not.toContain('INHERITS');
         expect(answer.markdown).toContain('complete for the indexed graph');
@@ -67,16 +70,24 @@ describe('listed relationship answers', () => {
 
     it('answers callee questions with the outgoing side only and says when no CALLS edge exists', () => {
         const answer = relationshipAnswer('What does JSONBAgg call?', [jsonbAggEvidence()])!;
-        expect(answer.markdown).toContain('Outgoing relationships: 2 to 2 symbols.');
+        expect(answer.markdown).toContain('What `JSONBAgg` calls in the loaded graph. 2 outgoing relationships to 2 symbols.');
         expect(answer.markdown).toContain('`JSONBAgg` has no outgoing CALLS edge in this scope.');
-        expect(line(answer.markdown, 'INHERITS')).toMatch(/to 2: `OrderableAggMixin`.*`Aggregate`/);
+        expect(answer.markdown).toContain('Other outgoing relationships:');
+        expect(line(answer.markdown, 'INHERITS')).toMatch(/^- \*\*INHERITS \(2\):\*\* `OrderableAggMixin`.*`Aggregate`/);
         expect(answer.markdown).not.toContain('test_jsonb_agg');
     });
 
     it('answers in German for a German question', () => {
         const answer = relationshipAnswer('Wer ruft JSONBAgg auf?', [jsonbAggEvidence()])!;
-        expect(answer.markdown).toContain('Aufrufer von `JSONBAgg` im geladenen Graphen. Eingehende Beziehungen: 23 von 12 Symbolen.');
-        expect(line(answer.markdown, 'CALLS')).toMatch(/^- \*\*CALLS\*\* von 11: /);
+        expect(answer.markdown).toContain('Aufrufer von `JSONBAgg` im geladenen Graphen. 23 eingehende Beziehungen aus 12 Symbolen.');
+        expect(line(answer.markdown, 'CALLS')).toMatch(/^- \*\*CALLS \(11\):\*\* `test_default_argument`/);
+        expect(answer.markdown.indexOf('Weitere eingehende Beziehungen:')).toBeGreaterThan(answer.markdown.indexOf(line(answer.markdown, 'CALLS')));
+        expect(line(answer.markdown, 'TESTS')).toMatch(/^- \*\*TESTS \(11\):\*\* /);
+        expect(line(answer.markdown, 'DEFINES')).toBe('- **DEFINES (1):** `general.py`, die Datei, die `JSONBAgg` definiert');
+        expect(answer.markdown).not.toMatch(/\bvon 1[12]\b/);
+        const callees = relationshipAnswer('Was ruft JSONBAgg auf?', [jsonbAggEvidence()])!.markdown;
+        expect(callees).toContain('Was `JSONBAgg` im geladenen Graphen aufruft. 2 ausgehende Beziehungen zu 2 Symbolen.');
+        expect(callees).toContain('Weitere ausgehende Beziehungen:');
         expect(answer.markdown).toContain('Ausschnitt: 1 Schritt in beide Richtungen');
     });
 
@@ -100,13 +111,13 @@ describe('listed relationship answers', () => {
     it('lists a bounded sample with an explicit remainder when the evidence names fewer than the count', () => {
         const many = Array.from({ length: 40 }, (_, index) => ({ source: 2000 + index, target: 32360, type: 'CALLS' }));
         const answer = relationshipAnswer('Who calls JSONBAgg?', [jsonbAggEvidence({ edges: many })])!;
-        expect(line(answer.markdown, 'CALLS')).toMatch(/^- \*\*CALLS\*\* from 40: .*; \+16 more$/);
+        expect(line(answer.markdown, 'CALLS')).toMatch(/^- \*\*CALLS \(40\):\*\* .*; \+16 more$/);
     });
 
     it('answers for a large documented scope with complete counts and every edge type', () => {
         const markdown = relationshipAnswer('What does postgres call?', [selectionEvidenceContext(largeFolderScope())])!.markdown;
-        expect(markdown).toContain('Outgoing relationships: 150 to 150 symbols.');
-        for (const type of ['CALLS', 'TESTS', 'USAGE', 'IMPORTS', 'DEFINES_METHOD']) expect(line(markdown, type)).toMatch(/^- \*\*\w+\*\* to 30: .*; \+\d+ more$/);
+        expect(markdown).toContain('150 outgoing relationships to 150 symbols.');
+        for (const type of ['CALLS', 'TESTS', 'USAGE', 'IMPORTS', 'DEFINES_METHOD']) expect(line(markdown, type)).toMatch(/^- \*\*\w+ \(30\):\*\* .*; \+\d+ more$/);
         expect(markdown).toContain('complete for the indexed graph.');
     });
 
@@ -116,7 +127,7 @@ describe('listed relationship answers', () => {
         const markdown = relationshipAnswer('What does postgres call?', [cut])!.markdown;
         expect(markdown).not.toMatch(/to 0 symbols/);
         expect(markdown).toContain('the snapshot left part of its relationships out, so counts and names can be incomplete');
-        expect(markdown).toMatch(/Outgoing relationships: left out of this snapshot\.|Outgoing relationships: \d+\./);
+        expect(markdown).toMatch(/Outgoing relationships: left out of this snapshot\.|\d+ outgoing relationships?\./);
     });
 
     it('leaves questions about another symbol, attached non-Galaxy evidence and other questions to the model', () => {
@@ -184,7 +195,7 @@ describe('tolerant caller and callee questions (K16)', () => {
         expect(suggestion.markdown).toContain(language === 'de'
             ? `Meintest du: ${side === 'incoming' ? 'Aufrufer von' : 'von'} \`JSONBAgg\`` : `Did you mean: ${side === 'incoming' ? 'callers of' : 'what'} \`JSONBAgg\``);
         expect(relationshipAnswer(suggestion.question, [jsonbAggEvidence()])?.markdown)
-            .toContain(side === 'incoming' ? (language === 'de' ? 'Aufrufer von `JSONBAgg`' : 'Callers of `JSONBAgg`') : (language === 'de' ? 'Von `JSONBAgg` aufgerufen' : 'Called by `JSONBAgg`'));
+            .toContain(side === 'incoming' ? (language === 'de' ? 'Aufrufer von `JSONBAgg`' : 'Callers of `JSONBAgg`') : (language === 'de' ? 'Was `JSONBAgg` im geladenen Graphen aufruft' : 'What `JSONBAgg` calls in the loaded graph'));
     });
 
     it.each([
@@ -301,7 +312,7 @@ describe('caller questions with a misspelled selection or a free word order (K16
         // The suggested question lists the selection when chosen.
         expect(relationshipAnswer(suggestion!.question, evidence())?.markdown).toContain(expected === 'incoming'
             ? language === 'de' ? 'Aufrufer von `JSONBAgg` im geladenen Graphen' : 'Callers of `JSONBAgg` in the loaded graph'
-            : language === 'de' ? 'Von `JSONBAgg` aufgerufen' : 'Called by `JSONBAgg`');
+            : language === 'de' ? 'Was `JSONBAgg` im geladenen Graphen aufruft' : 'What `JSONBAgg` calls in the loaded graph');
     });
 
     it.each([
