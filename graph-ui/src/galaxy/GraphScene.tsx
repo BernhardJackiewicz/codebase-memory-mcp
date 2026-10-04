@@ -110,6 +110,8 @@
  * 21. Neu (Review zu K5): die Prop `labelIds`. Mit ihr bekommen nur diese
  *     Knoten einen Namen (die Hierarchie eines grossen Ausschnitts benennt die
  *     Wurzel und ihre direkten Nachbarn). Ohne die Prop wie vorher.
+ * 22. Neu (Handtest 2026-10-04, G1): die Huelle des Canvas bildet ihren
+ *     eigenen Stapelkontext (`isolation: isolate`). Siehe `CANVAS_STYLE`.
  */
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -144,6 +146,23 @@ import {
 } from './density';
 
 const BASE_BLOOM_INTENSITY = 1.45;
+
+/*
+ * Aenderung 22 (Handtest 2026-10-04, G1): die Namen der Szene bleiben unter
+ * den Bedienflaechen.
+ *
+ * drei haengt jedes <Html> (Wurzelmarken, Pfad, Kantenschilder, Band, die
+ * Agentenebene, die Hover-Karte) in die Huelle des Canvas und rechnet ihm einen
+ * z-index aus seinem `zIndexRange`, bis 10 und in der Agentenebene bis 80.
+ * Ohne eigenen Stapelkontext der Huelle galten diese Zahlen im Stapel der
+ * ganzen Galaxie, und der Name des Pfadziels (10) lag ueber "Selection details"
+ * (4). Mit ihm ordnen sie nur noch die Namen untereinander; nach aussen steht
+ * die Huelle samt allen Namen auf der Ebene 0, also unter jeder Bedienflaeche
+ * mit z-index ab 1 (Pfadliste, Menues, Tooltips, Legende, Selection details)
+ * und ueber dem Canvas, der in ihr liegt. Dasselbe gilt im Mini-Galaxy von
+ * Explore, das dieselbe Szene ist.
+ */
+const CANVAS_STYLE = { background: '#0D0F12', isolation: 'isolate' } as const;
 
 /* Camera fly-to animation */
 
@@ -1093,7 +1112,7 @@ export function GraphScene({
             {...background}
             frameloop={frameloop}
             camera={{ position: [0, 0, 800], fov: GRAPH_CAMERA_FOV, near: 0.1, far: 100000 }}
-            style={{ background: '#0D0F12' }}
+            style={CANVAS_STYLE}
             dpr={GRAPH_CANVAS_DPR}
             gl={{
                 antialias: false,

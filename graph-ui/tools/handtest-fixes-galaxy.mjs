@@ -377,12 +377,13 @@ async function checkK8(page) {
     const minus = page.getByRole('button', { name: 'Remove graph layer' });
     const expandButton = page.getByRole('button', { name: 'Expand +1' });
     // Review: the counted calls at the edge reach the toolbar a moment after the layer is complete.
+    // G3 (2026-10-04): the explanation is the Galaxy's own tooltip (Hint), its text on the button as data-hint, no native title.
     await page.waitForFunction(() => /The index lists/.test([...document.querySelectorAll('.atlas-graph-exploration button')]
-        .find((el) => el.getAttribute('aria-label') === 'Expand +1')?.title ?? ''), null, { timeout: 10000 }).catch(() => {});
-    const expandTitle = await expandButton.getAttribute('title');
+        .find((el) => el.getAttribute('aria-label') === 'Expand +1')?.getAttribute('data-hint') ?? ''), null, { timeout: 10000 }).catch(() => {});
+    const expandTitle = await expandButton.getAttribute('data-hint');
     const expandWarning = await expandButton.getAttribute('data-warning');
     await check('K8', 'Before layer 3 loads, Expand warns: the index counts the calls waiting at the edge nodes',
-        expandWarning === 'true' && /^Likely past the render limit\. Load layer 3: \d+ nodes to expand\. The index lists [\d.,]+ calls at them/.test(expandTitle ?? ''),
+        expandWarning === 'true' && /^Likely past the render limit of [\d.,]+ nodes\. Load layer 3: \d+ nodes to expand\. The index lists [\d.,]+ calls at them/.test(expandTitle ?? ''),
         { expandTitle, expandWarning });
 
     // 1. Abbrechen waehrend die dritte Ebene laedt.
@@ -431,7 +432,7 @@ async function checkK8(page) {
         title: await page.locator('.atlas-graph-scope-count').first().getAttribute('title').catch(() => null),
         overlayAfter2s: await progressShown(page), queryGraph: queries.length, withCursor: queries.filter((row) => row.cursor).length,
         maxRows: [...new Set(queries.map((row) => row.maxRows))], layers: await layerText(page),
-        expandDisabled: await expandButton.isDisabled(), expandTitle: await expandButton.getAttribute('title') };
+        expandDisabled: await expandButton.isDisabled(), expandTitle: await expandButton.getAttribute('data-hint') };
     await shot(page, 'K8', 'layer3-done-2s', `2 s later: no "Updating view" overlay (${done.overlayAfter2s ? 'still shown' : 'gone'})`);
     await check('K8', 'Layer 3 completes (or stops at the render limit with a partial note) within 30 s in few large requests, and the overlay goes away',
         ['complete', 'partial'].includes(done.state ?? '') && doneMs <= 30000 && done.queryGraph <= 40 && done.overlayAfter2s === '' && done.layers === '3 layers',

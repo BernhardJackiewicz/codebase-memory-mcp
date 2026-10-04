@@ -147,7 +147,7 @@ import { galaxyHistoryOptions, historyEntryDetail, historyEntryLabel, scopeIdent
 import { useOrganicLayout } from './use-organic-layout';
 import RenderProgress from './RenderProgress';
 import { useGraphScope } from './use-graph-scope';
-import { SCOPED_HIERARCHY_LABEL_BUDGET, SCOPED_HIERARCHY_LABEL_MAX_TEXT_WIDTH, limitGraphRender, nextLayerEstimate, scenePictureFor, scopedHierarchy } from './graph-scope';
+import { SCOPED_HIERARCHY_LABEL_BUDGET, SCOPED_HIERARCHY_LABEL_MAX_TEXT_WIDTH, expandPastLimit, limitGraphRender, nextLayerEstimate, scenePictureFor, scopedHierarchy, type ExpandOutlook } from './graph-scope';
 import './graph-exploration.css';
 import { layoutNodeForSelection } from './selected-node';
 import { galaxyScopeEvidence, useSelectionEvidence, type SelectionEvidenceListener } from './selection-evidence';
@@ -2100,11 +2100,17 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     const estimate = scope.complete ? nextLayerEstimate(scope.result) : undefined;
     // Die gezaehlten Aufrufe am Rand sind eine Untergrenze; das Wachstum allein uebersah die Knoten mit tausend Aufrufern (Review zu K8).
     const edgeCalls = estimate ? scope.edgeCalls : undefined;
-    const expandWarning = Boolean(estimate && props.workspaceExpanded && ((data?.nodes.length ?? 0) + Math.max(estimate.estimate, edgeCalls ?? 0) > nodeBudget
-        || (data?.edges.length ?? 0) + (edgeCalls ?? 0) > edgeBudget));
+    // G3: die Render-Limits gelten nur in der Werkzeugleiste des Galaxy-Arbeitsbereichs; das Mini-Galaxy laedt ohne sie.
+    const expandOutlook: ExpandOutlook | undefined = estimate && {
+        layer: estimate.layer, frontier: estimate.frontier, estimate: estimate.estimate, calls: edgeCalls,
+        loaded: { nodes: data?.nodes.length ?? 0, edges: data?.edges.length ?? 0 },
+        limits: props.workspaceExpanded ? { nodes: nodeBudget, edges: edgeBudget } : undefined,
+    };
+    const expandPast = expandOutlook && expandPastLimit(expandOutlook);
+    const expandWarning = Boolean(expandPast);
+    const expandBlocked = Boolean(scope.loading || scope.result?.exhausted || scope.result?.partial);
     const expandTitle = partial ? galaxyLayerText.expandPartial : scope.result?.exhausted ? galaxyLayerText.expandEnd
-        : estimate ? `${expandWarning ? `${galaxyLayerText.expandOverLimit} ` : ''}${galaxyLayerText.expandTitle(estimate.layer, estimate.frontier, estimate.estimate, nodeBudget, edgeCalls)}`
-            : undefined;
+        : expandOutlook ? galaxyLayerText.expandHint(expandOutlook, expandPast) : undefined;
 
     /*
      * Die Vorgabe der Ansicht, mit der Wahl des Lesers darauf.
@@ -2631,10 +2637,22 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                         title={scope.loading ? galaxyLayerText.cancelLoading(scope.depth) : galaxyLayerText.removeLayer}
                         onClick={cancelOrRemoveLayer} aria-label="Remove graph layer">−</button>
                     <span>{scope.depth} {scope.depth === 1 ? 'layer' : 'layers'}</span>
-                    <button type="button" disabled={scope.loading || scope.result?.exhausted || Boolean(scope.result?.partial)}
-                        data-warning={expandWarning || undefined} title={expandTitle}
-                        onClick={() => scope.setDepth(scope.depth + 1)} aria-label={galaxyToolbarText.expand}>
-                        <FitLabel wide={galaxyToolbarText.expand} narrow={galaxyToolbarText.expandNarrow} /></button>
+                    {/*
+                      * G3: die Erklaerung zu Expand ist lang, und als natives
+                      * `title` kam sie erst nach der Verzoegerung des Browsers.
+                      * Der eigene Tooltip steht sofort bei Hover und Fokus unter
+                      * dem Knopf, auch in der knappen Form "+1", ueber der Szene.
+                      * Gesperrt heisst `aria-disabled` und nicht `disabled`: ein
+                      * abgeschalteter Knopf nimmt weder Zeiger noch Fokus, und
+                      * gerade dann (Ebene unvollstaendig, Ende des Traces) ist der
+                      * Grund das, was der Leser wissen will.
+                      */}
+                    <Hint name="galaxy-expand" text={expandTitle}>
+                        <button type="button" aria-disabled={expandBlocked || undefined}
+                            data-warning={expandWarning || undefined}
+                            onClick={() => { if (!expandBlocked) scope.setDepth(scope.depth + 1); }} aria-label={galaxyToolbarText.expand}>
+                            <FitLabel wide={galaxyToolbarText.expand} narrow={galaxyToolbarText.expandNarrow} /></button>
+                    </Hint>
                     {props.workspaceExpanded && (mode === 'galaxy' || scopedProjection) && <>
                         <PathPicker nodes={pathCandidates} onPick={node => { setTrail({ key: organicKey, kind: 'path', target: node.id, name: node.name }); setTrailStep(0); }} />
                         <button type="button" disabled={rootCalls.length === 0} aria-pressed={trail?.key === organicKey && trail.kind === 'calls'}

@@ -39,8 +39,21 @@ export function pathNodeIds(path: ScenePath): number[] {
     return [...ids];
 }
 
-/** Welche Namen das Ausweichen beachtet: die des Pfades und die der markierten Wurzel. */
-const NAME_SELECTOR = '.atlas-galaxy-path-node b, .atlas-galaxy-root-marker b';
+/**
+ * Welchen Texten jedes Kantenlabel der Szene ausweicht: den Namen des Pfades,
+ * denen der markierten Wurzeln und der Ueberschrift des Bandes der Hierarchie.
+ * Die Ueberschrift fehlte hier bis zum Handtest vom 2026-10-04 (G2): ein Pfad
+ * durch das Band legte "DEFINES" auf "Mixed directions · 55 nodes". Die
+ * Kantenschilder der Hierarchie (HierarchyEdgeLabels.tsx) lesen dieselbe Liste.
+ */
+export const LABEL_BLOCKER_SELECTOR = '.atlas-galaxy-path-node b, .atlas-galaxy-root-marker b, .atlas-hierarchy-band-label';
+
+/** Die Kaesten dieser Texte auf dem Schirm; was nicht gezeichnet ist (Breite null), steht niemandem im Weg. */
+export function screenBlockers(host: ParentNode): ScreenRect[] {
+    return [...host.querySelectorAll<HTMLElement>(LABEL_BLOCKER_SELECTOR)]
+        .map((element) => element.getBoundingClientRect()).filter((rect) => rect.width > 0)
+        .map((rect) => ({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }));
+}
 /* Nur jedes dritte Bild: die Lage der Namen aendert sich mit der Kamera, nicht schneller. */
 const PLACE_EVERY_FRAMES = 3;
 
@@ -88,9 +101,7 @@ export function PathLayer({ nodes, path, namedRoots }: {
         const host = connected instanceof HTMLElement ? connected : gl.domElement.parentElement;
         if (tick.current !== 0 || host === null) return;
         const box = gl.domElement.getBoundingClientRect();
-        const blockers: ScreenRect[] = [...host.querySelectorAll<HTMLElement>(NAME_SELECTOR)]
-            .map((element) => element.getBoundingClientRect()).filter((rect) => rect.width > 0)
-            .map((rect) => ({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }));
+        const blockers = screenBlockers(host);
         const toScreen = (node: GraphNode) => {
             scratch.point.set(node.x, node.y, node.z).project(camera);
             return { x: box.left + ((scratch.point.x + 1) / 2) * box.width, y: box.top + ((1 - scratch.point.y) / 2) * box.height };
