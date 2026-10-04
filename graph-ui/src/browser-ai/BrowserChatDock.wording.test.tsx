@@ -149,3 +149,15 @@ describe('the token limit note (W6)', () => {
         expect(noteButtons('.cbm-chat-explanation')).toEqual(['Change the output limit']);
     });
 });
+
+describe('the note about names the answer was not given (W7)', () => {
+    it('counts the names it does not show and says plainly when the answer is likely made up', async () => {
+        const { props, runtime } = fixture();
+        runtime.chat.mockResolvedValueOnce(`It uses ${Array.from({ length: 9 }, (_, index) => `\`helper_${index}\``).join(', ')}, \`%s\`, \`False\` and runs on PostgreSQL.`);
+        await render({ ...props, proactiveSelection: jsonbAggEvidence() }); await load();
+        await ask('Explain this class in detail, line by line.');
+        const note = [...last().querySelectorAll('.cbm-chat-answer-note')].map(item => item.textContent ?? '').find(text => text.includes('graph facts')) ?? '';
+        expect(note).toBe('9 names in this answer are not in the source or graph facts it was given: helper_0, helper_1, helper_2, helper_3, helper_4, helper_5, +3 more. '
+            + 'The answer is likely made up; do not rely on it.');
+    });
+});

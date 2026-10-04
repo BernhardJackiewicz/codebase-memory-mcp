@@ -78,15 +78,26 @@ const IDENTIFIER = /\b(?:[A-Za-z]+_\w+|[a-z]+[A-Z]\w*|[A-Z][a-z0-9]+[A-Z]\w*|[A-
 function nameCheck(given: string): (name: string) => boolean {
     const words = new Set((given.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? []).map(word => word.toLowerCase()));
     const text = given.toLowerCase();
-    return name => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? words.has(name.toLowerCase()) : text.includes(name.toLowerCase());
+    // Folders and files of at least six letters in the paths given ("postgres" of django/contrib/postgres).
+    const segments = [...new Set((given.match(/[\w.-]+(?:\/[\w.-]+)+/g) ?? []).flatMap(path => path.split('/'))
+        .map(segment => segment.replace(/\.\w+$/, '').toLowerCase()).filter(segment => /^[a-z]{6,}$/.test(segment)))];
+    // "PostgreSQL" beside django/contrib/postgres names the product of that folder, not a made-up
+    // symbol: a word of letters only, at most three letters longer than the segment (W7).
+    const extendsFolder = (name: string) => /^[A-Za-z]+$/.test(name) && segments.some(segment => name.toLowerCase().startsWith(segment) && name.length - segment.length <= 3);
+    return name => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? words.has(name.toLowerCase()) : text.includes(name.toLowerCase())) || extendsFolder(name);
 }
+
+/** Literals and format placeholders are no names: `False`, `None`, `%s`, `%(distinct)s`, `{0}` (W7). */
+const LITERAL = /^(?:true|false|none|null|undefined|nil|nan)$/i;
+const PLACEHOLDER = /^(?:%(?:\([^)]*\))?[-#0 +]*\d*(?:\.\d+)?[a-z%]?|\{[^{}]*\})$/i;
+const nameLike = (name: string) => /\p{L}/u.test(name) && !LITERAL.test(name) && !PLACEHOLDER.test(name);
 
 /** Names an answer uses that the request it was given does not contain: written in
  * backticks or shaped like an identifier (flake8, json_agg_helper). Shown under the answer (K12). */
 export function namesNotIn(answer: string, given: string): string[] {
     const named = [...answer.matchAll(/`([^`\n]+)`/g)].map(match => match[1].trim()).concat(answer.replace(/`[^`]*`/g, ' ').match(IDENTIFIER) ?? []);
     const known = nameCheck(given);
-    return [...new Set(named.filter(name => name && !known(name)))];
+    return [...new Set(named.filter(name => name && nameLike(name) && !known(name)))];
 }
 
 /** Why the model's sentence was left out, as the sentence wrote it: a claim word the source does
@@ -120,7 +131,7 @@ export function explanationSentence(output: string, packet: PreparedExplanationC
     const claims = [...sentence.matchAll(new RegExp(UNSUPPORTED_CLAIM.source, 'gi'))]
         .map(match => ({ word: match[0].toLowerCase().replace(/(?:s|ing)$/, '').split(' ')[0], shown: match[0] }))
         .concat(GERMAN_CLAIMS.flatMap(([pattern, word]) => { const match = pattern.exec(sentence); return match ? [{ word, shown: shownClaim(match[0]) }] : []; }));
-    const unknown = named.find(name => !known(name));
+    const unknown = named.find(name => nameLike(name) && !known(name));
     if (unknown) return { dropped: 'unsupported', reason: { kind: 'name', text: unknown } };
     const claim = mode === 'code' ? undefined : claims.find(item => mode === 'graph' || !code.includes(item.word));
     if (claim) return { dropped: 'unsupported', reason: { kind: 'claim', text: claim.shown } };

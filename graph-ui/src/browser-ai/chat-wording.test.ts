@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { prepareExplanationContext, selectionSummary } from './explanation-context';
-import { explanationSentence, formatExplanationEvidence } from './explanation-response';
+import { explanationSentence, formatExplanationEvidence, namesNotIn } from './explanation-response';
 import { jsonbAggEvidence, jsonbAggRenderLimited } from './galaxy-evidence.fixture';
 import { relationshipAnswer } from './relationship-answer';
 import { browserChatText, groundedText } from './strings';
@@ -157,5 +157,30 @@ describe('why the model sentence was left out (W5)', () => {
             .toBe('The model\'s explanation named something the source does not show (here: `flake8`) and was left out. Ask a question about the code instead.');
         // Without a known reason the note claims none.
         expect(groundedText.de.sentenceDropped()).not.toMatch(/hier:|Fakten nicht zeigen/);
+    });
+});
+
+describe('the note about names the answer was not given (W7)', () => {
+    const given = 'Selected: JSONBAgg (Class) in django/contrib/postgres/aggregates/general.py:50-54.\nclass JSONBAgg(OrderableAggMixin, Aggregate):\n    function = "JSONB_AGG"';
+
+    it('flags no placeholders, literals or tokens without letters', () => {
+        const answer = 'It wraps `SUM`, `AVG`, `%()`, `%s`, `%(distinct)s`, `{}`, `{0}`, `False`, `True`, `None`, `null`, `undefined` and `42` in JavaScript.';
+        expect(namesNotIn(answer, given)).toEqual(['SUM', 'AVG', 'JavaScript']);
+    });
+
+    it('accepts a product name that only extends a long folder name of the selection, and nothing looser', () => {
+        expect(namesNotIn('It runs only on PostgreSQL.', given)).toEqual([]);
+        expect(namesNotIn('It calls PostgresHelperFactory and postgres_json_helper.', given)).toEqual(['PostgresHelperFactory', 'postgres_json_helper']);
+        // A short segment ("aggregates" is long, "py" is not) never widens the check.
+        expect(namesNotIn('It uses PyTorch.', given)).toEqual(['PyTorch']);
+    });
+
+    it('shows six names with the rest counted, and says plainly when the answer is likely made up', () => {
+        const names = (count: number) => Array.from({ length: count }, (_, index) => `made_up_${index}`);
+        expect(browserChatText.unsupportedNames(names(7))).toBe('Not in the source or graph facts this answer was given: made_up_0, made_up_1, made_up_2, '
+            + 'made_up_3, made_up_4, made_up_5, +1 more. Check these names before relying on them.');
+        expect(browserChatText.unsupportedNames(names(21))).toBe('21 names in this answer are not in the source or graph facts it was given: made_up_0, made_up_1, '
+            + 'made_up_2, made_up_3, made_up_4, made_up_5, +15 more. The answer is likely made up; do not rely on it.');
+        expect(browserChatText.unsupportedNames(names(2))).toBe('Not in the source or graph facts this answer was given: made_up_0, made_up_1. Check these names before relying on them.');
     });
 });

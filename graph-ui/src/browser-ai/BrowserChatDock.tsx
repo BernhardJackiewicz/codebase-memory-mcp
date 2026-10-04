@@ -124,7 +124,7 @@ function TokenLimitNote({ limit, automatic, chat, model, onChangeOutput }: Limit
 function AnswerNotes({ shortened, packet, model, historyOmitted, unsupported = [] }: { shortened?: LimitNote; packet?: PreparedExplanationContext; model: string; historyOmitted?: number; unsupported?: readonly string[] }): JSX.Element {
     const capacity = packet?.capacity;
     return <>
-        {unsupported.length > 0 && <small className="cbm-chat-answer-note">{browserChatText.unsupportedNames(unsupported.slice(0, 6))}</small>}
+        {unsupported.length > 0 && <small className="cbm-chat-answer-note">{browserChatText.unsupportedNames(unsupported)}</small>}
         {shortened && <TokenLimitNote {...shortened} />}
         {capacity && <small className="cbm-chat-answer-note">{browserChatText.capacity(capacity.nodes, capacity.edges, model, capacity.shown)}</small>}
         {!!historyOmitted && <small className="cbm-chat-answer-note">{browserChatText.historyTrimmed(historyOmitted)}</small>}
