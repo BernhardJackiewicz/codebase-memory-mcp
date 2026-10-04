@@ -66,8 +66,9 @@ const cachedInBrowser = (modelId: string) => isBrowserModelCached(getBrowserMode
 const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error);
 /** The names a Galaxy selection goes by: its label and its symbols with their qualified names. */
 const galaxyNames = (galaxy: GalaxyEvidence): string[] => [galaxy.label, ...galaxy.roots.flatMap(root => [root.name, root.qualifiedName ?? ''])].filter(Boolean);
-/** Answers the chat gives itself, which "Ask the model" sends to the model as the question they answer. */
-const ASKABLE = new Set(['graph', 'suggestion', 'grounded', 'file', 'hint']);
+/** Answers the chat gives itself, which "Ask the model" sends to the model as the question they answer.
+ * Not the hint to a prompt without a question: the model only echoed "test" or "hallo" (B5). */
+const ASKABLE = new Set(['graph', 'suggestion', 'grounded', 'file']);
 const sizeLabel = (bytes: number): string => bytes >= 1_000_000_000 ? `${(bytes / 1_000_000_000).toFixed(2)} GB` : `${Math.ceil(bytes / 1_000_000)} MB`;
 /** Symbol sources read for explanations and questions, newest last. */
 const SOURCE_CACHE_SIZE = 32;
@@ -902,7 +903,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                     {turn.status === 'error' && <p className="cbm-chat-turn-error" role="alert">{turn.error}</p>}
                     {index === turns.length - 1 && turn.answeredFrom === 'suggestion' && turn.suggestion && <button type="button" className="cbm-chat-retry"
                         onClick={() => showSuggestedList(turn)}>{replyWords.showList}</button>}
-                    {index === turns.length - 1 && turn.status !== 'generating' && turn.answeredFrom !== 'local' && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { void send(turn); }}>{turn.answeredFrom ? replyWords.askModel : turn.status === 'error' ? 'Retry' : ownWords.askAgain}</button>}
+                    {index === turns.length - 1 && turn.status !== 'generating' && (!turn.answeredFrom || ASKABLE.has(turn.answeredFrom)) && <button type="button" className="cbm-chat-retry" disabled={phase !== 'ready'} onClick={() => { void send(turn); }}>{turn.answeredFrom ? replyWords.askModel : turn.status === 'error' ? 'Retry' : ownWords.askAgain}</button>}
                 </div>
             </article>; })}
         </div>}

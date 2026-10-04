@@ -1589,15 +1589,13 @@ describe('general questions, prompts without a question and configuration files 
         expect(runtime.chat).not.toHaveBeenCalled();
         expect(answer()).toContain('No question was recognized in "test". You can ask, for example:');
         for (const example of ['What does JSONBAgg do?', 'Who calls JSONBAgg?', 'What does JSONBAgg call?']) expect(answer()).toContain(example);
-        expect(buttons()).toEqual(['Ask the model']);
+        // The model only echoed such a prompt, so the hint offers no model (B5).
+        expect(buttons()).toEqual([]);
         await type('hallo'); await click('Send ↑');
-        expect(answer()).toContain('In "hallo" wurde keine Frage erkannt. Frage zum Beispiel:');
+        expect(answer()).toContain('In "hallo" wurde keine Frage erkannt.');
         for (const example of ['Was macht JSONBAgg?', 'Wer ruft JSONBAgg auf?']) expect(answer()).toContain(example);
-        expect(buttons()).toEqual(['Modell fragen']);
+        expect(buttons()).toEqual([]);
         expect(runtime.chat).not.toHaveBeenCalled();
-        await act(async () => button('Modell fragen').click());
-        expect(runtime.chat).toHaveBeenCalledOnce();
-        expect(runtime.chat.mock.calls[0][0].at(-1)!.content).toContain('User question:\nhallo');
         // A follow-up does not carry the hint as an answer.
         await render({ ...props, readerContext: reader('repos:\n  - repo: x\n', 'file', '.pre-commit-config.yaml') });
         await type('?'); await click('Send ↑');

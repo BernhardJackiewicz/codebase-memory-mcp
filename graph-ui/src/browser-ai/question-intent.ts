@@ -107,14 +107,23 @@ export function noQuestionAnswer(typed: string, language: 'en' | 'de', subject: 
 }
 
 /** The names a prompt may use for what is at hand: the selection, the symbols around it, the
- * words of the open file or attached code. A prompt that names one of them is a question. */
+ * words of the open file or attached code. A prompt that names one of them is a question.
+ * A greeting or probe ("test", "hallo", "ok") is none of them, even where the file has the
+ * word, unless it is exactly the selection's own name: "test" went to the model whenever the
+ * open file contained it (B5). */
 export function knownNames(sources: { galaxy?: GalaxyEvidence; texts: readonly string[]; names: readonly string[] }): (word: string) => boolean {
     const words = new Set<string>();
     const add = (text: string) => { for (const word of text.match(/[\p{L}\p{N}_][\p{L}\p{N}_.-]*/gu) ?? []) words.add(word.toLowerCase()); };
     sources.texts.forEach(add);
-    sources.names.forEach(name => { words.add(name.toLowerCase()); words.add((name.split(/[/.:]/).filter(Boolean).pop() ?? name).toLowerCase()); });
+    const lastPart = (name: string) => (name.split(/[/.:]/).filter(Boolean).pop() ?? name).toLowerCase();
+    sources.names.forEach(name => { words.add(name.toLowerCase()); words.add(lastPart(name)); });
     const galaxy = sources.galaxy;
     if (galaxy) for (const group of [...galaxy.relationships.incoming, ...galaxy.relationships.outgoing]) for (const file of group.files) file.symbols.forEach(symbol => words.add(symbol.name.toLowerCase()));
     const own = sources.names.map(name => name.toLowerCase()).filter(name => name.length >= 4);
-    return word => words.has(word.toLowerCase()) || own.some(name => withinEdits(word.toLowerCase(), name, typoBudget(name)));
+    const ownNames = new Set(sources.names.flatMap(name => [name.toLowerCase(), lastPart(name)]));
+    return word => {
+        const lower = word.toLowerCase();
+        if (GREETINGS.has(lower)) return ownNames.has(lower);
+        return words.has(lower) || own.some(name => withinEdits(lower, name, typoBudget(name)));
+    };
 }
