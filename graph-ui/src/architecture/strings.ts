@@ -108,6 +108,8 @@ export const architectureText = {
         filter: 'Filter operations',
         filterPlaceholder: 'Filter operations…',
         suggested: 'Suggested',
+        /** The chosen start while the filter does not match it (review of K43): apart from the matches, so their count holds. */
+        current: 'Current start, not matching the filter',
         all: (total: number) => `All operations · ${total.toLocaleString()}`,
         matching: (shown: number, total: number) => `Matching operations · ${shown.toLocaleString()} of ${total.toLocaleString()}`,
         none: (query: string) => `No operation matches "${query}"`,
