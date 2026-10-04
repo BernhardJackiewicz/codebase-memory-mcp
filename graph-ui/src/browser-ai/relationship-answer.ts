@@ -182,16 +182,18 @@ function listed(question: RelationshipQuestion, evidence: GalaxyEvidence): strin
     const name = quote(evidence.label);
     const sections: string[] = [];
     for (const side of question.sides) {
-        const heading = side === 'incoming' ? words.callersOf(name) : words.calleesOf(name);
-        if (evidence.depth === 0) { sections.push(`${heading}. ${words.notExpanded}`); continue; }
-        if (!sideLoaded(evidence, side)) { sections.push(`${heading}. ${words.notLoaded(side)}`); continue; }
+        const unlisted = words.unlisted(side, name);
+        if (evidence.depth === 0) { sections.push(`${unlisted} ${words.notExpanded}`); continue; }
+        if (!sideLoaded(evidence, side)) { sections.push(`${unlisted} ${words.notLoaded(side)}`); continue; }
         const groups = evidence.relationships[side];
-        if (!groups.length) { sections.push(`${heading}. ${evidence.truncated ? words.cut(side) : words.noRelationships}`); continue; }
+        if (!groups.length) { sections.push(evidence.truncated ? `${unlisted} ${words.cutListed(side)}` : words.nothing(side, name)); continue; }
         const symbols = side === 'incoming' ? evidence.relationships.incomingSymbols : evidence.relationships.outgoingSymbols;
         const total = groups.reduce((sum, group) => sum + group.count, 0);
         const calls = groups.find(group => group.type === 'CALLS');
         const others = groups.filter(group => group !== calls);
-        sections.push(`${heading}. ${words.total(side, total, symbols)}${calls ? '' : ` ${words.noCalls(name, side)}`}`);
+        // The heading counts the callers it lists; all relationships of the side follow apart (W3).
+        sections.push(calls ? `${side === 'incoming' ? words.callers(name, calls.count) : words.callees(name, calls.count)}${others.length ? ` ${words.all(side, total, symbols)}` : ''}`
+            : `${words.noCalls(name, side)} ${side === 'incoming' ? words.incoming(total, symbols) : words.outgoing(total, symbols)}`);
         if (calls) sections.push(listedLine(calls, side, words, name));
         if (others.length) sections.push(`${words.otherRelationships(side)}\n${others.map(group => listedLine(group, side, words, name)).join('\n')}`);
     }
@@ -214,7 +216,7 @@ function suggestionFor(sides: readonly Side[], language: 'en' | 'de', evidence: 
         : both ? `Who calls ${name} and what does ${name} call?` : outgoing ? `What does ${name} call?` : `Who calls ${name}?`;
     const text = relationshipWords[language];
     const heading = both ? text.didYouMeanBoth(quote(name)) : text.didYouMean(outgoing ? 'outgoing' : 'incoming', quote(name));
-    return { markdown: `${heading}\n\n_${typedName ? text.uncertainName(quote(typedName)) : text.uncertain}_`, question, context, language };
+    return { markdown: `${heading}\n\n_${typedName ? text.uncertainName(quote(typedName), quote(name)) : text.uncertain}_`, question, context, language };
 }
 
 /** A question that sounds like callers or callees of the selection, but not certainly:

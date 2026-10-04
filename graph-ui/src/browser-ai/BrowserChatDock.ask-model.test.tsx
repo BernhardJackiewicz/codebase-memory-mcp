@@ -39,7 +39,7 @@ describe('the model answer to a listed, grounded or file answer is a turn of its
         await dock.render({ ...props, proactiveSelection: jsonbAggEvidence() }); await dock.load();
         await dock.ask('was macht diese klasse? sehr kurze antwort');
         const facts = dock.answerOf(dock.last());
-        expect(facts).toContain('Ausgewählt: JSONBAgg (Class)');
+        expect(facts).toContain('Ausgewählt: JSONBAgg (Klasse)');
         await dock.click('Modell fragen', dock.last());
         const [grounded, asked] = dock.turns();
         expect(dock.turns()).toHaveLength(2);

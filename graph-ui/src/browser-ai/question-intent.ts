@@ -93,14 +93,25 @@ export function noQuestion(prompt: string, known: (word: string) => boolean): bo
     return words.length <= 3 && words.every(word => GREETINGS.has(word));
 }
 
-/** What the examples of a prompt without a question are about. */
-export type ExampleSubject = { kind: 'galaxy' | 'other'; name: string } | { kind: 'marked' };
+/** What the examples of a prompt without a question are about; a Galaxy selection with its evidence. */
+export type ExampleSubject = { kind: 'galaxy'; name: string; evidence?: GalaxyEvidence } | { kind: 'other'; name: string } | { kind: 'marked' };
+
+/** Kinds asked about as a type, and kinds that hold other symbols. */
+const TYPE_KINDS = new Set(['class', 'interface', 'struct', 'trait', 'enum', 'type']);
+const CONTAINER_KINDS = new Set(['file', 'folder', 'module', 'package', 'namespace', 'project']);
+/** Questions that suit the selected kind: "What does JSONBAgg call?" led a class to "no CALLS edge" (W9). */
+function galaxyExamples(text: typeof noQuestionText['en'], name: string, evidence?: GalaxyEvidence): string[] {
+    const kind = (evidence && evidence.rootCount <= 1 ? evidence.roots[0]?.kind ?? evidence.selectionKind : evidence?.selectionKind)?.toLowerCase() ?? '';
+    if (TYPE_KINDS.has(kind)) return [text.whatIs(name), text.whoUses(name), ...evidence?.relationships.outgoing.some(group => group.type === 'INHERITS') ? [text.whatInherits(name)] : []];
+    if (CONTAINER_KINDS.has(kind)) return [text.whatContains(name), text.inDetail(name)];
+    return [text.whatDoes(name), text.whoCalls(name), text.whatCalls(name)];
+}
 
 /** Two or three questions that work for the selection, as a Markdown list. */
 function examples(language: 'en' | 'de', subject: ExampleSubject): string {
     const text = noQuestionText[language];
     const items = subject.kind === 'marked' ? [text.markedDoes, text.markedInDetail]
-        : subject.kind === 'galaxy' ? [text.whatDoes(subject.name), text.whoCalls(subject.name), text.whatCalls(subject.name)]
+        : subject.kind === 'galaxy' ? galaxyExamples(text, subject.name, subject.evidence)
             : [text.whatDoes(subject.name), text.inDetail(subject.name)];
     return items.map(example => `- ${example}`).join('\n');
 }

@@ -6,12 +6,12 @@ import { keepAgent, loadProgress, offerAgent, peekAgent, takeAgent, type AgentHa
 import { buildChatMessages, selectionLocation, sentInHistory, snapshotAttachment, snapshotReaderContext, trimChatHistory, type BrowserChatAttachment, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatSource, type BrowserChatTurn } from './chat-model';
 import { explanationInput, EXPLANATION_DELAY_MS, type ExplanationInput } from './proactive-selection';
 import { prepareExplanationContext, selectionSummary, type PreparedExplanationContext } from './explanation-context';
-import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, citedInterpretation, explanationMode, explanationSentence, namesNotIn, parseExplanationResponse, explanationMessages, formatExplanationEvidence } from './explanation-response';
+import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, citedInterpretation, explanationMode, explanationSentence, namesNotIn, parseExplanationResponse, explanationMessages, formatExplanationEvidence, type DroppedReason } from './explanation-response';
 import { carriedSource, selectionSubject, SYMBOL_SOURCE_LINES, sourceTargetOf, symbolSource, type SymbolSourceReader } from './symbol-source';
 import { codeFacts, codeFactsMarkdown, codeSourceFacts } from './code-facts';
 import { relationshipAnswer, relationshipSuggestion } from './relationship-answer';
 import { clampTokenLimits, tokenLimitBounds, tokenLimitsFor, useAgentPreferences, type TokenLimits } from './agent-preferences';
-import { browserChatText, chatRound3Text, groundedText, relationshipWords } from './strings';
+import { browserChatText, chatRound3Text, evidenceNote, groundedText, relationshipWords, topicText } from './strings';
 import { isGpuRuntimeFailure, BrowserRuntimeFatalError } from './runtime-fault';
 import ChatMarkdown from './ChatMarkdown';
 import AgentSettingsDialog from './AgentSettingsDialog';
@@ -82,10 +82,12 @@ const SOURCE_CACHE_SIZE = 32;
  * if it stood the check, then who wrote what (K7). The facts come from the indexed graph, or for
  * an open workflow from the file itself (K12). The answer to a general question says it in the
  * language of that question (C5). `code` says what the code declares when the sentence is
- * dropped, as it was for JSONBAgg every time (B2). */
-function groundedExplanation(summary: readonly string[], sentence: string | undefined, dropped: boolean, from: 'graph' | 'file' = 'graph', language: 'en' | 'de' = 'en', code?: string): string {
+ * dropped, as it was for JSONBAgg every time (B2). The note names what the left out sentence
+ * claimed or named, where the check says it (W5). */
+function groundedExplanation(summary: readonly string[], sentence: string | undefined, dropped: boolean | DroppedReason, from: 'graph' | 'file' = 'graph', language: 'en' | 'de' = 'en', code?: string): string {
     const words = from === 'file' ? chatRound3Text[language].fileNotes : groundedText[language];
-    const note = sentence ? words.factsAndSentence : dropped ? words.sentenceDropped : words.factsOnly;
+    const reason = typeof dropped === 'object' ? dropped : undefined;
+    const note = sentence ? words.factsAndSentence : dropped ? words.sentenceDropped(reason) : words.factsOnly;
     return [summary.map(line => `- ${line}`).join('\n'), ...code ? [code] : [], ...sentence ? [sentence] : [], `_${note}_`].join('\n\n');
 }
 /** The same while the model writes its sentence. */
@@ -108,17 +110,23 @@ function SourceDisclosure({ children, title }: { children?: ReactNode; title?: s
 }
 
 /** Where an answer stopped and what can be changed: the limits it ran into, the way to
- * the output limit and the larger models with their download. */
+ * the output limit and the larger models with their download. Only what helps is offered:
+ * an automatic explanation writes at most AUTO_OUTPUT_TOKENS whatever the limit, and at the
+ * maximum a larger model stops at the same limit (W6). */
 interface LimitNote { limit: TokenLimits; automatic?: boolean; chat: TokenLimits; model: BrowserModel; onChangeOutput: () => void }
 function TokenLimitNote({ limit, automatic, chat, model, onChangeOutput }: LimitNote): JSX.Element {
     const larger = BROWSER_MODELS.filter(candidate => candidate.availability === 'available' && candidate.bytes > model.bytes);
+    const sameLimit = larger.every(candidate => candidate.maxOutputTokens <= model.maxOutputTokens);
+    const atMaximum = chat.outputTokens >= model.maxOutputTokens;
+    const raise = automatic ? chat.outputTokens < AUTO_OUTPUT_TOKENS : !atMaximum;
     return <details className="cbm-chat-limit-note">
         <summary>{browserChatText.shortened}</summary>
-        <p>{automatic ? browserChatText.limitAutomatic(limit.inputTokens, limit.outputTokens, chat.inputTokens, chat.outputTokens) : browserChatText.limitReached(limit.inputTokens, limit.outputTokens)}</p>
-        <p>{browserChatText.outputRoom(chat.outputTokens, model.maxOutputTokens)}</p>
+        <p>{automatic ? browserChatText.limitAutomatic(limit.inputTokens, limit.outputTokens, chat.inputTokens, chat.outputTokens, AUTO_OUTPUT_TOKENS) : browserChatText.limitReached(limit.inputTokens, limit.outputTokens)}</p>
+        {automatic ? raise && <p>{browserChatText.automaticRoom(AUTO_OUTPUT_TOKENS)}</p> : <p>{browserChatText.outputRoom(chat.outputTokens, model.maxOutputTokens)}</p>}
+        {!automatic && atMaximum && sameLimit && <p>{browserChatText.narrower(larger.length > 0)}</p>}
         {/* At its maximum the limit cannot be raised, so there is nothing to change (C8). */}
-        {chat.outputTokens < model.maxOutputTokens && <button type="button" onClick={onChangeOutput}>{browserChatText.changeOutputLimit}</button>}
-        {larger.length > 0 && <><p>{browserChatText.largerModels}</p>
+        {raise && <button type="button" onClick={onChangeOutput}>{browserChatText.changeOutputLimit}</button>}
+        {!automatic && larger.length > 0 && (!atMaximum || !sameLimit) && <><p>{browserChatText.largerModels(sameLimit)}</p>
             <ul>{larger.map(candidate => <li key={candidate.id}>{browserChatText.modelDownload(candidate.displayName, sizeLabel(candidate.bytes))}</li>)}</ul></>}
     </details>;
 }
@@ -128,7 +136,7 @@ function TokenLimitNote({ limit, automatic, chat, model, onChangeOutput }: Limit
 function AnswerNotes({ shortened, packet, model, historyOmitted, unsupported = [] }: { shortened?: LimitNote; packet?: PreparedExplanationContext; model: string; historyOmitted?: number; unsupported?: readonly string[] }): JSX.Element {
     const capacity = packet?.capacity;
     return <>
-        {unsupported.length > 0 && <small className="cbm-chat-answer-note">{browserChatText.unsupportedNames(unsupported.slice(0, 6))}</small>}
+        {unsupported.length > 0 && <small className="cbm-chat-answer-note">{browserChatText.unsupportedNames(unsupported)}</small>}
         {shortened && <TokenLimitNote {...shortened} />}
         {capacity && <small className="cbm-chat-answer-note">{browserChatText.capacity(capacity.nodes, capacity.edges, model, capacity.shown)}</small>}
         {!!historyOmitted && <small className="cbm-chat-answer-note">{browserChatText.historyTrimmed(historyOmitted)}</small>}
@@ -137,11 +145,11 @@ function AnswerNotes({ shortened, packet, model, historyOmitted, unsupported = [
 
 /** `codeOnly` where the listed facts already stand above it, in the explanation card. The
  * source does not push the first graph facts out: a listed answer shows both (K14). */
-function PacketSource({ packet, citation, codeOnly = false }: { packet: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; codeOnly?: boolean }): JSX.Element {
+function PacketSource({ packet, citation, codeOnly = false, language = 'en' }: { packet: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; codeOnly?: boolean; language?: 'en' | 'de' }): JSX.Element {
     const code = packet.evidence.filter(item => item.source === 'code').slice(0, 3);
     const facts = codeOnly ? [] : packet.evidence.filter(item => item.source !== 'code').slice(0, 3);
     return <>
-        {packet.limitations.map((limit, index) => <p className="cbm-chat-evidence-note" key={index}>{limit}</p>)}
+        {packet.limitations.map((limit, index) => <p className="cbm-chat-evidence-note" key={index}>{evidenceNote(limit, language)}</p>)}
         {citation ? <pre>{citation.quote}</pre> : [...code, ...facts].map(item => <div key={item.id}>
             {item.location && <small>{item.location.path}:{item.location.startLine}-{item.location.endLine}</small>}<pre>{item.text}</pre>
         </div>)}
@@ -454,7 +462,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 // One sentence beside the facts (two for reader code), and none that names what the evidence lacks.
                 const checked = result.status === 'generated' ? explanationSentence(result.markdown, packet, request.map(message => message.content).join('\n')) : {};
                 if (summary.length || (result.status === 'generated' && checked.dropped)) {
-                    const markdown = summary.length ? groundedExplanation(summary, checked.sentence, checked.dropped !== undefined, from, 'en', code) : `_${browserChatText.explanationDropped}_`;
+                    const markdown = summary.length ? groundedExplanation(summary, checked.sentence, checked.reason ?? checked.dropped !== undefined, from, 'en', code) : `_${browserChatText.explanationDropped(checked.reason)}_`;
                     const complete: Explanation = { key: snapshot.key, label: snapshot.label, answer: markdown, status: 'complete', mode: 'interpretation', packet, grounded: summary.length > 0,
                         ...shortened && checked.sentence ? { shortened, limit: { inputTokens: autoInput, outputTokens: autoOutput } } : {}, ...snapshot.evidence ? { evidence: snapshot.evidence } : {} };
                     remember(complete); setExplanation(complete);
@@ -658,7 +666,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         // A prompt that asks nothing ("test", "hallo") gets questions it could ask, not an echo of the model (C6).
         const known = knownNames({ galaxy, names: galaxy ? galaxyNames(galaxy) : fileSource ? [fileSource.path] : [],
             texts: [fileSource?.text ?? '', source?.text ?? '', ...currentGraph.filter(() => !galaxy).map(item => item.label), ...extra.map(item => item.label)] });
-        const subject: ExampleSubject = galaxy ? { kind: 'galaxy', name: galaxy.label } : fileSource?.kind === 'selection' || source ? { kind: 'marked' }
+        const subject: ExampleSubject = galaxy ? { kind: 'galaxy', name: galaxy.label, evidence: galaxy } : fileSource?.kind === 'selection' || source ? { kind: 'marked' }
             : { kind: 'other', name: fileSource ? fileSource.path.split('/').pop()! : topic?.label ?? '' };
         // "und was noch?" right after a change of topic would reach the model without context:
         // this topic has no earlier turn, and those of other topics are not sent (B4).
@@ -783,7 +791,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 // One sentence beside the facts, checked like the sentence of the explanation card.
                 const result = parseExplanationResponse(output, packet!);
                 const checked = !stopRequested.current && result.status === 'generated' ? explanationSentence(result.markdown, packet!, request.map(message => message.content).join('\n')) : {};
-                const answer = groundedExplanation(grounded.summary, checked.sentence, checked.dropped !== undefined, grounded.from, language, code);
+                const answer = groundedExplanation(grounded.summary, checked.sentence, checked.reason ?? checked.dropped !== undefined, grounded.from, language, code);
                 setTurns(previous => previous.map(item => item.id === id ? { ...item, answer, status: stopRequested.current ? 'stopped' : 'complete' } : item));
                 return;
             }
@@ -912,12 +920,12 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 const ownWords = chatRound3Text[turn.replyLanguage ?? questionLanguage(turn.prompt)];
                 const divider = topicDivider(turns, index);
                 return <article className="cbm-chat-turn" key={turn.id}>
-                {turn.topic && divider && <p className="cbm-chat-topic-break">{divider === 'back' ? ownWords.backTo(turn.topic.label) : browserChatText.topicBreak(turn.topic.label)}</p>}
+                {turn.topic && divider && <p className="cbm-chat-topic-break">{divider === 'back' ? ownWords.backTo(turn.topic.label) : topicText[turn.replyLanguage ?? questionLanguage(turn.prompt)].topicBreak(turn.topic.label)}</p>}
                 <div className="cbm-chat-question"><span className="cbm-chat-speaker">You</span><ChatMarkdown text={turn.prompt} />
                     {turn.askedModel && <small className="cbm-chat-asked-model">{ownWords.askedModel}</small>}</div>
                 <div className="cbm-chat-answer"><SourceDisclosure>
                     {turn.evidence || turn.attachment || turn.readerContext?.source || turn.context?.length ? <>
-                        {turn.evidence ? <PacketSource packet={turn.evidence} /> : <>
+                        {turn.evidence ? <PacketSource packet={turn.evidence} language={turn.replyLanguage ?? questionLanguage(turn.prompt)} /> : <>
                             {turn.attachment && <Attachment attachment={turn.attachment} />}
                             {turn.readerContext?.source && <><Attachment attachment={turn.readerContext.source} label={turn.readerContext.source.kind === 'selection' ? 'Selection snapshot' : 'File snapshot'} />{turn.readerContext.source.partial && <p className="cbm-chat-evidence-note">{turn.readerContext.source.partial}</p>}</>}
                         </>}

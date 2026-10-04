@@ -10,8 +10,8 @@ describe('Architecture selections as readable facts (K7)', () => {
     it('describes a source area in sentences, without field paths a model would list as "Finding a line number"', () => {
         const prompt = formatExplanationEvidence(prepareExplanationContext(undefined, djangoAreaEvidence(), 3200));
         expect(prompt).not.toMatch(/Selected\.|members\[\d+\]|startLine|Snapshot\.|qualifiedName|snapshot items|graph fields omitted/);
-        expect(prompt).toContain('Selected source area: `django` (2310 files · 15299 indexed nodes).');
-        expect(prompt).toContain('528,578 indexed lines in 2,163 measured files of 2,310; files by language: Unknown 1,227, Python 883, HTML 162.');
+        expect(prompt).toContain('Selected source area: `django` (2,310 files · 15,299 indexed nodes).');
+        expect(prompt).toContain('528,578 indexed lines in 2,163 measured files of 2,310; files by language: Python 883, HTML 162, Unknown 1,227.');
         expect(prompt).toContain('3 hotspot findings: `create` (`django/apps/config.py:100`) fan-in 1,278, `filter` (`django/db/models/query.py:1487`) fan-in 1,224');
         expect(prompt).toMatch(/Connections to \(root\): CALLS ×1,743/);
         expect(prompt).toContain('Indexed members include `Member0` (Class)');
@@ -63,7 +63,7 @@ describe('the selected symbol source in a Galaxy explanation (K14)', () => {
         const packet = prepareExplanationContext(undefined, jsonbAggEvidence(), 3200, source);
         const prompt = formatExplanationEvidence(packet);
         expect(prompt).toContain('Source django/contrib/postgres/aggregates/general.py:50-52, a Python source file:\nclass JSONBAgg(OrderableAggMixin, Aggregate):');
-        expect(prompt).toContain('Incoming relationships: 23 from 12 symbols.');
+        expect(prompt).toContain('Incoming: 23 relationships from 12 symbols.');
         expect(packet.limitations.join('\n')).not.toContain('Source unavailable');
         expect(prepareExplanationContext(undefined, jsonbAggEvidence(), 3200).limitations.join('\n')).toContain('Source unavailable');
     });
@@ -95,31 +95,32 @@ describe('the selected symbol source in a Galaxy explanation (K14)', () => {
         const packet = prepareExplanationContext(undefined, jsonbAggEvidence(), 3200, source);
         expect(explanationSentence('`JSONBAgg` sets `function` to "JSONB_AGG" and allows distinct values. It is used by many tests.', packet))
             .toEqual({ sentence: '`JSONBAgg` sets `function` to "JSONB_AGG" and allows distinct values.' });
-        expect(explanationSentence('It is checked by the flake8 linter.', packet)).toEqual({ dropped: 'unsupported' });
-        expect(explanationSentence('It wraps `json_agg_helper` around the query.', packet)).toEqual({ dropped: 'unsupported' });
+        expect(explanationSentence('It is checked by the flake8 linter.', packet)).toMatchObject({ dropped: 'unsupported' });
+        expect(explanationSentence('It wraps `json_agg_helper` around the query.', packet)).toMatchObject({ dropped: 'unsupported' });
         // With source, an input or output claim must be one the code shows.
-        expect(explanationSentence('JSONBAgg is a class that aggregates a list of values.', packet)).toEqual({ dropped: 'unsupported' });
+        expect(explanationSentence('JSONBAgg is a class that aggregates a list of values.', packet)).toMatchObject({ dropped: 'unsupported' });
         const graphOnly = prepareExplanationContext(undefined, jsonbAggEvidence(), 3200);
-        expect(explanationSentence('The test_jsonb_agg test calls it on a list of integers and the output is a list of strings.', graphOnly)).toEqual({ dropped: 'unsupported' });
+        expect(explanationSentence('The test_jsonb_agg test calls it on a list of integers and the output is a list of strings.', graphOnly)).toMatchObject({ dropped: 'unsupported' });
         expect(explanationSentence('JSONBAgg is called by 11 tests.', graphOnly)).toEqual({ sentence: 'JSONBAgg is called by 11 tests.' });
     });
 
     it('summarizes the selection from the graph: what it is and its relationships by direction and type', () => {
         expect(selectionSummary(jsonbAggEvidence())).toEqual([
             'Selected: JSONBAgg (Class) in django/contrib/postgres/aggregates/general.py:50-54.',
-            'Incoming relationships: 23 from 12 symbols (CALLS 11, TESTS 11, DEFINES 1).',
-            'Outgoing relationships: 2 to 2 symbols (INHERITS 2).',
-            'Scope: 1 hop in both directions, all relationship types; 15 symbols and 25 relationships; complete for the indexed graph.',
+            'Incoming: 23 relationships from 12 symbols (CALLS 11, TESTS 11, DEFINES 1).',
+            'Outgoing: 2 relationships to 2 symbols (INHERITS 2).',
+            'Scope: 1 hop in both directions, all relationship types; 15 symbols and 25 relationships; fully loaded.',
         ]);
-        expect(selectionSummary(djangoAreaEvidence())[0]).toBe('Selected source area: `django` (2310 files · 15299 indexed nodes).');
+        expect(selectionSummary(djangoAreaEvidence())[0]).toBe('Selected source area: `django` (2,310 files · 15,299 indexed nodes).');
     });
 
     it('says that a scope stopped at the render limit is partial, in the card and in the prompt (C1)', () => {
         const partial = 'Scope: 3 hops in both directions, all relationship types; 5,548 symbols and 15,673 relationships; '
-            + 'partial: layer 3 stopped at the render limit of 5,000 nodes, so counts and names further out can be incomplete.';
+            + 'partial. Layer 3 stopped loading after the request that took it past the render limit of 5,000 nodes; the scene draws at most 5,000 nodes, '
+            + 'so counts and names further out can be incomplete.';
         expect(selectionSummary(jsonbAggRenderLimited()).at(-1)).toBe(partial);
         expect(formatExplanationEvidence(prepareExplanationContext(undefined, jsonbAggRenderLimited(), 3200))).toContain(partial);
-        expect(selectionSummary(jsonbAggRenderLimited()).join('\n')).not.toContain('complete for the indexed graph');
+        expect(selectionSummary(jsonbAggRenderLimited()).join('\n')).not.toContain('fully loaded');
     });
 
     it('checks a German sentence for the same unsupported claims and asks for it in German (C5)', () => {
@@ -127,7 +128,7 @@ describe('the selected symbol source in a Galaxy explanation (K14)', () => {
         const packet = prepareExplanationContext(undefined, jsonbAggEvidence(), 3200, source);
         for (const sentence of ['JSONBAgg gibt eine Liste von Werten zurück.', 'Die Rückgabe ist ein JSON-Objekt.', 'JSONBAgg nimmt Parameter entgegen.',
             'Die Argumente werden aggregiert.', 'Die Eingabe sind Zeilen.', 'Die Ausgabe ist JSON.', 'Der Datentyp ist JSONB.', 'Sie wird mit einer Liste von Feldern aufgerufen.']) {
-            expect(explanationSentence(sentence, packet)).toEqual({ dropped: 'unsupported' });
+            expect(explanationSentence(sentence, packet)).toMatchObject({ dropped: 'unsupported' });
         }
         expect(explanationSentence('JSONBAgg setzt `function` auf "JSONB_AGG" und erlaubt distinct.', packet)).toEqual({ sentence: 'JSONBAgg setzt `function` auf "JSONB_AGG" und erlaubt distinct.' });
         const german = explanationMessages(packet, { name: 'JSONBAgg', kind: 'Class' }, 'de');
@@ -136,10 +137,10 @@ describe('the selected symbol source in a Galaxy explanation (K14)', () => {
 
     it('summarizes the selection in German for a German question (C5)', () => {
         expect(selectionSummary(jsonbAggEvidence(), 'de')).toEqual([
-            'Ausgewählt: JSONBAgg (Class) in django/contrib/postgres/aggregates/general.py:50-54.',
-            'Eingehende Beziehungen: 23 aus 12 Symbolen (CALLS 11, TESTS 11, DEFINES 1).',
-            'Ausgehende Beziehungen: 2 zu 2 Symbolen (INHERITS 2).',
-            'Ausschnitt: 1 Schritt in beide Richtungen, alle Beziehungstypen; 15 Symbole und 25 Beziehungen; vollständig für den indizierten Graphen.',
+            'Ausgewählt: JSONBAgg (Klasse) in django/contrib/postgres/aggregates/general.py:50-54.',
+            'Eingehend: 23 Beziehungen von 12 Symbolen (CALLS 11, TESTS 11, DEFINES 1).',
+            'Ausgehend: 2 Beziehungen zu 2 Symbolen (INHERITS 2).',
+            'Ausschnitt: 1 Schritt in beide Richtungen, alle Beziehungstypen; 15 Symbole und 25 Beziehungen; vollständig geladen.',
         ]);
     });
 });

@@ -105,7 +105,7 @@ describe('names an answer was not given (C3)', () => {
     it('applies the same comparison to the sentence of an automatic explanation', () => {
         const packet = { label: 'JSONBAgg', evidence: [{ id: 'source-1', text: source, source: 'code' as const }], limitations: [], fallback: '', characterCount: 0 };
         expect(explanationSentence('`JSONBAGG` sets the `distinct` and `ORDER_BY` parts of its template.', packet)).toEqual({ sentence: '`JSONBAGG` sets the `distinct` and `ORDER_BY` parts of its template.' });
-        expect(explanationSentence('`Jsonb_agg_distinct_false` checks it.', packet)).toEqual({ dropped: 'unsupported' });
+        expect(explanationSentence('`Jsonb_agg_distinct_false` checks it.', packet)).toMatchObject({ dropped: 'unsupported' });
     });
 });
 
@@ -119,6 +119,6 @@ describe('evidence sections in the prompt', () => {
         expect(prompt).not.toMatch(/\[(?:graph|source)-\d+\]/);
         expect(prompt).not.toMatch(/\b(?:graph|source)[- ]\d+\b/i);
         expect(formatExplanationEvidence(packet)).toMatch(/^Source django\/contrib\/postgres\/aggregates\/general\.py:50-51, a Python source file:$/m);
-        expect(formatExplanationEvidence(packet)).toContain('Incoming relationships: 23 from 12 symbols.');
+        expect(formatExplanationEvidence(packet)).toContain('Incoming: 23 relationships from 12 symbols.');
     });
 });

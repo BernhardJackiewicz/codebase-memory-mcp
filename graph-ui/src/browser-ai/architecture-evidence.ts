@@ -24,6 +24,9 @@ function text(value: unknown, limit = 160): string | undefined {
 const count = (value: unknown): number | undefined => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 const number = (value: number) => value.toLocaleString('en-US');
 const quote = (value: string) => `\`${value.replace(/`/g, "'")}\``;
+/** Counts in a view's own detail ("2310 files · 15299 indexed nodes") written as the card writes them;
+ * a line after a path ("query.py:1487") stays as it is (W10). */
+const grouped = (detail: string | undefined) => detail?.replace(/(?<![\w:.,-])\d{4,}(?![\w.,:-])/g, digits => number(Number(digits)));
 const lines = (start: unknown, end: unknown) => {
     const first = count(start), last = count(end);
     return first ? `:${first}${last && last !== first ? `-${last}` : ''}` : '';
@@ -47,9 +50,11 @@ function names(items: Row[], limit: number, total?: number): string {
     return `${listed.join(', ')}${more ? `; ${words.more(more)}` : ''}`;
 }
 
-/** The measured lines and languages of an area or file. */
+/** The measured lines and languages of an area or file; languages by files, largest first, Unknown last (W10). */
 function measuredFacts(measure: Row | undefined): string[] {
-    const languages = rows(measure?.languages).flatMap(item => { const name = text(item.name, 40), files = count(item.files); return name && files ? [`${name} ${number(files)}`] : []; });
+    const languages = rows(measure?.languages).flatMap(item => { const name = text(item.name, 40), files = count(item.files); return name && files ? [{ name, files }] : []; })
+        .sort((left, right) => Number(left.name === 'Unknown') - Number(right.name === 'Unknown') || right.files - left.files)
+        .map(item => `${item.name} ${number(item.files)}`);
     return measure && count(measure.lines) !== undefined ? [words.measured(count(measure.lines)!, count(measure.measuredFiles) ?? 0, count(measure.files) ?? 0, languages)] : [];
 }
 
@@ -120,7 +125,7 @@ function spatialFacts(selected: Row, relationships: Row | undefined, scope: Row 
     const members = rows(selected.members);
     const total = count(selected.memberCount) ?? members.length;
     const symbol = kind === 'symbol' ? symbolOf(members[0]) : undefined;
-    facts.push(kind === 'symbol' && symbol ? words.selectedSymbol(located(symbol)) : words.selected(words.kinds[kind as keyof typeof words.kinds] ?? kind, quote(label), text(selected.detail, 160)));
+    facts.push(kind === 'symbol' && symbol ? words.selectedSymbol(located(symbol)) : words.selected(words.kinds[kind as keyof typeof words.kinds] ?? kind, quote(label), grouped(text(selected.detail, 160))));
     facts.push(...measuredFacts(record(selected.measurement)));
     facts.push(...hotspotFacts(record(selected.hotspots)));
     if (kind !== 'symbol' && members.length) facts.push(words.members(names(members, 8, total)));

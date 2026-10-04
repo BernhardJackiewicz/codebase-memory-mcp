@@ -47,9 +47,9 @@ describe('coming back to a topic and follow-ups without context (B4)', () => {
         await dock.ask('und was noch?');
         expect(runtime.chat.mock.calls.length).toBe(calls);
         const answer = dock.answerOf(dock.last());
-        expect(answer).toContain('"und was noch?" bezieht sich auf frühere Nachrichten. Die betrafen ein anderes Thema und werden mit Fragen zu JSONBAgg nicht mitgeschickt.');
+        expect(answer).toContain('„und was noch?“ bezieht sich auf frühere Nachrichten. Die betrafen ein anderes Thema und werden mit Fragen zu JSONBAgg nicht mitgeschickt.');
         expect(answer).toContain('Stell die Frage bitte vollständig, zum Beispiel:');
-        for (const example of ['Was macht JSONBAgg?', 'Wer ruft JSONBAgg auf?']) expect(answer).toContain(example);
+        for (const example of ['Was ist JSONBAgg?', 'Wer verwendet JSONBAgg?']) expect(answer).toContain(example);
         expect(answer).toContain('Ohne das Modell beantwortet.');
         expect(dock.buttonsOf(dock.last())).toEqual([]);
         await dock.ask('more');
@@ -69,7 +69,7 @@ describe('coming back to a topic and follow-ups without context (B4)', () => {
         await dock.render({ ...props, selectionScope: 'django-demo:explore', readerContext: readerOf(WORKFLOW, PATH) });
         await dock.ask('mehr');
         expect(runtime.chat).not.toHaveBeenCalled();
-        expect(dock.answerOf(dock.last())).toContain(`"mehr" bezieht sich auf frühere Nachrichten. Die betrafen ein anderes Thema und werden mit Fragen zu ${PATH} nicht mitgeschickt.`);
+        expect(dock.answerOf(dock.last())).toContain(`„mehr“ bezieht sich auf frühere Nachrichten. Die betrafen ein anderes Thema und werden mit Fragen zu ${PATH} nicht mitgeschickt.`);
         expect(dock.answerOf(dock.last())).toContain('Was macht new_contributor_pr.yml?');
     });
 });

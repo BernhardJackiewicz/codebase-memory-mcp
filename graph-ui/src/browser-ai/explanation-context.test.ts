@@ -93,7 +93,7 @@ describe('bounded explanation evidence', () => {
         expect(text).toContain('104');
         expect(text).toContain('76');
         expect(text).toMatch(/omitted/);
-        expect(text).toMatch(/static/i);
+        expect(text).toContain('come from reading the code; they do not show what runs at runtime');
         expect(prepared.characterCount).toBeLessThanOrEqual(4000);
         expect(prepared.fallback.length).toBeLessThanOrEqual(400);
     });
@@ -145,19 +145,19 @@ describe('bounded explanation evidence', () => {
         const prepared = prepareExplanationContext(undefined, jsonbAggEvidence(), 3200);
         const text = outputText(prepared);
         expect(text).toContain('Selected: JSONBAgg (Class) in django/contrib/postgres/aggregates/general.py:50-54.');
-        expect(text).toContain('Scope: 1 hop in both directions, all relationship types; 15 symbols and 25 relationships; complete for the indexed graph.');
-        expect(text).toContain('Incoming relationships: 23 from 12 symbols.');
+        expect(text).toContain('Scope: 1 hop in both directions, all relationship types; 15 symbols and 25 relationships; fully loaded.');
+        expect(text).toContain('Incoming: 23 relationships from 12 symbols.');
         const line = (type: string) => text.split('\n').find(item => item.startsWith(`- ${type} `)) ?? '';
         for (const type of ['CALLS', 'TESTS']) {
-            expect(line(type)).toMatch(new RegExp(`^- ${type} from 11: `));
+            expect(line(type)).toMatch(new RegExp(`^- ${type} \\(11\\): `));
             for (const name of JSONB_AGG_CALLERS) expect(line(type)).toContain(name);
             expect(line(type)).toContain('(Method, tests/postgres_tests/test_aggregates.py)');
         }
-        expect(line('DEFINES')).toBe('- DEFINES from 1: general.py (File, django/contrib/postgres/aggregates/general.py)');
-        expect(text).toContain('Outgoing relationships: 2 to 2 symbols.');
-        expect(line('INHERITS')).toMatch(/^- INHERITS to 2: OrderableAggMixin .*Aggregate/);
+        expect(line('DEFINES')).toBe('- DEFINES (1): general.py (File, django/contrib/postgres/aggregates/general.py)');
+        expect(text).toContain('Outgoing: 2 relationships to 2 symbols.');
+        expect(line('INHERITS')).toMatch(/^- INHERITS \(2\): OrderableAggMixin .*Aggregate/);
         // Callers never appear under the outgoing side.
-        expect(text.slice(text.indexOf('Outgoing relationships'))).not.toContain('test_jsonb_agg');
+        expect(text.slice(text.indexOf('Outgoing:'))).not.toContain('test_jsonb_agg');
         expect(prepared.capacity).toBeUndefined();
     });
 
@@ -170,8 +170,8 @@ describe('bounded explanation evidence', () => {
     it('lists names until the budget ends, then says how many more there are and reports the capacity', () => {
         const prepared = prepareExplanationContext(undefined, jsonbAggEvidence(), 1900);
         const text = outputText(prepared);
-        expect(text).toContain('Incoming relationships: 23 from 12 symbols.');
-        const calls = text.split('\n').find(item => item.startsWith('- CALLS from 11: '))!;
+        expect(text).toContain('Incoming: 23 relationships from 12 symbols.');
+        const calls = text.split('\n').find(item => item.startsWith('- CALLS (11): '))!;
         const listed = JSONB_AGG_CALLERS.filter(name => calls.includes(`${name},`) || calls.includes(`${name} (`)).length;
         expect(listed).toBeGreaterThan(0);
         expect(calls).toMatch(new RegExp(`; \\+${11 - listed} more$`));
@@ -186,14 +186,14 @@ describe('bounded explanation evidence', () => {
         const context = jsonbAggEvidence({ edges: [...scope.edges, ...many] });
         const text = outputText(prepareExplanationContext(undefined, context, 6000));
         // The extra callers are not in the node list, so they are named by id; the count stays exact.
-        expect(text).toContain('- CALLS from 71: ');
-        expect(text).toMatch(/- CALLS from 71: .*; \+47 more/);
+        expect(text).toContain('- CALLS (71): ');
+        expect(text).toMatch(/- CALLS \(71\): .*; \+47 more/);
     });
 
     it('keeps a large documented scope readable and says when its snapshot cut relationships', () => {
         const whole = outputText(prepareExplanationContext(undefined, selectionEvidenceContext(largeFolderScope()), 6000));
-        expect(whole).toContain('Incoming relationships: 150 from 150 symbols.');
-        expect(whole).toContain('Outgoing relationships: 150 to 150 symbols.');
+        expect(whole).toContain('Incoming: 150 relationships from 150 symbols.');
+        expect(whole).toContain('Outgoing: 150 relationships to 150 symbols.');
         expect(whole).not.toMatch(/Snapshot\.|Selected\.|Relationships\.|incompl/);
         const evidence = largeFolderScope();
         const cut = selectionEvidenceContext({ ...evidence, selected: { ...evidence.selected as object, notes: Array.from({ length: 13 }, () => 'n'.repeat(1200)) } });
@@ -204,7 +204,7 @@ describe('bounded explanation evidence', () => {
 
     it('says when a side was not loaded instead of reporting no callers', () => {
         const text = outputText(prepareExplanationContext(undefined, jsonbAggEvidence({ direction: 'outbound' })));
-        expect(text).toContain('Incoming relationships: not loaded; the scope does not follow incoming edges.');
+        expect(text).toContain('Incoming: not loaded; the scope does not follow incoming edges.');
         expect(text).toContain('outgoing only');
         expect(outputText(prepareExplanationContext(undefined, jsonbAggEvidence({ state: 'loading-partial-preview' }))))
             .toContain('still loading, so this is a partial preview');

@@ -27,7 +27,7 @@ describe('prompts without a question about an open file (B5)', () => {
         const { props, runtime } = dock.setup();
         await dock.render({ ...props, proactiveSelection: jsonbAggEvidence() }); await dock.load();
         await dock.ask('test');
-        expect(dock.answerOf(dock.last())).toContain('What does JSONBAgg do?');
+        expect(dock.answerOf(dock.last())).toContain('What is JSONBAgg?');
         expect(dock.buttonsOf(dock.last())).toEqual([]);
         expect(runtime.chat).not.toHaveBeenCalled();
     });

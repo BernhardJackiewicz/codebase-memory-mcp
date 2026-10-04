@@ -9,7 +9,7 @@ export const AUTO_OUTPUT_TOKENS = 128;
 export const CHAT_INPUT_TOKENS = 2048;
 
 /** Code sections are headed by where they come from; graph facts already begin with
- * their own words ("Selected:", "Incoming relationships:"). Numbered ids such as
+ * their own words ("Selected:", "Incoming:"). Numbered ids such as
  * "[graph-1]" stay out: a small model repeats them as "Graph 1" in its answer. */
 export function formatExplanationEvidence(packet: PreparedExplanationContext): string {
     const kind = (path: string) => { const name = fileKind(path); return name ? `, a ${name}` : ''; };
@@ -78,20 +78,38 @@ const IDENTIFIER = /\b(?:[A-Za-z]+_\w+|[a-z]+[A-Z]\w*|[A-Z][a-z0-9]+[A-Z]\w*|[A-
 function nameCheck(given: string): (name: string) => boolean {
     const words = new Set((given.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? []).map(word => word.toLowerCase()));
     const text = given.toLowerCase();
-    return name => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? words.has(name.toLowerCase()) : text.includes(name.toLowerCase());
+    // Folders and files of at least six letters in the paths given ("postgres" of django/contrib/postgres).
+    const segments = [...new Set((given.match(/[\w.-]+(?:\/[\w.-]+)+/g) ?? []).flatMap(path => path.split('/'))
+        .map(segment => segment.replace(/\.\w+$/, '').toLowerCase()).filter(segment => /^[a-z]{6,}$/.test(segment)))];
+    // "PostgreSQL" beside django/contrib/postgres names the product of that folder, not a made-up
+    // symbol: a word of letters only, at most three letters longer than the segment (W7).
+    const extendsFolder = (name: string) => /^[A-Za-z]+$/.test(name) && segments.some(segment => name.toLowerCase().startsWith(segment) && name.length - segment.length <= 3);
+    return name => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? words.has(name.toLowerCase()) : text.includes(name.toLowerCase())) || extendsFolder(name);
 }
+
+/** Literals and format placeholders are no names: `False`, `None`, `%s`, `%(distinct)s`, `{0}` (W7). */
+const LITERAL = /^(?:true|false|none|null|undefined|nil|nan)$/i;
+const PLACEHOLDER = /^(?:%(?:\([^)]*\))?[-#0 +]*\d*(?:\.\d+)?[a-z%]?|\{[^{}]*\})$/i;
+const nameLike = (name: string) => /\p{L}/u.test(name) && !LITERAL.test(name) && !PLACEHOLDER.test(name);
 
 /** Names an answer uses that the request it was given does not contain: written in
  * backticks or shaped like an identifier (flake8, json_agg_helper). Shown under the answer (K12). */
 export function namesNotIn(answer: string, given: string): string[] {
     const named = [...answer.matchAll(/`([^`\n]+)`/g)].map(match => match[1].trim()).concat(answer.replace(/`[^`]*`/g, ' ').match(IDENTIFIER) ?? []);
     const known = nameCheck(given);
-    return [...new Set(named.filter(name => name && !known(name)))];
+    return [...new Set(named.filter(name => name && nameLike(name) && !known(name)))];
 }
+
+/** Why the model's sentence was left out, as the sentence wrote it: a claim word the source does
+ * not show ("output", "Array") or a name in neither the source nor the facts. The note under the
+ * answer says which, instead of blaming a name for every drop (W5). */
+export interface DroppedReason { kind: 'claim' | 'name'; text: string }
+/** "gibt eine Liste von JSON-Daten zurück" is shown as "gibt … zurück". */
+const shownClaim = (text: string) => { const words = text.trim().split(/\s+/); return words.length > 2 ? `${words[0]} … ${words.at(-1)}` : words.join(' '); };
 
 /** The model's part of an automatic explanation: its first sentence (two for reader code),
  * or nothing when it names what the evidence does not contain. */
-export function explanationSentence(output: string, packet: PreparedExplanationContext, given = ''): { sentence?: string; dropped?: 'unsupported' } {
+export function explanationSentence(output: string, packet: PreparedExplanationContext, given = ''): { sentence?: string; dropped?: 'unsupported'; reason?: DroppedReason } {
     const mode = explanationMode(packet);
     const text = output.trim().replace(/^```\w*\s*|\s*```$/g, '').replace(/\s+/g, ' ').trim();
     if (!/[\p{L}\p{N}]/u.test(text)) return {};
@@ -110,9 +128,13 @@ export function explanationSentence(output: string, packet: PreparedExplanationC
     const named = [...sentence.matchAll(/`([^`]+)`/g)].map(match => match[1]).concat(sentence.replace(/`[^`]*`/g, ' ').match(IDENTIFIER) ?? []);
     // Without source every type or input/output claim is a guess; with source only one the code itself shows.
     const code = packet.evidence.filter(item => item.source === 'code').map(item => item.text).join('\n').toLowerCase();
-    const claims = [...sentence.matchAll(new RegExp(UNSUPPORTED_CLAIM.source, 'gi'))].map(match => match[0].toLowerCase().replace(/(?:s|ing)$/, '').split(' ')[0])
-        .concat(GERMAN_CLAIMS.flatMap(([pattern, word]) => pattern.test(sentence) ? [word] : []));
-    if (named.some(name => !known(name)) || (mode !== 'code' && claims.some(claim => mode === 'graph' || !code.includes(claim)))) return { dropped: 'unsupported' };
+    const claims = [...sentence.matchAll(new RegExp(UNSUPPORTED_CLAIM.source, 'gi'))]
+        .map(match => ({ word: match[0].toLowerCase().replace(/(?:s|ing)$/, '').split(' ')[0], shown: match[0] }))
+        .concat(GERMAN_CLAIMS.flatMap(([pattern, word]) => { const match = pattern.exec(sentence); return match ? [{ word, shown: shownClaim(match[0]) }] : []; }));
+    const unknown = named.find(name => nameLike(name) && !known(name));
+    if (unknown) return { dropped: 'unsupported', reason: { kind: 'name', text: unknown } };
+    const claim = mode === 'code' ? undefined : claims.find(item => mode === 'graph' || !code.includes(item.word));
+    if (claim) return { dropped: 'unsupported', reason: { kind: 'claim', text: claim.shown } };
     return { sentence };
 }
 

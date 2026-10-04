@@ -43,8 +43,9 @@ describe('short general questions about an open code file or marked code (B3)', 
         expect(answer).toContain('In the source:');
         expect(dock.last().querySelector('.cbm-chat-answer-text pre')?.textContent).toContain('output_field = JSONField()');
         // The model named something the code does not have: its text is left out.
-        expect(answer).not.toContain('json_helper');
-        expect(answer).toContain("Read from the file. The model's text named something the file does not show and was left out.");
+        expect(answer).not.toContain('It declares the JSONB_AGG aggregate');
+        // The note names what the left out text named (W5).
+        expect(answer).toContain("Read from the file. The model's text named something the file does not show (here: json_helper) and was left out.");
     });
 
     it('still sends questions that are not general to the model as before', async () => {

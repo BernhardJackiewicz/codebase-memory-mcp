@@ -18,7 +18,7 @@ describe('a general question about a selected symbol says what its code declares
         await dock.ask('was macht diese klasse? sehr kurze antwort');
         expect(runtime.chat).toHaveBeenCalledOnce();
         const answer = dock.answerOf(dock.last());
-        expect(answer).toContain('Ausgewählt: JSONBAgg (Class)');
+        expect(answer).toContain('Ausgewählt: JSONBAgg (Klasse)');
         expect(answer).toContain('Im Quelltext:');
         for (const line of ['class JSONBAgg(OrderableAggMixin, Aggregate):', 'function = "JSONB_AGG"', 'template = "%(function)s(%(distinct)s%(expressions)s %(order_by)s)"',
             'allow_distinct = True', 'output_field = JSONField()']) expect(dock.last().querySelector('.cbm-chat-answer-text pre')?.textContent).toContain(line);
@@ -54,9 +54,10 @@ describe('a general question about a selected symbol says what its code declares
         await dock.render({ ...props, proactive: true, proactiveSelection: jsonbAggEvidence() }); await dock.load();
         await act(async () => { await vi.advanceTimersByTimeAsync(650); });
         const card = dock.card()!.textContent ?? '';
-        expect(card).toContain('Incoming relationships: 23 from 12 symbols');
+        expect(card).toContain('Incoming: 23 relationships from 12 symbols');
         expect(card).toContain('In the source:');
         expect(card).toContain('output_field = JSONField()');
-        expect(card).not.toContain('arrays');
+        // The dropped sentence stays out; only the note names its claim (W5).
+        expect(card).not.toContain('turns rows into arrays');
     });
 });

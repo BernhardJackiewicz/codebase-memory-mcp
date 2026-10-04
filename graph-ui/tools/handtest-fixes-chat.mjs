@@ -301,9 +301,9 @@ async function k16(page) {
     const luftCalls = await sentSince(page, luftMark);
     await shot(page, 'K16', 'luft-to-model', '"Hat diese Klasse Luft?" is not read as a call question: the model answers it.');
     const callers = ['test_default_argument', 'test_empty_result_set', 'test_jsonb_agg', 'test_values_list'];
-    check('K16', 'Typo caller questions are listed; uncertain ones are suggested in the right direction and language; no model call', /Aufrufer von JSONBAgg im geladenen Graphen/.test(typo)
-        && callers.every((name) => typo.includes(name)) && /Aufrufer von JSONBAgg im geladenen Graphen/.test(shortTypo) && /Meintest du: Aufrufer von JSONBAgg\?/.test(suggestion)
-        && JSON.stringify(germanButtons) === JSON.stringify(['Liste anzeigen', 'Modell fragen']) && /Aufrufer von JSONBAgg im geladenen Graphen/.test(listed)
+    check('K16', 'Typo caller questions are listed; uncertain ones are suggested in the right direction and language; no model call', /Aufrufer \(CALLS\) von JSONBAgg im geladenen Graphen/.test(typo)
+        && callers.every((name) => typo.includes(name)) && /Aufrufer \(CALLS\) von JSONBAgg im geladenen Graphen/.test(shortTypo) && /Meintest du: Aufrufer von JSONBAgg\?/.test(suggestion)
+        && JSON.stringify(germanButtons) === JSON.stringify(['Liste anzeigen', 'Modell fragen']) && /Aufrufer \(CALLS\) von JSONBAgg im geladenen Graphen/.test(listed)
         && JSON.stringify(listedButtons) === JSON.stringify(['Modell fragen']) && /Did you mean: what JSONBAgg calls\?/.test(direction)
         && JSON.stringify(englishButtons) === JSON.stringify(['Show the list', 'Ask the model']) && modelCalls.length === 0 && luftCalls.length === 1 && !/Meintest du|Did you mean/.test(luft),
     { typoAnswerStart: typo.slice(0, 120), shortTypo: shortTypo.slice(0, 120), suggestion: suggestion.slice(0, 200), germanButtons, afterShowList: listed.slice(0, 120), listedButtons,
@@ -324,10 +324,10 @@ async function k16(page) {
     await shot(page, 'K16', 'name-typo-listed', 'After "Show the list": the complete callers of JSONBAgg.');
     const typoModelCalls = (await sentSince(page, typoMark)).length;
     check('K16', 'A typo in the selected name (up to two letters, any case) is offered for the selection, a free word order with "wo" is listed; none of them reach the model',
-        orders.every((item) => /Aufrufer von JSONBAgg im geladenen Graphen/.test(item.answer) && callers.every((name) => item.answer.includes(name)))
-        && typos.every((item) => item.language === 'de' ? /Meintest du: Aufrufer von JSONBAgg\?/.test(item.answer) && /ist nicht genau der Name der Auswahl/.test(item.answer)
-            : /Did you mean: callers of JSONBAgg\?/.test(item.answer) && /is not exactly the name of the selection/.test(item.answer))
-        && /Callers of JSONBAgg in the loaded graph/.test(typoListed) && typoModelCalls === 0,
+        orders.every((item) => /Aufrufer \(CALLS\) von JSONBAgg im geladenen Graphen/.test(item.answer) && callers.every((name) => item.answer.includes(name)))
+        && typos.every((item) => item.language === 'de' ? /Meintest du: Aufrufer von JSONBAgg\?/.test(item.answer) && /entspricht nicht dem Namen der Auswahl \(JSONBAgg\)/.test(item.answer)
+            : /Did you mean: callers of JSONBAgg\?/.test(item.answer) && /does not match the name of the selection \(JSONBAgg\)/.test(item.answer))
+        && /callers \(CALLS\) of JSONBAgg in the loaded graph/.test(typoListed) && typoModelCalls === 0,
     { orders: orders.map((item) => `${item.question} => ${item.answer.replace(/\s+/g, ' ').slice(0, 140)}`), typos: typos.map((item) => `${item.question} => ${item.answer.replace(/\s+/g, ' ').slice(0, 160)}`),
         afterShowList: typoListed.replace(/\s+/g, ' ').slice(0, 140), modelCalls: typoModelCalls });
 }
@@ -487,7 +487,7 @@ async function k7(page) {
     let card = await explanationText(page);
     outputs.push({ selection: 'JSONBAgg incoming CALLS', card, model: (await answersSince(page, from))[0]?.output, prompt: promptText(request) });
     await shot(page, 'K7', 'galaxy-incoming-calls', 'JSONBAgg, incoming, CALLS only: listed facts, at most one model sentence, no "list of integers / list of strings".');
-    const galaxyOk = Boolean(request) && /Incoming relationships: 11 from 11 symbols \(CALLS 11\)/.test(card) && !/list of (?:integers|strings)|output is/i.test(card)
+    const galaxyOk = Boolean(request) && /Incoming: 11 relationships from 11 symbols \(CALLS 11\)/.test(card) && !/list of (?:integers|strings)|output is/i.test(card)
         && /Never state types, parameters, inputs, outputs/.test(promptText(request)) && /class JSONBAgg\(OrderableAggMixin, Aggregate\)/.test(promptText(request));
     // Architecture, Overview: the django area (hand test 17:53).
     await tab(page, 'architecture');
@@ -709,7 +709,7 @@ async function k12(page) {
     const factsInCard = /1 job: build \("Hello new contributor", runs on ubuntu-latest, 1 step\)/.test(card) && /Trigger: pull_request_target \(types: opened\)/.test(card);
     const factsOnly = !automatic && askButton === 1 && /Read from the file; not generated by the model\./.test(card) && card.split('\n').filter(Boolean).every((line) => /^(?:Agent|ⓘ Source|Workflow name|Trigger|1 job|Actions used|Read from the file|Ask the model)/.test(line.trim()));
     const askedLabelled = Boolean(asked) && /1 job: build/.test(askedCard)
-        && (/Facts read from the file; the text after them is generated by the model\./.test(askedCard) || /The model's text named something the file does not show and was left out\./.test(askedCard));
+        && (/Facts read from the file; the text after them is generated by the model\./.test(askedCard) || /The model's text (?:named|claimed) something the file does not show \(here: .+?\) and was left out\./.test(askedCard));
     const othersFactsOnly = others.length >= 2 && others.every((item) => item.modelCalls === 0 && item.factsOnly);
     const invented = questionsAsked.filter((item) => /flake8|python|\bpip\b|\.py\b/i.test(item.answer));
     const counts = questionsAsked.filter((item) => /Wie viele|How many/.test(item.question)).map((item) => item.answer.replace(/^You\s+[^\n]*\n+Agent\s+(?:ⓘ Source\s+)?/, '').replace(/\s+/g, ' ').slice(0, 200));
