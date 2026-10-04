@@ -93,7 +93,7 @@ describe('bounded explanation evidence', () => {
         expect(text).toContain('104');
         expect(text).toContain('76');
         expect(text).toMatch(/omitted/);
-        expect(text).toMatch(/static/i);
+        expect(text).toContain('come from reading the code; they do not show what runs at runtime');
         expect(prepared.characterCount).toBeLessThanOrEqual(4000);
         expect(prepared.fallback.length).toBeLessThanOrEqual(400);
     });

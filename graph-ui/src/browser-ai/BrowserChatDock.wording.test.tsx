@@ -177,3 +177,16 @@ describe('the topic divider in the language of its turn (W8)', () => {
             'New topic: tox.ini. Earlier messages are not sent with these questions.']);
     });
 });
+
+describe('the Source block of an answer in its language (W10)', () => {
+    it('says plainly where the relationships come from, in German under a German answer', async () => {
+        const { props } = fixture();
+        await render({ ...props, proactiveSelection: jsonbAggEvidence() }); await load();
+        await ask('Wer ruft JSONBAgg auf?');
+        const source = () => last().querySelector('.cbm-chat-source-content')?.textContent ?? '';
+        expect(source()).toContain('Die Beziehungen hier wurden aus dem Code gelesen; sie zeigen nicht, was zur Laufzeit ausgeführt wird.');
+        expect(source()).not.toContain('Static graph relationships');
+        await ask('Who calls JSONBAgg?');
+        expect(source()).toContain('The relationships here come from reading the code; they do not show what runs at runtime.');
+    });
+});

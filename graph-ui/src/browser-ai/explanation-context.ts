@@ -1,6 +1,6 @@
 import { snapshotReaderContext, type BrowserChatContext, type BrowserChatReaderContext, type BrowserChatSource } from './chat-model';
 import { fairShares, readGalaxyEvidence, relationshipLine, scopeSentence, selectionSentence, sideLoaded, type GalaxyEvidence } from './galaxy-evidence';
-import { relationshipWords } from './strings';
+import { relationshipWords, staticGraphNote } from './strings';
 import { architectureFacts } from './architecture-evidence';
 import { readerFacts } from './file-facts';
 
@@ -215,7 +215,7 @@ function galaxyFacts(galaxy: GalaxyEvidence): GraphPreparation {
     return {
         facts: [fixedFact(selectionSentence(galaxy, words).join('\n')), fixedFact(scopeSentence(galaxy, words)),
             relationshipFact(galaxy, 'incoming'), relationshipFact(galaxy, 'outgoing'), ...further ? [fixedFact(further)] : []],
-        limitations: ['Static graph relationships do not establish runtime execution or repository purpose.'],
+        limitations: [staticGraphNote],
         scope: { nodes: galaxy.nodes, edges: galaxy.edges },
     };
 }
@@ -230,7 +230,7 @@ function graphEvidence(context: BrowserChatContext): GraphPreparation {
     try { parsed = record(JSON.parse(context.text)); } catch { /* Report unsupported data below. */ }
     const evidence = record(parsed?.evidence);
     if (evidence?.kind !== 'current-selection-evidence') return { facts: [], limitations: ['Unsupported graph snapshot; graph facts unavailable.'] };
-    const limits = ['Static graph relationships do not establish runtime execution or repository purpose.'];
+    const limits = [staticGraphNote];
     if (typeof evidence.source !== 'string' || !evidence.source || typeof evidence.project !== 'string'
         || !evidence.project || typeof evidence.generation !== 'string' || !evidence.generation || evidence.generation === 'unavailable') {
         limits.push('Graph provenance or index generation unavailable; freshness is not established.');

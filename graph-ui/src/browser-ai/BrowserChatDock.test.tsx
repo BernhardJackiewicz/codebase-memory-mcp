@@ -1515,13 +1515,13 @@ describe('grounded automatic explanations (K14, K7)', () => {
         await render({ ...props, proactive: true, selectionScope: 'django-demo:architecture', proactiveSelection: djangoAreaEvidence(), readSource }); await click('Download & load'); await settle();
         expect(readSource).not.toHaveBeenCalled();
         expect(runtime.chat).not.toHaveBeenCalled();
-        expect(card().textContent).toContain('Selected source area: django (2310 files · 15299 indexed nodes).');
+        expect(card().textContent).toContain('Selected source area: django (2,310 files · 15,299 indexed nodes).');
         expect(card().textContent).toMatch(/Connections to \(root\): CALLS ×1,743/);
         expect(card().textContent).not.toMatch(/Finding a|Selected\.|members\[\d+\]|startLine/);
         // A question about the area gets the same readable facts.
         await type('What is in this area?'); await click('Send ↑');
         const prompt = runtime.chat.mock.calls[0][0].map(message => message.content).join('\n');
-        expect(prompt).toContain('Selected source area: `django` (2310 files · 15299 indexed nodes).');
+        expect(prompt).toContain('Selected source area: `django` (2,310 files · 15,299 indexed nodes).');
         expect(prompt).not.toMatch(/Selected\.|members\[\d+\]|startLine/);
     });
 });

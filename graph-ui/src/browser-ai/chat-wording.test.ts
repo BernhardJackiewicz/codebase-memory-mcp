@@ -6,7 +6,8 @@ import { readGalaxyEvidence } from './galaxy-evidence';
 import { jsonbAggEvidence, jsonbAggRenderLimited, largeFolderScope } from './galaxy-evidence.fixture';
 import { generalQuestion, noQuestionAnswer } from './question-intent';
 import { relationshipAnswer, relationshipQuestion, relationshipSuggestion } from './relationship-answer';
-import { browserChatText, groundedText, relationshipWords, topicText } from './strings';
+import { browserChatText, evidenceNote, groundedText, relationshipWords, topicText } from './strings';
+import { djangoAreaEvidence } from './architecture-evidence.fixture';
 import { sourceTargetOf, symbolSource } from './symbol-source';
 
 /* Wording of the chat texts after the third review of the hand test (2026-10-04, W1 to W10). */
@@ -275,5 +276,39 @@ describe('German wording and examples that fit the selection (W9)', () => {
         expect(relationshipWords.de.definer('Gadget', 1, 'X')).toBe('das Symbol (Gadget), das X definiert');
         expect(relationshipWords.en.definer('Class', 2, 'X')).toBe('the classes that define X');
         expect(relationshipWords.en.definer('Interface', 1, 'X')).toBe('the interface that defines X');
+    });
+});
+
+describe('the Architecture card (W10)', () => {
+    const area = (languages?: { name: string; files: number }[]) => {
+        const context = djangoAreaEvidence();
+        if (!languages) return context;
+        const parsed = JSON.parse(context.text);
+        parsed.evidence.selected.measurement.languages = languages.map(item => ({ ...item, lines: item.files * 10, color: '#999' }));
+        return { ...context, text: JSON.stringify(parsed) };
+    };
+
+    it('writes every number of the card the same way', () => {
+        const facts = selectionSummary(area());
+        expect(facts[0]).toBe('Selected source area: `django` (2,310 files · 15,299 indexed nodes).');
+        // Line numbers after a path ("query.py:1487") are places, not counts.
+        expect(facts.join('\n')).not.toMatch(/(?<!:)\b\d{4,}\b/);
+    });
+
+    it('lists the files by language largest first, with Unknown last', () => {
+        expect(selectionSummary(area())[1]).toBe('528,578 indexed lines in 2,163 measured files of 2,310; files by language: Python 883, HTML 162, Unknown 1,227.');
+        expect(selectionSummary(area([{ name: 'Unknown', files: 1227 }, { name: 'Python', files: 883 }, { name: 'CSS', files: 14 }, { name: 'HTML', files: 162 },
+            { name: 'JavaScript', files: 22 }]))[1]).toContain('files by language: Python 883, HTML 162, JavaScript 22, CSS 14, Unknown 1,227.');
+    });
+
+    it('says plainly that the relationships come from reading the code', () => {
+        for (const context of [area(), jsonbAggEvidence()]) {
+            const limits = prepareExplanationContext(undefined, context, 3200).limitations;
+            expect(limits).toContain('The relationships here come from reading the code; they do not show what runs at runtime.');
+            expect(limits.join('\n')).not.toContain('Static graph relationships');
+        }
+        expect(evidenceNote('The relationships here come from reading the code; they do not show what runs at runtime.', 'de'))
+            .toBe('Die Beziehungen hier wurden aus dem Code gelesen; sie zeigen nicht, was zur Laufzeit ausgeführt wird.');
+        expect(evidenceNote('Source unavailable.', 'de')).toBe('Source unavailable.');
     });
 });

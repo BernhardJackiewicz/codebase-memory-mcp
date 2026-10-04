@@ -10,8 +10,8 @@ describe('Architecture selections as readable facts (K7)', () => {
     it('describes a source area in sentences, without field paths a model would list as "Finding a line number"', () => {
         const prompt = formatExplanationEvidence(prepareExplanationContext(undefined, djangoAreaEvidence(), 3200));
         expect(prompt).not.toMatch(/Selected\.|members\[\d+\]|startLine|Snapshot\.|qualifiedName|snapshot items|graph fields omitted/);
-        expect(prompt).toContain('Selected source area: `django` (2310 files · 15299 indexed nodes).');
-        expect(prompt).toContain('528,578 indexed lines in 2,163 measured files of 2,310; files by language: Unknown 1,227, Python 883, HTML 162.');
+        expect(prompt).toContain('Selected source area: `django` (2,310 files · 15,299 indexed nodes).');
+        expect(prompt).toContain('528,578 indexed lines in 2,163 measured files of 2,310; files by language: Python 883, HTML 162, Unknown 1,227.');
         expect(prompt).toContain('3 hotspot findings: `create` (`django/apps/config.py:100`) fan-in 1,278, `filter` (`django/db/models/query.py:1487`) fan-in 1,224');
         expect(prompt).toMatch(/Connections to \(root\): CALLS ×1,743/);
         expect(prompt).toContain('Indexed members include `Member0` (Class)');
@@ -111,7 +111,7 @@ describe('the selected symbol source in a Galaxy explanation (K14)', () => {
             'Outgoing: 2 relationships to 2 symbols (INHERITS 2).',
             'Scope: 1 hop in both directions, all relationship types; 15 symbols and 25 relationships; fully loaded.',
         ]);
-        expect(selectionSummary(djangoAreaEvidence())[0]).toBe('Selected source area: `django` (2310 files · 15299 indexed nodes).');
+        expect(selectionSummary(djangoAreaEvidence())[0]).toBe('Selected source area: `django` (2,310 files · 15,299 indexed nodes).');
     });
 
     it('says that a scope stopped at the render limit is partial, in the card and in the prompt (C1)', () => {

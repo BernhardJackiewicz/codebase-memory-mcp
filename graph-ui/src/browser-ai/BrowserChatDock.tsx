@@ -10,7 +10,7 @@ import { AUTO_INPUT_TOKENS, AUTO_OUTPUT_TOKENS, citedInterpretation, explanation
 import { carriedSource, selectionSubject, SYMBOL_SOURCE_LINES, sourceTargetOf, symbolSource, type SymbolSourceReader } from './symbol-source';
 import { relationshipAnswer, relationshipSuggestion } from './relationship-answer';
 import { clampTokenLimits, tokenLimitBounds, tokenLimitsFor, useAgentPreferences, type TokenLimits } from './agent-preferences';
-import { browserChatText, groundedText, relationshipWords, topicText } from './strings';
+import { browserChatText, evidenceNote, groundedText, relationshipWords, topicText } from './strings';
 import { isGpuRuntimeFailure, BrowserRuntimeFatalError } from './runtime-fault';
 import ChatMarkdown from './ChatMarkdown';
 import AgentSettingsDialog from './AgentSettingsDialog';
@@ -133,11 +133,11 @@ function AnswerNotes({ shortened, packet, model, historyOmitted, unsupported = [
 
 /** `codeOnly` where the listed facts already stand above it, in the explanation card. The
  * source does not push the first graph facts out: a listed answer shows both (K14). */
-function PacketSource({ packet, citation, codeOnly = false }: { packet: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; codeOnly?: boolean }): JSX.Element {
+function PacketSource({ packet, citation, codeOnly = false, language = 'en' }: { packet: PreparedExplanationContext; citation?: ReturnType<typeof citedInterpretation>; codeOnly?: boolean; language?: 'en' | 'de' }): JSX.Element {
     const code = packet.evidence.filter(item => item.source === 'code').slice(0, 3);
     const facts = codeOnly ? [] : packet.evidence.filter(item => item.source !== 'code').slice(0, 3);
     return <>
-        {packet.limitations.map((limit, index) => <p className="cbm-chat-evidence-note" key={index}>{limit}</p>)}
+        {packet.limitations.map((limit, index) => <p className="cbm-chat-evidence-note" key={index}>{evidenceNote(limit, language)}</p>)}
         {citation ? <pre>{citation.quote}</pre> : [...code, ...facts].map(item => <div key={item.id}>
             {item.location && <small>{item.location.path}:{item.location.startLine}-{item.location.endLine}</small>}<pre>{item.text}</pre>
         </div>)}
@@ -886,7 +886,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
                 <div className="cbm-chat-question"><span className="cbm-chat-speaker">You</span><ChatMarkdown text={turn.prompt} /></div>
                 <div className="cbm-chat-answer"><SourceDisclosure>
                     {turn.evidence || turn.attachment || turn.readerContext?.source || turn.context?.length ? <>
-                        {turn.evidence ? <PacketSource packet={turn.evidence} /> : <>
+                        {turn.evidence ? <PacketSource packet={turn.evidence} language={turn.replyLanguage ?? questionLanguage(turn.prompt)} /> : <>
                             {turn.attachment && <Attachment attachment={turn.attachment} />}
                             {turn.readerContext?.source && <><Attachment attachment={turn.readerContext.source} label={turn.readerContext.source.kind === 'selection' ? 'Selection snapshot' : 'File snapshot'} />{turn.readerContext.source.partial && <p className="cbm-chat-evidence-note">{turn.readerContext.source.partial}</p>}</>}
                         </>}

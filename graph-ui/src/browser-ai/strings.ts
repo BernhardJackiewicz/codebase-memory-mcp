@@ -339,6 +339,16 @@ export const browserChatContextText = {
     },
 };
 
+/** The notes of an ⓘ Source block in plain words (W10). The prompt reads them in English; an
+ * answer shows them in its language. */
+const evidenceNotes = {
+    staticGraph: { en: 'The relationships here come from reading the code; they do not show what runs at runtime.',
+        de: 'Die Beziehungen hier wurden aus dem Code gelesen; sie zeigen nicht, was zur Laufzeit ausgeführt wird.' },
+};
+export const staticGraphNote = evidenceNotes.staticGraph.en;
+/** A known note in the language of the answer; any other note as it is. */
+export const evidenceNote = (note: string, language: 'en' | 'de'): string => Object.values(evidenceNotes).find(item => item.en === note)?.[language] ?? note;
+
 const count = (value: number) => value.toLocaleString('en-US');
 const plural = (value: number, one: string, many: string) => `${count(value)} ${value === 1 ? one : many}`;
 /** Architecture selections as sentences: for the prompt and for the explanation card. */
