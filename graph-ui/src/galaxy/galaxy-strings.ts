@@ -43,6 +43,9 @@ export const galaxyHistoryText = {
     forward: 'Forward',
     backGlyph: '←',
     forwardGlyph: '→',
+    /** The visible words while the row has room (K2: "← Back" and "Forward →"); the glyphs alone in its compact levels. */
+    backWide: '← Back',
+    forwardWide: 'Forward →',
     backTo: (label: string) => `Back to ${label} (Alt+Left)`,
     forwardTo: (label: string) => `Forward to ${label} (Alt+Right)`,
     noBack: 'Nothing to go back to yet',
@@ -64,19 +67,56 @@ export const galaxyHistoryText = {
     pathTo: (name: string) => `path to ${name}`,
 };
 
-/** The hierarchy of a Galaxy scope (hand test K5): what the columns mean, per trace direction. */
-export const galaxyHierarchyText = {
-    /** With `namesUpTo` the scope is past the name budget: no names and no edge labels, and the hint says how to get them back. */
-    hint: (direction: 'both' | 'inbound' | 'outbound', namesUpTo?: number) => (direction === 'inbound'
-        ? 'hierarchy: what reaches the root, one column per layer to the left'
-        : direction === 'outbound'
-            ? 'hierarchy: what the root reaches, one column per layer to the right'
-            : 'hierarchy: incoming relationships on the left, the root in the middle, outgoing on the right; one column per layer')
-        + (namesUpTo === undefined ? ', edge types at the lines'
-            : `; names and edge types show for up to ${namesUpTo.toLocaleString()} nodes, so remove a layer or trace fewer edge types to see them`),
-};
-
 const count = (value: number, one: string, many: string) => `${value.toLocaleString()} ${value === 1 ? one : many}`;
+
+/**
+ * Who carries a name in the hierarchy of a scope: everyone, the root and its
+ * direct neighbours, or (`none`) only the root and a side of its direct
+ * neighbours that fits the budget.
+ */
+export type HierarchyNames = 'all' | 'neighbours' | 'none';
+/** With `names: 'none'`: whether the root still carries its name (not with hundreds of roots) and how many direct neighbours on each side do. */
+export interface HierarchyNamedSides { root: boolean; incoming: number; outgoing: number }
+
+type TraceDirectionWord = 'both' | 'inbound' | 'outbound';
+/* With the direct neighbours unnamed the root alone has too many: fewer layers would not help, a narrower trace would. */
+const narrower = (direction: TraceDirectionWord) => (direction === 'both' ? 'trace one direction or fewer edge types' : 'trace fewer edge types');
+const namedFew = (sides: HierarchyNamedSides) => ['the root',
+    sides.incoming > 0 ? `its ${count(sides.incoming, 'incoming neighbour', 'incoming neighbours')}` : '',
+    sides.outgoing > 0 ? `its ${count(sides.outgoing, 'outgoing neighbour', 'outgoing neighbours')}` : ''].filter(Boolean).join(' and ');
+
+/**
+ * The hierarchy of a Galaxy scope (hand test K5): what the columns mean, per
+ * trace direction and depth. Second review: from two layers on, a column only
+ * holds chains that run one way to the root, the rest stands in a band below,
+ * and every line says its type and direction. Names above the budget: see
+ * `HierarchyNames`; the advice names what brings them back.
+ */
+export const galaxyHierarchyText = {
+    hint: (direction: TraceDirectionWord, view: { mixed: number; names: HierarchyNames; budget: number; neighbours: number; sides: HierarchyNamedSides }) => [
+        direction === 'inbound'
+            ? 'hierarchy: what reaches the root, one column per layer to the left'
+            : direction === 'outbound'
+                ? 'hierarchy: what the root reaches, one column per layer to the right'
+                : 'hierarchy: incoming relationships on the left, the root in the middle, outgoing on the right; each column is one layer further in the same direction',
+        view.mixed > 0 ? `${count(view.mixed, 'node', 'nodes')} reached through both directions, such as a callee of a caller, stand in the band below` : '',
+        view.names === 'all' ? 'the type and direction of each relationship at its line'
+            : view.names === 'neighbours'
+                ? `above ${view.budget.toLocaleString()} nodes only the root and its direct neighbours carry names, so remove layers or trace fewer edge types to see all names`
+                : !view.sides.root ? `names and edge types show for up to ${view.budget.toLocaleString()} nodes, so ${narrower(direction)} to see them`
+                    : `names and edge types show for up to ${view.budget.toLocaleString()} nodes, and the root has ${count(view.neighbours, 'direct neighbour', 'direct neighbours')}, `
+                        + `so only ${namedFew(view.sides)} ${view.sides.incoming + view.sides.outgoing > 0 ? 'carry names' : 'carries a name'}; ${narrower(direction)} to see the rest`,
+    ].filter(Boolean).join('; '),
+    /** The heading of the band in the picture. */
+    bandTitle: (mixed: number) => `Mixed directions · ${count(mixed, 'node', 'nodes')}`,
+    bandDetail: 'reached through both incoming and outgoing relationships, such as a callee of a caller',
+    /** The note in the picture when names are missing, and how to get them. */
+    namesNote: (direction: TraceDirectionWord, nodes: number, names: Exclude<HierarchyNames, 'all'>, neighbours: number, budget: number, sides: HierarchyNamedSides) => (names === 'neighbours'
+        ? `${count(nodes, 'node', 'nodes')}: names for the root and its ${count(neighbours, 'direct neighbour', 'direct neighbours')} only (up to ${budget.toLocaleString()} names). Remove layers or trace fewer edge types to name every node.`
+        : !sides.root ? `${count(nodes, 'node', 'nodes')}: no names above ${budget.toLocaleString()} nodes. ${narrower(direction).replace(/^t/, 'T')} to see them.`
+            : `${count(nodes, 'node', 'nodes')}, ${neighbours.toLocaleString()} of them direct neighbours of the root: names for ${namedFew(sides)} only (up to ${budget.toLocaleString()} names). `
+                + `${narrower(direction).replace(/^t/, 'T')} to see the rest.`),
+};
 
 /** Loading, cancelling and the render limit of a scope layer (hand test K8). */
 export const galaxyLayerText = {

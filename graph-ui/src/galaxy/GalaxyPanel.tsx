@@ -140,7 +140,7 @@ import { TraceEdgeFilter } from './TraceEdgeFilter';
 import { PathPicker, PathSteps } from './ScopePathControls';
 import { callOrder, pathNodes, shortestScopePath, type ScopePathStep } from './scope-path';
 import { galaxyHierarchyText, galaxyHistoryText, galaxyLayerText, galaxyPathText, galaxyToolbarText } from './galaxy-strings';
-import { HierarchyEdgeLabels } from './HierarchyEdgeLabels';
+import { HierarchyBandLabel, HierarchyEdgeLabels } from './HierarchyEdgeLabels';
 import { FitLabel, useToolbarFit } from './toolbar-fit';
 import { emptyNavigationHistory, moveNavigation, peekNavigation, pushNavigation } from '../graph/navigation-history';
 import { galaxyHistoryOptions, historyEntryDetail, historyEntryLabel, scopeIdentity, type GalaxyHistoryEntry, type ScopeTrail } from './scope-history';
@@ -352,7 +352,10 @@ export interface AtlasHierarchySeam {
     cap: number;
     walkDepth: number;
     /** Je Knoten: Schluessel, Name, Datei, Hop und die gezeichnete Position. */
-    placements: { key: string; name: string; file: string; hop: number; x: number; y: number }[];
+    placements: { key: string; name: string; file: string; hop: number; x: number; y: number; side?: -1 | 0 | 1; mixed?: boolean }[];
+    /** Zweites Review zu K5: das Band der gemischt erreichten Knoten und wer Namen traegt. */
+    band?: { count: number; x: number; y: number; left: number; right: number; bottom: number };
+    names?: 'all' | 'neighbours' | 'none';
     /** Die gezeichneten Kanten, in den Schluesseln des Walks. */
     edges: { from: string; to: string }[];
     /** Wie viele Linien aus dem Walk stammen. */
@@ -1109,8 +1112,25 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
 
     const scopedProjection = useMemo(() => props.workspaceExpanded && scope.scope && scope.result
         ? scopedHierarchy(scope.result, scope.scope.name) : undefined, [props.workspaceExpanded, scope.scope, scope.result]);
-    /* Review zu K5: bis 150 Knoten stehen in der Hierarchie eines Ausschnitts alle Namen, darueber weder Namen noch Kantenschilder. */
-    const scopedNamesHidden = Boolean(scopedProjection && scopedProjection.data.nodes.length > SCOPED_HIERARCHY_LABEL_BUDGET);
+    /*
+     * Review zu K5: bis 150 Knoten stehen in der Hierarchie eines Ausschnitts
+     * alle Namen. Darueber behalten die Wurzel und ihre direkten Nachbarn ihre
+     * Namen und Kantenschilder (zweites Review), und erst eine Wurzel mit mehr
+     * Nachbarn als das hat keine; eine Notiz im Bild sagt es.
+     */
+    const scopedNames = scopedProjection?.names ?? 'all';
+    const scopedNeighbours = useMemo(() => scopedProjection?.placements.filter(placement => placement.hop === 1).length ?? 0, [scopedProjection]);
+    const scopedNamedIds = useMemo(() => scopedProjection?.namedIds ? new Set(scopedProjection.namedIds) : undefined, [scopedProjection]);
+    const scopedNamedSides = useMemo(() => {
+        const sides = { root: false, incoming: 0, outgoing: 0 };
+        for (const placement of scopedProjection?.placements ?? []) {
+            if (!scopedNamedIds?.has(placement.id)) continue;
+            if (placement.hop === 0) sides.root = true;
+            else if (placement.hop === 1 && placement.side === -1) sides.incoming += 1;
+            else if (placement.hop === 1 && placement.side === 1) sides.outgoing += 1;
+        }
+        return sides;
+    }, [scopedProjection, scopedNamedIds]);
     const scopedSpots = useMemo(() => scopedProjection
         ? new Map(scopedProjection.placements.map(placement => [placement.id, { hop: placement.hop, x: placement.x, y: placement.y }])) : undefined,
     [scopedProjection]);
@@ -2015,9 +2035,11 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     }, [props.workspaceExpanded, scope.scope, trailView, escapeTaken, leaveScope]);
     const historyControls = props.workspaceExpanded ? <span className="atlas-graph-history" role="group" aria-label={galaxyHistoryText.group}>
         <button type="button" aria-label={galaxyHistoryText.back} disabled={!historyBack} onClick={() => goHistory(-1)}
-            title={historyBack ? galaxyHistoryText.backTo(historyEntryLabel(historyBack)) : galaxyHistoryText.noBack}>{galaxyHistoryText.backGlyph}</button>
+            title={historyBack ? galaxyHistoryText.backTo(historyEntryLabel(historyBack)) : galaxyHistoryText.noBack}>
+            <FitLabel wide={galaxyHistoryText.backWide} narrow={galaxyHistoryText.backGlyph} /></button>
         <button type="button" aria-label={galaxyHistoryText.forward} disabled={!historyForward} onClick={() => goHistory(1)}
-            title={historyForward ? galaxyHistoryText.forwardTo(historyEntryLabel(historyForward)) : galaxyHistoryText.noForward}>{galaxyHistoryText.forwardGlyph}</button>
+            title={historyForward ? galaxyHistoryText.forwardTo(historyEntryLabel(historyForward)) : galaxyHistoryText.noForward}>
+            <FitLabel wide={galaxyHistoryText.forwardWide} narrow={galaxyHistoryText.forwardGlyph} /></button>
         {history.recent.length > 1 && <details className="atlas-graph-recent" onKeyDown={event => {
             if (event.key === 'Escape') { event.stopPropagation(); event.currentTarget.open = false; }
         }}>
@@ -2322,7 +2344,11 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                             hop: placement.hop,
                             x: placement.x,
                             y: placement.y,
+                            ...(placement.side !== undefined ? { side: placement.side } : {}),
+                            ...(placement.mixed ? { mixed: true } : {}),
                         })),
+                        ...(projection.band ? { band: projection.band } : {}),
+                        ...(projection.names ? { names: projection.names } : {}),
                         edges: projection.data.edges.map((edge) => ({
                             from: projection.data.nodes[edge.source]?.qualified_name
                                 ?? projection.data.nodes[edge.source]?.name ?? '',
@@ -2374,12 +2400,17 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
      */
     /* K5: die Kantenarten an den Linien der Hierarchie eines Ausschnitts, solange kein Pfad seine eigenen zeigt. */
     // Review zu K5: Kantenschilder nur neben Namen; ohne Namen waeren sie Schilder an Punkten, die niemand zuordnen kann.
-    const hierarchyEdgeLabels = mode === 'hierarchy' && scopedProjection && !scopedNamesHidden && !sceneTrailIds && sceneShown
-        ? <HierarchyEdgeLabels nodes={sceneShown.nodes} edges={sceneShown.edges} layout={scopedSpots} nameBoxes={labelBoxes} /> : undefined;
-    const overlay: ReactNode = (pulseRing === undefined && !liveOn && hierarchyEdgeLabels === undefined) ? undefined : (
+    const labelledEdges = useMemo(() => !sceneShown || !scopedNamedIds ? sceneShown?.edges
+        : sceneShown.edges.filter(edge => scopedNamedIds.has(edge.source) && scopedNamedIds.has(edge.target)), [sceneShown, scopedNamedIds]);
+    const hierarchyEdgeLabels = mode === 'hierarchy' && scopedProjection && !sceneTrailIds && sceneShown && labelledEdges?.length
+        ? <HierarchyEdgeLabels nodes={sceneShown.nodes} edges={labelledEdges} layout={scopedSpots} nameBoxes={labelBoxes} /> : undefined;
+    // Zweites Review zu K5: die Ueberschrift des Bandes der gemischt erreichten Knoten.
+    const hierarchyBand = mode === 'hierarchy' && scopedProjection?.band ? <HierarchyBandLabel band={scopedProjection.band} /> : undefined;
+    const overlay: ReactNode = (pulseRing === undefined && !liveOn && hierarchyEdgeLabels === undefined && hierarchyBand === undefined) ? undefined : (
         <>
             {pulseRing}
             {hierarchyEdgeLabels}
+            {hierarchyBand}
             {liveOn && agentLayerOn && agentsView !== undefined && (
                 <AgentLayer
                     actors={agentsView.actors}
@@ -2458,7 +2489,8 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                                                     : candidate === 'galaxy'
                                                         ? 'galaxy: the whole project, laid out by the server'
                                                         : readerHierarchyActive ? 'hierarchy: incoming relationships, file definitions, and outgoing relationships'
-                                                        : scopedProjection ? galaxyHierarchyText.hint(scope.direction, scopedNamesHidden ? SCOPED_HIERARCHY_LABEL_BUDGET : undefined)
+                                                        : scopedProjection ? galaxyHierarchyText.hint(scope.direction, { mixed: scopedProjection.band?.count ?? 0, names: scopedNames,
+                                                            budget: SCOPED_HIERARCHY_LABEL_BUDGET, neighbours: scopedNeighbours, sides: scopedNamedSides })
                                                         : 'hierarchy: what the chosen symbol reaches, one column per call depth'
                                     }
                                 >
@@ -2582,9 +2614,9 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                       * die Tastatur weiter im Menue "⋯".
                       */}
                     {props.workspaceExpanded && openRoot
-                        ? <button type="button" className="atlas-graph-scope-name" onClick={openRoot} aria-label={galaxyToolbarText.openRootLabel(scope.scope.name)}
+                        ? <button type="button" className="atlas-graph-scope-name" data-fit-whole="" onClick={openRoot} aria-label={galaxyToolbarText.openRootLabel(scope.scope.name)}
                             title={galaxyToolbarText.openRootTitle(scope.scope.name, scopedRoot?.file_path ?? '', scopedRoot?.start_line)}>{scope.scope.name}</button>
-                        : <strong className="atlas-graph-scope-name" title={scope.scope.name}>{scope.scope.name}</strong>}
+                        : <strong className="atlas-graph-scope-name" data-fit-whole="" title={scope.scope.name}>{scope.scope.name}</strong>}
                     {props.workspaceExpanded && <select aria-label="Trace direction" title={galaxyToolbarText.traceTitle} value={scope.direction}
                         onChange={event => scope.setDirection(event.target.value as 'both' | 'inbound' | 'outbound')}>
                         <option value="both">Both directions</option><option value="inbound">Incoming</option><option value="outbound">Outgoing</option>
@@ -2836,10 +2868,11 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                          */
                         showLabels={
                             mode === 'hierarchy'
-                                ? scopedProjection ? !scopedNamesHidden : sceneShown.nodes.length <= HIERARCHY_LABEL_BUDGET
+                                ? scopedProjection ? scopedNames === 'all' || Boolean(scopedNamedIds?.size) : sceneShown.nodes.length <= HIERARCHY_LABEL_BUDGET
                                 : trailIds !== undefined || (highlighted !== null && highlighted.size > 0)
                         }
                         labelBudget={mode === 'hierarchy' && scopedProjection ? SCOPED_HIERARCHY_LABEL_BUDGET : undefined}
+                        labelIds={mode === 'hierarchy' ? scopedNamedIds : undefined}
                         /*
                          * Landmarken nur in der Galaxie: der Halo sitzt auf den
                          * groessten Knoten, und "gross" heisst in der Projektion
@@ -2872,6 +2905,12 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                         renderTooltip={(node) => <NodeTooltipCard node={node} />}
                         overlay={overlay}
                     />
+                )}
+                {/* Zweites Review zu K5: fehlen Namen, sagt das Bild es selbst, und wie man sie bekommt. */}
+                {mode === 'hierarchy' && scopedProjection && scopedNames !== 'all' && (
+                    <p className="atlas-hierarchy-key" data-testid="atlas-hierarchy-key">
+                        {galaxyHierarchyText.namesNote(scope.direction, scopedProjection.data.nodes.length, scopedNames, scopedNeighbours, SCOPED_HIERARCHY_LABEL_BUDGET, scopedNamedSides)}
+                    </p>
                 )}
                 {state !== 'ready' && (
                     <p className="atlas-galaxy-placeholder" data-state={state}>

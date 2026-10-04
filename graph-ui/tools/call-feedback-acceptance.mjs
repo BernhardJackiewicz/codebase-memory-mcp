@@ -255,16 +255,31 @@ async function galaxyChecks(page) {
         root !== null && offset !== null && offset < 0.2 && expanded.outside === 0,
         { rootMarker: root, offsetFromCentre: offset === null ? null : Number(offset.toFixed(3)), outside: expanded.outside, inside: expanded.inside }, expandImages.slice(-1));
 
-    // G7: die Werkzeugleiste bleibt eine Zeile.
-    const rows = await page.evaluate(() => {
-        const bar = document.querySelector('.atlas-graph-exploration');
-        if (!bar) return null;
-        const tops = [...bar.querySelectorAll('button, select, input, summary, label, span')].filter((el) => el.offsetParent !== null && el.getBoundingClientRect().height > 0)
-            .map((el) => Math.round(el.getBoundingClientRect().top / 12));
-        return [...new Set(tops)].length;
-    });
-    const barBox = await page.locator('.atlas-graph-exploration').first().boundingBox().catch(() => null);
-    check('G7', 'Galaxie-Werkzeugleiste bricht bei 1600 px nicht um', barBox !== null && barBox.height < 70, { toolbarHeight: barBox?.height ?? null, rowBuckets: rows });
+    // G7: die Werkzeugleiste bleibt eine Zeile, bei geschlossenem und (Handtest K3) bei offenem Chat.
+    const toolbarRows = async (chat) => {
+        const measured = await page.evaluate(() => {
+            const bar = document.querySelector('.atlas-graph-exploration');
+            if (!bar) return null;
+            // Eine Zeile je Mitte der Kinder der Leiste; die Kinder ihrer Kinder (Text in Knoepfen) zaehlen nicht extra.
+            const items = [...bar.children].filter((el) => el.getBoundingClientRect().height > 0);
+            const centres = items.map((el) => { const r = el.getBoundingClientRect(); return Math.round((r.top + r.bottom) / 2 / 16); });
+            const box = bar.getBoundingClientRect();
+            return { rows: [...new Set(centres)].length, width: Math.round(box.width), height: Math.round(box.height), overflow: bar.scrollWidth > bar.clientWidth + 1, fit: bar.dataset.fit ?? null };
+        });
+        return { chat, ...measured };
+    };
+    const toolbar = [await toolbarRows('closed')];
+    const g7Images = [await shot(page, 'g7-chat-zu')];
+    await page.getByRole('button', { name: 'Open chat' }).first().click().catch(() => {});
+    await page.waitForSelector('.cbm-chat-input-row', { timeout: 10000 }).catch(() => {});
+    await wait(1500);
+    toolbar.push(await toolbarRows('open'));
+    g7Images.push(await shot(page, 'g7-chat-offen'));
+    await page.getByRole('button', { name: 'Hide chat' }).first().click().catch(() => {});
+    await wait(1200);
+    check('G7', 'Galaxie-Werkzeugleiste bricht bei 1600 px nicht um, mit geschlossenem und mit offenem Chat',
+        toolbar.length === 2 && toolbar.every((row) => row.rows === 1 && row.height < 70 && !row.overflow) && toolbar[1].width < toolbar[0].width,
+        { toolbar }, g7Images);
 
     // G3: Mausrad zoomt zum Zeiger.
     const zoomImages = [];

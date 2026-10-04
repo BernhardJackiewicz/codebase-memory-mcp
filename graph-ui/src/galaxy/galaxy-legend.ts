@@ -314,7 +314,7 @@ export function hierarchyLegendEntries(data: GraphData | undefined, fileRelation
              * Punkt selbst (`title`).
              */
             detail: scoped
-                ? 'Every relationship of this scope, its type written at the line. Edge colours keep their types; this is not a runtime trace.'
+                ? 'Every relationship of this scope, its type and an arrow from source to target written at the line. Edge colours keep their types; this is not a runtime trace.'
                 : fileRelationships
                 ? 'Recorded relationships touching the selected file or marked code. Edge colours retain their original types; this is not a complete call trace.'
                 : 'one line per call on this walk, cycles included rather than hidden. '
@@ -327,7 +327,8 @@ export function hierarchyLegendEntries(data: GraphData | undefined, fileRelation
             key: 'positions',
             title: 'positions',
             detail: scoped
-                ? 'Incoming relationships on the left, the root in the middle, outgoing relationships on the right; one column per layer. '
+                ? 'Incoming relationships on the left, the root in the middle, outgoing relationships on the right; each column is one layer further in the same direction. '
+                + 'Nodes reached through both directions, such as a callee of a caller, stand in the band below. '
                 + 'Inside a column: by the neighbour that leads there, calls before other types, calls by call-site line.'
                 : fileRelationships
                 ? 'Incoming relationships on the left, selected definitions in the middle, outgoing relationships on the right. Recorded containment orders the definition columns; source paths and lines order each column.'

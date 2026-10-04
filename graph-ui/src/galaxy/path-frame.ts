@@ -76,20 +76,23 @@ function overlapArea(a: ScreenRect, b: ScreenRect): number {
     return width > 0 && height > 0 ? width * height : 0;
 }
 
+const SIDES = [0, 1, -1, 2, -2, 3, -3];
+
 /**
  * Wo das Label einer Kante steht: der erste Punkt auf der Kante, an dem es
  * nichts beruehrt, sonst daneben, sonst der Platz mit der kleinsten
  * Ueberdeckung. `t` ist der Anteil auf der Kante, `side` der seitliche Versatz
- * in Labelhoehen.
+ * in Labelhoehen, hoechstens `maxSide` davon (die Hierarchie bleibt mit ihren
+ * vielen Linien bei einem, damit ein Schild bei seiner Linie steht).
  */
 export function placeAlongSegment(from: { x: number; y: number }, to: { x: number; y: number }, size: { width: number; height: number },
-    blockers: readonly ScreenRect[], placed: readonly ScreenRect[]): { t: number; side: number; rect: ScreenRect; overlap: number } {
+    blockers: readonly ScreenRect[], placed: readonly ScreenRect[], maxSide = 3): { t: number; side: number; rect: ScreenRect; overlap: number } {
     const length = Math.hypot(to.x - from.x, to.y - from.y) || 1;
     const normal = { x: -(to.y - from.y) / length, y: (to.x - from.x) / length };
     // One side step clears the label's own extent across the edge: its height on a flat edge, its width on a steep one.
     const step = (size.width / 2) * Math.abs(normal.x) + (size.height / 2) * Math.abs(normal.y) + 6;
     let best: { t: number; side: number; rect: ScreenRect; overlap: number } | undefined;
-    for (const side of [0, 1, -1, 2, -2, 3, -3]) {
+    for (const side of SIDES.filter((value) => Math.abs(value) <= maxSide)) {
         for (const t of LABEL_STEPS) {
             const offset = side * step;
             const x = from.x + (to.x - from.x) * t + normal.x * offset, y = from.y + (to.y - from.y) * t + normal.y * offset;

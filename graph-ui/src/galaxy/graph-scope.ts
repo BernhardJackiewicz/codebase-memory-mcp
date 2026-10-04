@@ -314,11 +314,17 @@ export const SCOPED_HIERARCHY_ROW_GAP = 32;
 /** Texture width of a hierarchy name in a scope: about forty characters before an ellipsis. */
 export const SCOPED_HIERARCHY_LABEL_MAX_TEXT_WIDTH = 1600;
 /**
- * Up to this many nodes every name is drawn, and columns stay single columns; above it they wrap into grids,
- * without names or edge labels. Sixty left JSONBAgg at two layers (90 nodes) without a single name (review of K5).
+ * Up to this many nodes every name is drawn, and columns stay single columns. Above it the root and its direct
+ * neighbours keep theirs (second review of K5); the outer layers wrap into grids without names or edge labels.
+ * Sixty left JSONBAgg at two layers (90 nodes) without a single name (review of K5).
  */
 export const SCOPED_HIERARCHY_LABEL_BUDGET = 150;
+/** How far the band of nodes reached through mixed directions stands below the columns: room for its heading. */
+export const SCOPED_HIERARCHY_BAND_GAP = 4 * SCOPED_HIERARCHY_ROW_GAP;
 const SCOPED_HIERARCHY_WRAP_AT = 12;
+const BAND_MIN_ROWS = 6, BAND_FRAME_PAD = 20;
+/** The band of nodes reached through mixed directions: how many, where its heading sits (on the top edge) and its frame. */
+export interface HierarchyBand { count: number; x: number; y: number; left: number; right: number; bottom: number }
 const LABEL_UNITS_PER_CHAR = 7.1, LABEL_UNITS_PADDING = 12, LABEL_GUTTER = 40;
 const LABEL_MAX_CHARS = Math.floor((SCOPED_HIERARCHY_LABEL_MAX_TEXT_WIDTH - 64) / 38);
 
@@ -336,16 +342,27 @@ export function hierarchyLabelWidth(name: string): number {
  *
  *  - Eingehendes links, die Wurzel in der Mitte, Ausgehendes rechts. Ein
  *    Knoten der ersten Ebene steht dort, wohin seine Kante zur Wurzel zeigt;
- *    jeder tiefere Knoten auf der Seite seines Elternknotens, also des
- *    Nachbarn eine Ebene naeher an der Wurzel, ueber den er gefunden wurde.
+ *    ein tieferer nur dann auf einer Seite, wenn die ganze Kette von der
+ *    Wurzel bis zu ihm in dieselbe Richtung laeuft: links ruft (testet,
+ *    definiert, ...) jeder seinen Nachbarn naeher an der Wurzel, rechts
+ *    umgekehrt.
+ *  - Was ueber gemischte Richtungen erreicht ist (ein Aufgerufener eines
+ *    Aufrufers, ein weiterer Aufrufer eines Aufgerufenen), steht auf keiner
+ *    Seite, sondern in einem Band unter den Spalten (zweites Review zu K5:
+ *    bei zwei Ebenen um JSONBAgg standen len, str und print in der Spalte
+ *    "incoming" ganz links). Das Band steht mittig unter der Wurzel; seine
+ *    Ueberschrift zeichnet das Panel an `band`.
  *  - In einer Spalte stehen die Knoten nach ihrem Elternknoten, dann CALLS vor
  *    den anderen Arten, CALLS nach Aufrufzeile (`edge.line`), dann nach Name.
  *  - Die Spalten stehen so weit auseinander, wie ihre Namen breit sind: kein
  *    Name wird gekuerzt, solange Platz ist.
+ *  - Ueber der Namensgrenze behalten die Wurzel und ihre direkten Nachbarn
+ *    ihre Namen und ihre einfachen Spalten (`names: 'neighbours'`); erst die
+ *    aeusseren Ebenen brechen in kompakte Raster ohne Namen um. Hat die
+ *    Wurzel selbst mehr Nachbarn als die Grenze, traegt niemand einen Namen.
  *
  * Die Ebene kommt aus den gefundenen `levels`; nur eine Ringanordnung legt sie
  * in z ab, eine Vorschau aus dem ganzen Layout behaelt globale Koordinaten.
- * Sehr grosse Ebenen (ohne Namen) brechen weiter in kompakte Raster um.
  */
 export function scopedHierarchy(scope: ScopedGraph, name: string): import('./hierarchy-layout').HierarchyProjection {
     const levelOf = (node: GraphNode) => scope.roots.has(node.id) ? 0 : scope.levels?.get(node.id) ?? Math.max(0, Math.round(-node.z / 18));
@@ -356,51 +373,75 @@ export function scopedHierarchy(scope: ScopedGraph, name: string): import('./hie
     }
     const typeRank = (edge: GraphEdge | undefined) => edge?.type === 'CALLS' ? 0 : 1;
     const side = new Map<number, -1 | 0 | 1>(), parent = new Map<number, { id: number; edge: GraphEdge }>();
+    /* Ob die Kette von der Wurzel bis hierher in einer Richtung laeuft. */
+    const straight = new Map<number, boolean>();
     const ordered = [...scope.data.nodes].sort((a, b) => level.get(a.id)! - level.get(b.id)! || a.id - b.id);
     for (const node of ordered) {
         const hop = level.get(node.id)!;
-        if (hop === 0) { side.set(node.id, 0); continue; }
-        // The neighbour one layer closer to the root decides the side; a consistently directed edge wins, then CALLS.
+        if (hop === 0) { side.set(node.id, 0); straight.set(node.id, true); continue; }
+        // The neighbour one layer closer to the root decides: a straight chain through it wins, then CALLS, then the call line.
         const candidates = (incident.get(node.id) ?? []).flatMap(edge => {
             const other = edge.source === node.id ? edge.target : edge.source;
             const otherSide = side.get(other);
             if (other === node.id || otherSide === undefined || level.get(other) !== hop - 1) return [];
             const towards = otherSide !== 0 ? otherSide : edge.source === other ? 1 : -1;
-            const consistent = towards === 1 ? edge.source === other : edge.target === other;
+            const consistent = (towards === 1 ? edge.source === other : edge.target === other) && straight.get(other) === true;
             return [{ other, edge, towards: towards as -1 | 1, consistent }];
         }).sort((a, b) => Number(b.consistent) - Number(a.consistent) || typeRank(a.edge) - typeRank(b.edge)
             || (a.edge.line ?? Number.MAX_SAFE_INTEGER) - (b.edge.line ?? Number.MAX_SAFE_INTEGER) || a.other - b.other);
         const chosen = candidates[0];
         side.set(node.id, chosen?.towards ?? 1);
+        // Without any edge to the layer before (a preview) there is no evidence of a mix: the node keeps the old place on the right.
+        straight.set(node.id, chosen ? chosen.consistent : true);
         if (chosen) parent.set(node.id, { id: chosen.other, edge: chosen.edge });
     }
-    const columns = new Map<number, GraphNode[]>();
+    const columns = new Map<number, GraphNode[]>(), band: GraphNode[] = [];
     for (const node of scope.data.nodes) {
+        if (!straight.get(node.id)) { band.push(node); continue; }
         const column = side.get(node.id)! * level.get(node.id)!;
         const entries = columns.get(column) ?? []; entries.push(node); columns.set(column, entries);
     }
-    const labelled = scope.data.nodes.length <= SCOPED_HIERARCHY_LABEL_BUDGET;
+    const neighbours = scope.data.nodes.filter(node => level.get(node.id)! <= 1).length;
+    const names = scope.data.nodes.length <= SCOPED_HIERARCHY_LABEL_BUDGET ? 'all' as const
+        : neighbours <= SCOPED_HIERARCHY_LABEL_BUDGET ? 'neighbours' as const : 'none' as const;
+    /*
+     * Wer einen Namen traegt. Ohne Namen fuer die direkten Nachbarn behalten
+     * die Wurzel ihren und eine Seite der ersten Ebene ihre, wenn sie in die
+     * Grenze passt (call_command: 543 Aufrufer links, elf Aufgerufene rechts).
+     */
+    const namedKeys = new Set<number>(names === 'neighbours' ? [-1, 0, 1] : []);
+    // Die Wurzeln selbst nur, wenn sie hineinpassen: ein Ordner kann hunderte haben.
+    if (names === 'none' && (columns.get(0)?.length ?? 0) <= SCOPED_HIERARCHY_LABEL_BUDGET) {
+        namedKeys.add(0);
+        let budget = SCOPED_HIERARCHY_LABEL_BUDGET - (columns.get(0)?.length ?? 0);
+        for (const key of [-1, 1].sort((a, b) => (columns.get(a)?.length ?? 0) - (columns.get(b)?.length ?? 0))) {
+            const size = columns.get(key)?.length ?? 0;
+            if (size > 0 && size <= budget) { namedKeys.add(key); budget -= size; }
+        }
+    }
+    const named = (key: number) => names === 'all' || namedKeys.has(key);
     const row = new Map<number, number>();
     const byText = (a: GraphNode, b: GraphNode) => (a.file_path ?? '').localeCompare(b.file_path ?? '') || a.name.localeCompare(b.name) || a.id - b.id;
+    const byParent = (a: GraphNode, b: GraphNode) => {
+        const pa = parent.get(a.id), pb = parent.get(b.id);
+        return (row.get(pa?.id ?? -1) ?? -1) - (row.get(pb?.id ?? -1) ?? -1) || typeRank(pa?.edge) - typeRank(pb?.edge)
+            || (pa?.edge.type ?? '').localeCompare(pb?.edge.type ?? '')
+            // Calls in source order; one line with two calls keeps the order of the call list (by identity).
+            || (pa?.edge.type === 'CALLS' ? (pa.edge.line ?? Number.MAX_SAFE_INTEGER) - (pb?.edge.line ?? Number.MAX_SAFE_INTEGER) || a.id - b.id : 0)
+            || byText(a, b);
+    };
     const keys = [...columns.keys()].sort((a, b) => Math.abs(a) - Math.abs(b) || a - b);
     for (const key of keys) {
         const entries = columns.get(key)!;
-        entries.sort((a, b) => {
-            const pa = parent.get(a.id), pb = parent.get(b.id);
-            return (row.get(pa?.id ?? -1) ?? -1) - (row.get(pb?.id ?? -1) ?? -1) || typeRank(pa?.edge) - typeRank(pb?.edge)
-                || (pa?.edge.type ?? '').localeCompare(pb?.edge.type ?? '')
-                // Calls in source order; one line with two calls keeps the order of the call list (by identity).
-                || (pa?.edge.type === 'CALLS' ? (pa.edge.line ?? Number.MAX_SAFE_INTEGER) - (pb?.edge.line ?? Number.MAX_SAFE_INTEGER) || a.id - b.id : 0)
-                || byText(a, b);
-        });
+        entries.sort(byParent);
         entries.forEach((node, index) => row.set(node.id, index));
     }
     // Column blocks: width from wrapping and from the widest name in them.
     const block = new Map(keys.map(key => {
         const entries = columns.get(key)!;
-        const cols = !labelled && entries.length > SCOPED_HIERARCHY_WRAP_AT ? Math.ceil(Math.sqrt(entries.length)) : 1;
-        const label = labelled ? Math.max(...entries.map(node => hierarchyLabelWidth(node.name))) : 0;
-        const gapX = labelled ? label + LABEL_GUTTER : SCOPED_HIERARCHY_ROW_GAP * 1.25;
+        const cols = !named(key) && entries.length > SCOPED_HIERARCHY_WRAP_AT ? Math.ceil(Math.sqrt(entries.length)) : 1;
+        const label = named(key) ? Math.max(...entries.map(node => hierarchyLabelWidth(node.name))) : 0;
+        const gapX = named(key) ? label + LABEL_GUTTER : SCOPED_HIERARCHY_ROW_GAP * 1.25;
         return [key, { entries, cols, rows: Math.ceil(entries.length / cols), gapX, width: (cols - 1) * gapX, label }] as const;
     }));
     const left = new Map<number, number>();
@@ -421,8 +462,15 @@ export function scopedHierarchy(scope: ScopedGraph, name: string): import('./hie
             previous = key;
         }
     }
-    const nodes: GraphNode[] = [], remap = new Map<number, number>(), sourceIds: number[] = [];
+    const nodes: GraphNode[] = [], remap = new Map<number, number>(), sourceIds: number[] = [], namedIds: number[] = [];
     const placements: import('./hierarchy-layout').HierarchyPlacement[] = [];
+    const place = (node: GraphNode, x: number, y: number, mixed: boolean, isNamed: boolean) => {
+        const id = nodes.length;
+        remap.set(node.id, id); sourceIds.push(node.id); nodes.push({ ...node, id, x, y, z: 0 });
+        if (isNamed) namedIds.push(id);
+        placements.push({ id, key: node.qualified_name ?? `node:${node.id}`, name: node.name, hop: level.get(node.id)!,
+            ...(mixed ? { mixed: true } : { side: side.get(node.id)! }), x, y });
+    };
     for (const key of keys) {
         const { entries, cols, rows, gapX } = block.get(key)!;
         // Outgoing blocks grow away from the root to the right, incoming ones to the left.
@@ -430,14 +478,38 @@ export function scopedHierarchy(scope: ScopedGraph, name: string): import('./hie
         entries.forEach((node, index) => {
             const column = index % cols;
             const x = key < 0 ? start + width - column * gapX : start + column * gapX;
-            const y = ((rows - 1) / 2 - Math.floor(index / cols)) * SCOPED_HIERARCHY_ROW_GAP;
-            const id = nodes.length;
-            remap.set(node.id, id); sourceIds.push(node.id); nodes.push({ ...node, id, x, y, z: 0 });
-            placements.push({ id, key: node.qualified_name ?? `node:${node.id}`, name: node.name, hop: level.get(node.id)!, side: side.get(node.id)!, x, y });
+            place(node, x, ((rows - 1) / 2 - Math.floor(index / cols)) * SCOPED_HIERARCHY_ROW_GAP, false, named(key));
         });
+    }
+    /*
+     * Das Band: nach Ebene, dann nach dem Elternknoten (links vor rechts, in
+     * dessen Reihenfolge), Spalte fuer Spalte von oben nach unten, mittig
+     * unter der Wurzel und unter der tiefsten Spalte. Seine Ueberschrift steht
+     * auf der oberen Kante eines Rahmens um das ganze Band (`left`, `right`,
+     * `bottom`; oben ist `y`): ohne Rahmen lasen sich die Spalten des Bandes
+     * wie Fortsetzungen der Spalten darueber (im Browser gesehen).
+     */
+    let bandHead: HierarchyBand | undefined;
+    if (band.length) {
+        const sideOf = (node: GraphNode) => side.get(parent.get(node.id)?.id ?? -1) ?? 0;
+        band.sort((a, b) => level.get(a.id)! - level.get(b.id)! || sideOf(a) - sideOf(b) || byParent(a, b));
+        band.forEach((node, index) => row.set(node.id, index));
+        const bandNamed = names === 'all';
+        const rows = bandNamed ? Math.min(band.length, Math.max(BAND_MIN_ROWS, Math.ceil(Math.sqrt(band.length * 2)))) : Math.ceil(Math.sqrt(band.length));
+        const groups = Array.from({ length: Math.ceil(band.length / rows) }, (_, at) => band.slice(at * rows, at * rows + rows));
+        const widths = groups.map(group => (bandNamed ? Math.max(...group.map(node => hierarchyLabelWidth(node.name))) : 0));
+        const xs: number[] = [];
+        groups.forEach((_, at) => xs.push(at === 0 ? 0 : xs[at - 1]! + (bandNamed ? (widths[at - 1]! + widths[at]!) / 2 + LABEL_GUTTER : SCOPED_HIERARCHY_ROW_GAP * 1.25)));
+        const shift = -xs.at(-1)! / 2;
+        const bottom = Math.min(0, ...placements.map(placement => placement.y));
+        const top = bottom - SCOPED_HIERARCHY_BAND_GAP;
+        groups.forEach((group, at) => group.forEach((node, index) => place(node, xs[at]! + shift, top - index * SCOPED_HIERARCHY_ROW_GAP, true, bandNamed)));
+        bandHead = { count: band.length, x: 0, y: bottom - SCOPED_HIERARCHY_BAND_GAP * 0.4,
+            left: xs[0]! + shift - widths[0]! / 2 - BAND_FRAME_PAD, right: xs.at(-1)! + shift + widths.at(-1)! / 2 + BAND_FRAME_PAD,
+            bottom: top - (rows - 1) * SCOPED_HIERARCHY_ROW_GAP - BAND_FRAME_PAD };
     }
     return { data: { nodes, edges: scope.data.edges.map(edge => ({ ...edge, source: remap.get(edge.source)!, target: remap.get(edge.target)! })), total_nodes: nodes.length },
         rootId: scope.roots.size === 1 ? remap.get([...scope.roots][0]!) ?? -1 : -1, rootKey: name, rootName: name,
         symbols: nodes.length, depth: new Set(level.values()).size, truncated: false, cap: nodes.length, walkDepth: scope.depth,
-        missing: 0, placements, sourceIds };
+        missing: 0, placements, sourceIds, names, ...(names === 'all' ? {} : { namedIds }), ...(bandHead ? { band: bandHead } : {}) };
 }

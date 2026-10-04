@@ -22,6 +22,19 @@
  * (K3), die Hierarchie bei zwei Ebenen traegt Namen (K5), das Laden zaehlt
  * Seite fuer Seite und warnt vorher (K8), und der Quelltext nennt die echte
  * letzte Zeile (K13).
+ *
+ * Nach der Vollstaendigkeitspruefung kamen dazu: bei zwei Ebenen steht kein
+ * Aufgerufener eines Tests in der Spalte "incoming", gemischt Erreichtes steht
+ * im beschrifteten Band, jedes Kantenschild traegt Art und Pfeil, und ueber
+ * 150 Knoten behalten Wurzel und direkte Nachbarn ihre Namen (K5); die Namen
+ * im Mini-Galaxy von Explore liegen nicht aufeinander (K12); Bereich und
+ * gezeigte Zeilen enden bei der echten letzten Zeile (K13); Zurueck und Vor
+ * tragen Worte, solange die Leiste Platz hat (K2).
+ *
+ * Der Browser laeuft ohne Fenster (`headless`), mit dem Kanal `chromium`:
+ * nur so zeichnet WebGL auf der GPU und nicht in SwiftShader, das die
+ * Galaxie von 5.000 Knoten so langsam macht, dass der Baum in Explore nicht
+ * fertig wird. `--headed` zeigt das Fenster.
  */
 
 import { chromium } from 'playwright';
@@ -40,7 +53,8 @@ const ORIGIN = String(arg('origin', 'http://127.0.0.1:4371')).replace(/\/$/, '')
 const OUT = resolve(String(arg('out', 'verification/handtest-galaxy')));
 const PROFILE = resolve(String(arg('profile', join(OUT, 'profile'))));
 const PROJECT = String(arg('project', 'django-demo'));
-const ONLY = String(arg('only', 'K9,K2,K3,K13,K6,K5,K8')).split(',');
+const ONLY = String(arg('only', 'K9,K2,K3,K13,K6,K5,K8,K12')).split(',');
+const HEADED = arg('headed', false) === true;
 const VIEWPORT = { width: 1600, height: 1000 };
 const ROOT = 'JSONBAgg';
 const wait = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -232,6 +246,40 @@ async function checkK2(page) {
     await settled(page);
     steps.push({ step: `select ${ROOT}`, ...await state() });
     await shot(page, 'K2', 'select-root', `${ROOT} selected from the whole graph: Back names "All graph"`);
+    /*
+     * Vollstaendigkeitspruefung: der Plan will "← Back" und "Forward →". In
+     * Worten, solange die Leiste in voller Stufe passt; in den knappen Stufen
+     * (offener Chat, schmales Fenster) nur die Pfeile. Die Tooltips bleiben.
+     */
+    const words = () => page.evaluate(() => {
+        const bar = document.querySelector('.atlas-graph-exploration');
+        const button = (label) => bar?.querySelector(`button[aria-label="${label}"]`);
+        // Was zu sehen ist: das ausgeschriebene Wort, oder in den knappen Stufen das Zeichen, das CSS aus `data-label` zeichnet.
+        const shown = (element) => {
+            const wide = element?.querySelector('.atlas-fit-wide'), narrow = element?.querySelector('.atlas-fit-narrow');
+            if (wide && getComputedStyle(wide).display !== 'none') return wide.textContent.trim();
+            if (narrow && getComputedStyle(narrow).display !== 'none') return getComputedStyle(narrow, '::before').content.replace(/^"|"$/g, '');
+            return element?.innerText.trim() ?? null;
+        };
+        return { fit: bar?.dataset.fit ?? null, back: shown(button('Back')), forward: shown(button('Forward')),
+            backTitle: button('Back')?.title ?? null, forwardTitle: button('Forward')?.title ?? null };
+    });
+    const wide = await words();
+    await page.locator('.atlas-graph-history').screenshot({ path: join(OUT, 'K2', 'history-words-full.png') }).catch(() => {});
+    await shot(page, 'K2', 'history-words-full', `Chat closed at 1600 px, toolbar fit "${wide.fit}": Back reads "${wide.back}", Forward "${wide.forward}"`);
+    await page.getByRole('button', { name: 'Open chat' }).first().click().catch(() => {});
+    await page.setViewportSize({ width: 1440, height: VIEWPORT.height });
+    await wait(1500);
+    const narrow = await words();
+    await page.locator('.atlas-graph-history').screenshot({ path: join(OUT, 'K2', 'history-words-compact.png') }).catch(() => {});
+    await shot(page, 'K2', 'history-words-compact', `Chat open at 1440 px, toolbar fit "${narrow.fit}": Back reads "${narrow.back}", Forward "${narrow.forward}"`);
+    await page.getByRole('button', { name: 'Hide chat' }).first().click().catch(() => {});
+    await page.setViewportSize(VIEWPORT);
+    await wait(1200);
+    await check('K2', 'Back and Forward read "← Back" and "Forward →" at the full toolbar level and only the arrows in a compact level; the tooltips stay',
+        wide.fit === 'full' && wide.back === '← Back' && wide.forward === 'Forward →' && narrow.fit !== 'full' && narrow.back === '←' && narrow.forward === '→'
+        && /^Back to All graph/.test(wide.backTitle ?? '') && /^Back to All graph/.test(narrow.backTitle ?? '') && wide.forwardTitle === 'Nothing to go forward to',
+        { wide, narrow });
     await expand(page);
     steps.push({ step: 'expand', ...await state() });
     const child = await qualifiedName('test_jsonb_agg_jsonfield_order_by');
@@ -410,7 +458,16 @@ async function toolbarRows(page) {
         const edge = box.right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth);
         const outside = items.filter((el) => el.getBoundingClientRect().right > edge + 0.5).map((el) => (el.getAttribute('aria-label') || el.textContent || el.tagName).trim().slice(0, 24));
         const more = bar.querySelector('details.atlas-graph-more > summary')?.getBoundingClientRect();
+        // Steht die Wurzel schmaler, als Text und Hoechstbreite es wollen (Innenbreite, wie toolbar-fit.tsx rechnet)?
+        const name = bar.querySelector('.atlas-graph-scope-name');
+        const nameStyle = name ? getComputedStyle(name) : null;
+        const nameMax = nameStyle ? parseFloat(nameStyle.maxWidth) : NaN;
+        const nameRoom = nameStyle && Number.isFinite(nameMax) ? (nameStyle.boxSizing === 'border-box'
+            ? nameMax - parseFloat(nameStyle.borderLeftWidth) - parseFloat(nameStyle.borderRightWidth)
+            : nameMax + parseFloat(nameStyle.paddingLeft) + parseFloat(nameStyle.paddingRight)) : Infinity;
+        const rootSqueezed = name ? name.clientWidth + 1 < Math.min(name.scrollWidth, nameRoom) : false;
         return { width: Math.round(box.width), height: Math.round(box.height), rows, overflow: bar.scrollWidth > bar.clientWidth + 1, clipped, fit: bar.dataset.fit ?? null,
+            root: name?.textContent ?? null, rootWidth: name ? name.clientWidth : null, rootSqueezed,
             outside, moreInside: Boolean(more && more.width > 0 && more.right <= edge + 0.5 && more.left >= box.left),
             items: items.map((el) => `${(el.getAttribute('aria-label') || el.textContent || el.tagName).trim().slice(0, 18)}:${Math.round(el.getBoundingClientRect().width)}`) };
     });
@@ -455,6 +512,10 @@ async function checkK3(page) {
     await measure('closed-partial', 'Chat closed again, layer 3 partial');
     const pass = rows.length === 7 && rows.every((row) => row.rows === 1 && row.height < 60 && !row.overflow && row.outside.length === 0);
     await check('K3', 'One toolbar row in every state, chat open (bar about 1170 px) and closed (1600 px)', pass, { rows });
+    // Vollstaendigkeitspruefung zu K2: die Worte an Zurueck und Vor kosten die volle Stufe, nicht den Namen der Wurzel.
+    await check('K3', 'At the full level (words on Back and Forward) the root name is never squeezed below its text; where it would be, the toolbar takes the compact level',
+        rows.every((row) => row.fit !== 'full' || !row.rootSqueezed) && rows.some((row) => row.fit === 'full'),
+        { rows: rows.map((row) => ({ label: row.label, fit: row.fit, root: row.root, rootWidth: row.rootWidth, rootSqueezed: row.rootSqueezed })) });
 
     /*
      * Review: bei 1.494 px (das Fenster des Handtests) und darunter schnitt die
@@ -541,11 +602,17 @@ async function checkK13(page) {
     const next = pager.getByRole('button', { name: 'Next lines' });
     const nextState = { disabled: await next.isDisabled().catch(() => null), title: await next.getAttribute('title').catch(() => null) };
     const lines = await page.locator('.source-evidence-lines code > span').count();
+    const numbers = await page.locator('.source-evidence-lines .source-evidence-line-number').allInnerTexts();
     await page.locator('.source-evidence-lines').evaluate((el) => { el.scrollTop = el.scrollHeight; }).catch(() => {});
     await wait(300);
-    await shot(page, 'K13', 'source-evidence-end', `Source evidence for general.py scrolled to the end: "${pagerText.replace(/\s+/g, ' ')}"`);
+    await shot(page, 'K13', 'source-evidence-end', `Source evidence for general.py scrolled to the end: "${pagerText.replace(/\s+/g, ' ')}", last drawn line ${numbers.at(-1)}`);
+    await page.locator('nav[aria-label="Source pages"]').first().screenshot({ path: join(OUT, 'K13', 'source-pager.png') }).catch(() => {});
     await check('K13', '"Next lines" is disabled at the real end of general.py and names its last line, 65', /end of file/.test(pagerText) && nextState.disabled === true
         && nextState.title === 'Line 65 is the last line of this file.', { pagerText, nextState, renderedLines: lines });
+    // Vollstaendigkeitspruefung: Bereich, gezeigte Zeilen und Tooltip enden alle bei 65, keine leere Zeile 66.
+    await check('K13', 'The range text and the drawn lines agree with the last real line: "Lines 42 to 65 · end of file", last drawn line 65',
+        /Lines 42 to 65 · end of file/.test(pagerText) && numbers.at(-1) === '65' && !numbers.includes('66'),
+        { pagerText: pagerText.replace(/\s+/g, ' '), firstLine: numbers[0], lastLine: numbers.at(-1), drawn: numbers.length });
     await page.keyboard.press('Escape');
 }
 
@@ -652,9 +719,28 @@ async function hierarchyLayout(page) {
         const placements = galaxy?.hierarchy?.placements ?? [];
         const chip = document.querySelector('[data-testid="atlas-graph-mode-chip"][data-mode="hierarchy"]');
         const hint = chip?.closest('[data-hint]')?.getAttribute('data-hint') ?? chip?.getAttribute('data-hint') ?? '';
-        return { mode: galaxy?.mode, placements: placements.map((p) => ({ name: p.name, x: Math.round(p.x), y: Math.round(p.y), hop: p.hop })),
-            edgeLabels: labels.map((label) => label.text), names: names.length, overlaps, truncated, hint };
+        // Vollstaendigkeitspruefung: die Ueberschrift des Bandes und die Notiz bei fehlenden Namen, beide im DOM gemessen.
+        const bandElement = document.querySelector('[data-testid="atlas-hierarchy-band-label"]');
+        const bandRect = bandElement?.getBoundingClientRect();
+        const band = bandElement && bandRect ? { text: bandElement.textContent?.replace(/\s+/g, ' ').trim() ?? '', left: bandRect.left, right: bandRect.right,
+            top: bandRect.top, bottom: bandRect.bottom, inCanvas: Boolean(canvas && bandRect.bottom > canvas.top && bandRect.top < canvas.bottom && bandRect.right > canvas.left && bandRect.left < canvas.right) } : null;
+        const bandOverlaps = band ? [...names, ...labels].filter((other) => hit(band, other)).map((other) => other.text) : [];
+        const key = document.querySelector('[data-testid="atlas-hierarchy-key"]')?.textContent?.trim() ?? null;
+        return { mode: galaxy?.mode, placements: placements.map((p) => ({ name: p.name, key: p.key, x: Math.round(p.x), y: Math.round(p.y), hop: p.hop, side: p.side ?? null, mixed: p.mixed === true })),
+            edges: galaxy?.hierarchy?.edges ?? [], bandInfo: galaxy?.hierarchy?.band ?? null, namesMode: galaxy?.hierarchy?.names ?? null,
+            edgeLabels: labels.map((label) => label.text), names: names.length, nameTexts: names.map((name) => name.text), overlaps, truncated, hint, band, bandOverlaps, key };
     });
+}
+
+/** Ein Ausschnitt um die Leinwand, damit die Namen auch im Bild zu lesen sind. */
+async function canvasShot(page, id, label, caption) {
+    const box = await canvasBox(page);
+    const next = (counters.get(id) ?? 0) + 1;
+    counters.set(id, next);
+    const file = `${String(next).padStart(2, '0')}-${label}.png`;
+    await page.screenshot({ path: join(OUT, id, file), clip: box });
+    await appendFile(join(OUT, id, 'index.md'), `- \`${file}\`: ${caption}\n`);
+    return file;
 }
 
 async function checkK5(page) {
@@ -711,7 +797,7 @@ async function checkK5(page) {
     /*
      * Review: bei zwei Ebenen (90 Knoten) stand kein einziger Name, aber achtzig
      * Kantenschilder auf beliebigen Paaren. Jetzt tragen bis 150 Knoten alle
-     * ihren Namen, und draussen hat ein Faecher ein Schild mit seiner Zahl.
+     * ihren Namen.
      */
     await select(page, ROOT);
     await settled(page);
@@ -722,28 +808,226 @@ async function checkK5(page) {
     await wait(3000);
     const twoLayers = await hierarchyLayout(page);
     const count = await countText(page);
-    await shot(page, 'K5', 'hierarchy-two-layers', `${ROOT} at 2 layers in hierarchy, fitted (${count}): ${twoLayers.names} names, ${twoLayers.edgeLabels.length} edge labels shown, ${twoLayers.overlaps.length} overlaps`);
-    // Hineinzoomen auf die linken Spalten: dort werden die Namen lesbar, und erst dann stehen die Kantenschilder.
-    const box = await canvasBox(page);
-    await page.mouse.move(box.x + box.width * 0.42, box.y + box.height * 0.55);
-    for (let step = 0; step < 6; step += 1) { await page.mouse.wheel(0, -300); await wait(200); }
-    await wait(2000);
+    await shot(page, 'K5', 'hierarchy-two-layers', `${ROOT} at 2 layers in hierarchy, fitted (${count}): ${twoLayers.names} names, ${twoLayers.edgeLabels.length} edge labels shown, ${twoLayers.overlaps.length} overlaps, band "${twoLayers.band?.text ?? 'none'}"`);
+    const placed = twoLayers.placements;
+    const leftFirst = placed.filter((p) => !p.mixed && p.side === -1 && p.hop === 1);
+    const rightFirst = placed.filter((p) => !p.mixed && p.side === 1 && p.hop === 1);
+    // Hineinzoomen auf die linke Spalte der ersten Ebene: dort werden die Namen lesbar, und erst dann stehen die Kantenschilder.
+    const middle = (list) => list[Math.floor(list.length / 2)] ?? { x: 0, y: 0 };
+    await zoomAt(page, middle(leftFirst), 6);
     const zoomed = await hierarchyLayout(page);
-    await shot(page, 'K5', 'hierarchy-two-layers-zoomed', `Zoomed in at 2 layers: names read in full, ${zoomed.edgeLabels.length} edge labels on the lines in view, ${zoomed.overlaps.length} overlaps`);
+    await shot(page, 'K5', 'hierarchy-two-layers-zoomed', `Zoomed in on the first incoming column at 2 layers: names read in full, ${zoomed.edgeLabels.length} edge labels on the lines in view, ${zoomed.overlaps.length} overlaps`);
     await check('K5', 'At 2 layers (90 nodes) the hierarchy draws every name; edge labels wait until the names read and then sit clear of them',
         /^90 nodes/.test(count) && twoLayers.names >= 85 && twoLayers.overlaps.length === 0 && twoLayers.truncated.length === 0
-        && zoomed.edgeLabels.length > 0 && zoomed.overlaps.length === 0 && /edge types at the lines/.test(twoLayers.hint),
+        && zoomed.edgeLabels.length > 0 && zoomed.overlaps.length === 0 && /the type and direction of each relationship at its line/.test(twoLayers.hint),
     { count, fitted: { names: twoLayers.names, edgeLabels: twoLayers.edgeLabels, overlaps: twoLayers.overlaps },
         zoomed: { names: zoomed.names, edgeLabels: zoomed.edgeLabels, overlaps: zoomed.overlaps }, truncated: twoLayers.truncated, hint: twoLayers.hint });
+
+    /*
+     * Vollstaendigkeitspruefung (K5 unvollstaendig): ab zwei Ebenen stand jeder
+     * Knoten auf der Seite seines Elternknotens, und ganz links unter
+     * "incoming" standen die Aufgerufenen der Tests (len, str, print) und die
+     * Klassen, die general.py definiert. Wahrheit aus dem Index: was die
+     * Knoten der ersten Spalte links selbst aufrufen oder definieren, darf
+     * links nur stehen, wenn es auch in eine von ihnen hineinfuehrt.
+     */
+    const forward = new Map();
+    for (const node of leftFirst) {
+        const answer = await tool('query_graph', { project: PROJECT, format: 'json', query: `MATCH (a)-[r]->(b) WHERE a.qualified_name = "${node.key}" RETURN b.qualified_name, b.name, type(r)` });
+        for (const [qn, name, type] of answer?.rows ?? []) if (qn !== placed.find((p) => p.hop === 0)?.key) forward.set(qn, { name, type, from: node.name });
+    }
+    const leftKeys = new Set(leftFirst.map((p) => p.key)), rightKeys = new Set(rightFirst.map((p) => p.key));
+    const into = (key, targets) => twoLayers.edges.some((edge) => edge.from === key && targets.has(edge.to));
+    const outOf = (key, sources) => twoLayers.edges.some((edge) => edge.to === key && sources.has(edge.from));
+    const leftOuter = placed.filter((p) => !p.mixed && p.side === -1 && p.hop >= 2);
+    const rightOuter = placed.filter((p) => !p.mixed && p.side === 1 && p.hop >= 2);
+    const calleesOnLeft = leftOuter.filter((p) => forward.has(p.key) && !into(p.key, leftKeys)).map((p) => `${p.name} (${forward.get(p.key).type} from ${forward.get(p.key).from})`);
+    const wrongLeft = leftOuter.filter((p) => !into(p.key, leftKeys)).map((p) => p.name);
+    const wrongRight = rightOuter.filter((p) => !outOf(p.key, rightKeys)).map((p) => p.name);
+    const mixed = placed.filter((p) => p.mixed);
+    const lowestColumn = Math.min(...placed.filter((p) => !p.mixed).map((p) => p.y));
+    const bandCount = Number(/Mixed directions · (\d+) nodes?/.exec(twoLayers.band?.text ?? '')?.[1] ?? NaN);
+    const typicalCallees = ['len', 'str', 'print', 'list', 'dict', 'pop'].filter((name) => leftOuter.some((p) => p.name === name));
+    await check('K5', `At 2 layers no callee of a caller sits in an incoming column: ${leftOuter.length} outer incoming nodes all reach the root through incoming relationships, ${rightOuter.length} outer outgoing nodes through outgoing ones`,
+        forward.size > 0 && calleesOnLeft.length === 0 && wrongLeft.length === 0 && wrongRight.length === 0 && typicalCallees.length === 0,
+        { firstLeft: leftFirst.map((p) => p.name), forwardOfFirstLeft: forward.size, calleesOnLeft, wrongLeft, wrongRight, typicalCallees,
+            leftOuter: leftOuter.map((p) => p.name), rightOuter: rightOuter.map((p) => p.name) });
+    await check('K5', `Nodes reached through mixed directions stand in the labelled band below the columns ("${twoLayers.band?.text ?? ''}"), and the hint counts them`,
+        mixed.length > 0 && bandCount === mixed.length && twoLayers.bandInfo?.count === mixed.length && mixed.every((p) => p.y < lowestColumn)
+        && twoLayers.band?.inCanvas === true && twoLayers.bandOverlaps.length === 0
+        && twoLayers.hint.includes(`${mixed.length} nodes reached through both directions, such as a callee of a caller, stand in the band below`),
+        { mixed: mixed.length, bandText: twoLayers.band?.text, bandCount, bandInfo: twoLayers.bandInfo, lowestColumn, highestBand: Math.max(...mixed.map((p) => p.y)),
+            bandOverlaps: twoLayers.bandOverlaps, hint: twoLayers.hint, bandNames: mixed.map((p) => p.name) });
+
+    // Auf das Band zoomen: dort stehen Namen und Kantenschilder mit Pfeil, und die Ueberschrift bleibt frei.
+    await page.getByRole('button', { name: 'fit view' }).click().catch(() => {});
+    await wait(1500);
+    await zoomAt(page, { x: twoLayers.bandInfo?.x ?? 0, y: (twoLayers.bandInfo?.y ?? 0) - 60 }, 5);
+    const bandView = await hierarchyLayout(page);
+    await shot(page, 'K5', 'hierarchy-two-layers-band', `Zoomed in on the band: "${bandView.band?.text ?? ''}", ${bandView.edgeLabels.length} edge labels, ${bandView.overlaps.length} overlaps, band heading overlaps ${bandView.bandOverlaps.length}`);
+    const unlabelled = [...zoomed.edgeLabels, ...bandView.edgeLabels].filter((text) => !/[→←↑↓]/.test(text) || /×/.test(text));
+    await check('K5', 'At 2 layers every edge label names its type and carries an arrow from source to target; none merges a fan without direction',
+        zoomed.edgeLabels.length > 0 && bandView.edgeLabels.length > 0 && unlabelled.length === 0 && bandView.overlaps.length === 0 && bandView.bandOverlaps.length === 0,
+        { zoomed: zoomed.edgeLabels, band: bandView.edgeLabels, unlabelled, overlaps: bandView.overlaps, bandOverlaps: bandView.bandOverlaps });
+
+    // Ein Layer zurueck: kein Band, der Hinweis sagt nichts von einem Band.
+    await page.getByRole('button', { name: 'Remove graph layer' }).click();
+    await settled(page);
+    await wait(1500);
+    const oneLayer = await hierarchyLayout(page);
+    await check('K5', 'Back at 1 layer there is no band and the hint describes only the columns, so the text is right for each depth',
+        oneLayer.band === null && oneLayer.bandInfo === null && !/band/.test(oneLayer.hint) && /incoming relationships on the left, the root in the middle, outgoing on the right/.test(oneLayer.hint),
+        { hint: oneLayer.hint, band: oneLayer.band });
+
+    /*
+     * Ueber der Namensgrenze: Aggregate bei zwei Ebenen (rund 600 Knoten, 34
+     * direkte Nachbarn) behaelt die Namen der Wurzel und ihrer Nachbarn, und
+     * die Notiz im Bild sagt, wie man die uebrigen bekommt. call_command hat
+     * schon bei einer Ebene rund 540 direkte Nachbarn: keine Namen, und die
+     * Notiz sagt, dass nur eine engere Spur hilft.
+     */
+    await select(page, 'Aggregate');
+    await settled(page);
+    if (await page.locator('[data-testid="atlas-graph-mode-chip"][data-mode="hierarchy"][data-active="true"]').count() === 0) {
+        await page.locator('[data-testid="atlas-graph-mode-chip"][data-mode="hierarchy"]').click();
+    }
+    await expand(page);
+    await wait(3000);
+    const large = await hierarchyLayout(page);
+    const largeCount = await countText(page);
+    const neighbours = large.placements.filter((p) => p.hop === 1);
+    await shot(page, 'K5', 'hierarchy-aggregate-two-layers', `Aggregate at 2 layers (${largeCount}): names "${large.namesMode}", ${large.names} names drawn, note "${large.key ?? ''}"`);
+    await zoomAt(page, { x: 0, y: 0 }, 5);
+    const largeZoomed = await hierarchyLayout(page);
+    await shot(page, 'K5', 'hierarchy-aggregate-zoomed', `Aggregate zoomed on the root: ${largeZoomed.names} names, ${largeZoomed.edgeLabels.length} edge labels at the root, ${largeZoomed.overlaps.length} overlaps`);
+    const named = new Set(large.nameTexts);
+    await check('K5', 'Above 150 nodes the root and its direct neighbours keep their names (and their edge labels when zoomed), and a visible note says how to see the rest',
+        Number(/^([\d.,]+) nodes/.exec(largeCount)?.[1].replace(/[.,]/g, '') ?? 0) > 150 && large.namesMode === 'neighbours' && neighbours.length > 0 && neighbours.length <= 150
+        && neighbours.every((p) => named.has(p.name)) && large.names <= neighbours.length + 1
+        && /names for the root and its \d+ direct neighbours only/.test(large.key ?? '') && /Remove layers or trace fewer edge types/.test(large.key ?? '')
+        && /only the root and its direct neighbours carry names/.test(large.hint) && largeZoomed.edgeLabels.length > 0 && largeZoomed.overlaps.length === 0,
+        { count: largeCount, namesMode: large.namesMode, neighbours: neighbours.length, namesDrawn: large.names, note: large.key, hint: large.hint,
+            zoomedEdgeLabels: largeZoomed.edgeLabels.slice(0, 12), overlaps: largeZoomed.overlaps });
+
+    await select(page, 'call_command');
+    await settled(page);
+    if (await page.locator('[data-testid="atlas-graph-mode-chip"][data-mode="hierarchy"][data-active="true"]').count() === 0) {
+        await page.locator('[data-testid="atlas-graph-mode-chip"][data-mode="hierarchy"]').click();
+    }
+    await wait(3000);
+    const hub = await hierarchyLayout(page);
+    const hubCount = await countText(page);
+    await shot(page, 'K5', 'hierarchy-call-command-hub', `call_command at 1 layer (${hubCount}): names "${hub.namesMode}", ${hub.names} names drawn, note "${hub.key ?? ''}"`);
+    await zoomAt(page, { x: 0, y: 0 }, 4);
+    await shot(page, 'K5', 'hierarchy-call-command-zoomed', 'call_command zoomed on the root: its name and the names of its outgoing calls, with typed edge labels');
+    const hubOutgoing = hub.placements.filter((p) => p.hop === 1 && p.side === 1);
+    const hubNamed = new Set(hub.nameTexts);
+    await check('K5', 'A root with more direct neighbours than the name budget keeps its own name and those of the side that fits (the outgoing calls), and says so in the picture, with advice that fits one layer',
+        hub.namesMode === 'none' && hubNamed.has('call_command') && hubOutgoing.length > 0 && hubOutgoing.every((p) => hubNamed.has(p.name)) && hub.names === hubOutgoing.length + 1
+        && new RegExp(`names for the root and its ${hubOutgoing.length} outgoing neighbours only \\(up to 150 names\\)\\. Trace one direction or fewer edge types to see the rest`).test(hub.key ?? '')
+        && /so only the root and its \d+ outgoing neighbours carry names; trace one direction or fewer edge types to see the rest/.test(hub.hint) && !/remove/i.test(hub.key ?? ''),
+        { count: hubCount, namesMode: hub.namesMode, names: hub.names, outgoing: hubOutgoing.map((p) => p.name), named: hub.nameTexts, note: hub.key, hint: hub.hint });
+}
+
+/** Zum Weltpunkt `world` hinzoomen: Zeiger dorthin, dann `steps` Mausrad-Schritte (die Szene zoomt zum Zeiger). */
+async function zoomAt(page, world, steps) {
+    const box = await canvasBox(page);
+    const [at] = await page.evaluate((point) => globalThis.__atlasGalaxyFit?.project?.([{ x: point.x, y: point.y, z: 0 }]) ?? [], world);
+    const x = at ? box.x + Math.min(Math.max(at.x, 20), box.width - 20) : box.x + box.width / 2;
+    const y = at ? box.y + Math.min(Math.max(at.y, 20), box.height - 20) : box.y + box.height / 2;
+    await page.mouse.move(x, y);
+    for (let step = 0; step < steps; step += 1) { await page.mouse.wheel(0, -300); await wait(200); }
+    // Den Zeiger aus dem Bild nehmen, damit keine Karte eines Knotens ueber der Messung liegt.
+    await page.mouse.move(box.x + box.width - 4, box.y - 30);
+    await wait(2000);
+}
+
+/* ------------------------------------------------------------------ */
+/* K12: die Namen im Mini-Galaxy von Explore liegen nicht aufeinander     */
+
+async function openWorkflowFile(page) {
+    await page.goto(`${ORIGIN}/?project=${encodeURIComponent(PROJECT)}&workspace=explore`, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.atlas-shell', { timeout: 30000 });
+    await wait(1500);
+    for (const path of ['.github', '.github/workflows']) {
+        const row = page.locator(`.atlas-tree-row[data-path="${path}"]`).first();
+        await row.waitFor({ timeout: 30000 });
+        for (let attempt = 0; attempt < 4 && (await row.getAttribute('data-expanded')) !== 'true'; attempt++) { await row.click(); await wait(1200); }
+    }
+    await page.locator('.atlas-tree-row[data-path=".github/workflows/new_contributor_pr.yml"]').first().click();
+    await page.waitForFunction(() => /New contributor message/.test(document.body.innerText), null, { timeout: 30000 }).catch(() => {});
+    await page.waitForFunction(() => document.querySelectorAll('.atlas-galaxy [data-testid="atlas-galaxy-root-marker"]').length > 1, null, { timeout: 30000 }).catch(() => {});
+    await wait(3000);
+}
+
+/** Alle Beschriftungen im Mini-Galaxy, im DOM gemessen, dazu die Namen der Szene; Paare, die sich ueberlagern. */
+async function miniLabels(page) {
+    return page.evaluate(() => {
+        const panel = document.querySelector('.atlas-galaxy');
+        const canvas = panel?.querySelector('canvas')?.getBoundingClientRect();
+        const shown = (el) => { const style = getComputedStyle(el); return style.visibility !== 'hidden' && style.display !== 'none' && el.getBoundingClientRect().width > 0; };
+        const dom = [...(panel?.querySelectorAll('.atlas-galaxy-root-marker b, .atlas-galaxy-path-node b, .atlas-galaxy-path-label, [data-testid="atlas-hierarchy-edge-label"], .atlas-hierarchy-band-label') ?? [])]
+            .filter(shown).map((el) => { const r = el.getBoundingClientRect(); return { text: el.textContent?.trim() ?? '', left: r.left, right: r.right, top: r.top, bottom: r.bottom }; });
+        const fit = globalThis.__atlasGalaxyFit;
+        const sprites = (globalThis.__atlasGalaxy?.labelBoxes ?? []).map((box) => {
+            const [a, b] = typeof fit?.project === 'function' ? fit.project([{ x: box.x - box.width / 2, y: box.y + box.height / 2, z: 0 }, { x: box.x + box.width / 2, y: box.y - box.height / 2, z: 0 }]) : [];
+            return a && b && canvas ? { text: box.name, left: canvas.left + Math.min(a.x, b.x), right: canvas.left + Math.max(a.x, b.x), top: canvas.top + Math.min(a.y, b.y), bottom: canvas.top + Math.max(a.y, b.y) } : null;
+        }).filter(Boolean);
+        const all = [...dom, ...sprites];
+        const hit = (a, b) => !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top);
+        const overlaps = [];
+        for (let i = 0; i < all.length; i += 1) for (let j = i + 1; j < all.length; j += 1) if (hit(all[i], all[j])) overlaps.push(`${all[i].text} x ${all[j].text}`);
+        const outside = canvas ? all.filter((r) => r.left < canvas.left - 0.5 || r.right > canvas.right + 0.5 || r.top < canvas.top - 0.5 || r.bottom > canvas.bottom + 0.5).map((r) => r.text) : [];
+        // Der Ring einer Marke sitzt auf ihrem Anker (die Marke selbst ist 0 x 0 px gross).
+        const markers = [...(panel?.querySelectorAll('[data-testid="atlas-galaxy-root-marker"]') ?? [])].map((el) => {
+            const r = el.getBoundingClientRect();
+            return { name: el.querySelector('b')?.textContent ?? '', slot: el.getAttribute('data-name-slot'),
+                ringInCanvas: Boolean(canvas && r.left >= canvas.left && r.left <= canvas.right && r.top >= canvas.top && r.top <= canvas.bottom) };
+        });
+        const round = (r) => ({ text: r.text, left: Math.round(r.left), top: Math.round(r.top), right: Math.round(r.right), bottom: Math.round(r.bottom) });
+        return { labels: all.map(round), overlaps, outside, markers, canvas: canvas ? { width: Math.round(canvas.width), height: Math.round(canvas.height) } : null,
+            scope: panel?.querySelector('.atlas-graph-scope-name')?.textContent ?? '', count: panel?.querySelector('.atlas-graph-scope-count')?.textContent ?? '' };
+    });
+}
+
+async function checkK12(page) {
+    await section(page, 'K12', 'Explore mini-Galaxy of .github/workflows/new_contributor_pr.yml: no two labels overlap, as in the main Galaxy');
+    await openWorkflowFile(page);
+    const wanted = ['permissions', 'new_contributor_pr.yml', '.github/workflows/new_contributor_pr.yml', 'jobs'];
+    const views = [];
+    const look = async (label, caption) => {
+        const measured = await miniLabels(page);
+        views.push({ label, ...measured });
+        await shot(page, 'K12', label, `${caption}: ${measured.labels.length} labels, ${measured.overlaps.length} overlapping pairs`);
+        const panel = await page.locator('.atlas-galaxy').first().boundingBox();
+        if (panel) {
+            const file = `${label}-mini.png`;
+            await page.screenshot({ path: join(OUT, 'K12', file), clip: panel });
+            await appendFile(join(OUT, 'K12', 'index.md'), `- \`${file}\`: the mini-Galaxy alone (${Math.round(panel.width)} x ${Math.round(panel.height)} px)\n`);
+        }
+    };
+    await look('chat-closed', 'Chat closed, the YAML file open');
+    await page.getByRole('button', { name: 'Open chat' }).first().click().catch(() => {});
+    await wait(2500);
+    await look('chat-open', 'Chat open as in the hand test (17:39/17:40)');
+    await page.getByRole('button', { name: 'Hide chat' }).first().click().catch(() => {});
+    await wait(800);
+    // Kein Name ist verloren: jede Marke, deren Ring im Bild liegt, traegt ihren Namen; bei offenem Chat (der Lage des Handtests) alle vier.
+    const lost = views.flatMap((view) => view.markers.filter((marker) => marker.ringInCanvas && marker.slot === 'hidden').map((marker) => `${view.label}: ${marker.name}`));
+    const handTest = views.find((view) => view.label === 'chat-open');
+    const pass = views.length === 2 && views.every((view) => view.overlaps.length === 0 && view.outside.length === 0 && view.markers.length > 1)
+        && lost.length === 0 && wanted.every((name) => handTest?.labels.some((entry) => entry.text === name));
+    await check('K12', 'The labels of the mini-Galaxy do not overlap (0 overlapping label rects in the DOM), stay inside it, every root in view keeps its name, and with the chat open the four names of the hand test are all shown',
+        pass, { lost, views });
 }
 
 /* ------------------------------------------------------------------ */
 
-const CHECKS = { K9: checkK9, K2: checkK2, K8: checkK8, K3: checkK3, K13: checkK13, K6: checkK6, K5: checkK5 };
+const CHECKS = { K9: checkK9, K2: checkK2, K8: checkK8, K3: checkK3, K13: checkK13, K6: checkK6, K5: checkK5, K12: checkK12 };
 
 await mkdir(OUT, { recursive: true });
 const context = await chromium.launchPersistentContext(PROFILE, {
-    headless: false, viewport: VIEWPORT, deviceScaleFactor: 2,
+    headless: !HEADED, ...(HEADED ? {} : { channel: 'chromium' }), viewport: VIEWPORT, deviceScaleFactor: 2,
     args: ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist'],
 });
 await context.addInitScript(pageProbe);

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { arrangeScopedGraph, frontierCallCount, graphEdgeTypesKey, hierarchyLabelWidth, limitGraphRender, loadGraphScope, nextLayerEstimate, readGraphPages, scenePictureFor, scopedHierarchy, type GraphQueryClient } from './graph-scope';
+import { arrangeScopedGraph, frontierCallCount, graphEdgeTypesKey, hierarchyLabelWidth, limitGraphRender, loadGraphScope, nextLayerEstimate, readGraphPages, scenePictureFor, SCOPED_HIERARCHY_ROW_GAP, scopedHierarchy, type GraphQueryClient } from './graph-scope';
 import type { QueryGraphResult } from '../provider/rpc-schemas';
 import type { GraphData, GraphNode } from './types';
 
@@ -258,14 +258,83 @@ describe('hand test K5: the scoped hierarchy reads incoming left, root in the mi
         expect(top).toEqual(['n3', 'n4', 'n2', 'n5']);
     });
 
-    it('keeps a second layer on the side of its parent, next to it', () => {
-        const nodes = [node(1), node(2), node(3), node(4), node(5)];
-        // 1 calls 2, 2 calls 3, 4 calls 2 (reached from 2), 5 calls 1.
+    it('keeps a pure outgoing chain to the right and a pure incoming chain to the left, a layer per column', () => {
+        const nodes = [node(1), node(2), node(3), node(5), node(6)];
+        // 1 calls 2, 2 calls 3 (outgoing twice); 5 calls 1, 6 calls 5 (incoming twice).
         const result = scoped(nodes, [{ source: 1, target: 2, type: 'CALLS' }, { source: 2, target: 3, type: 'CALLS' },
-            { source: 4, target: 2, type: 'CALLS' }, { source: 5, target: 1, type: 'CALLS' }], [[1, 0], [2, 1], [5, 1], [3, 2], [4, 2]]);
+            { source: 5, target: 1, type: 'CALLS' }, { source: 6, target: 5, type: 'CALLS' }], [[1, 0], [2, 1], [5, 1], [3, 2], [6, 2]]);
         expect(at(result, 'n3').x).toBeGreaterThan(at(result, 'n2').x);
-        expect(at(result, 'n4').x).toBe(at(result, 'n3').x);
+        expect(at(result, 'n6').x).toBeLessThan(at(result, 'n5').x);
         expect(at(result, 'n5').x).toBeLessThan(0);
+        expect(result.placements.some(placement => placement.mixed)).toBe(false);
+        expect(result.band).toBeUndefined();
+    });
+
+    /*
+     * Review of K5: from two layers on, every node stood on its parent's side,
+     * so the far-left "incoming" column of JSONBAgg held the callees of its
+     * tests (len, str, print) and the classes general.py defines next to it.
+     * A node reached through both directions belongs to neither side.
+     */
+    it('puts a callee of a caller and a caller of a callee in a labelled band below, never in an incoming or outgoing column', () => {
+        const nodes = [node(1), node(10), node(20), node(30), node(40), node(50), node(60), node(70)];
+        const result = scoped(nodes, [
+            { source: 10, target: 1, type: 'CALLS' }, // a test calls the root: incoming
+            { source: 10, target: 20, type: 'CALLS' }, // the test calls len: a callee of a caller
+            { source: 30, target: 10, type: 'CALLS' }, // something calls the test: incoming twice
+            { source: 1, target: 40, type: 'INHERITS' }, // the root inherits a base: outgoing
+            { source: 40, target: 50, type: 'DEFINES_METHOD' }, // the base defines a method: outgoing twice
+            { source: 60, target: 40, type: 'INHERITS' }, // a sibling inherits the base: a caller of a callee
+            { source: 20, target: 70, type: 'CALLS' }, // reached from a mixed node: mixed as well
+        ], [[1, 0], [10, 1], [40, 1], [20, 2], [30, 2], [50, 2], [60, 2], [70, 3]]);
+        const mixed = result.placements.filter(placement => placement.mixed).map(placement => placement.name).sort();
+        expect(mixed).toEqual(['n20', 'n60', 'n70']);
+        // The pure chains keep their columns.
+        expect(at(result, 'n30').x).toBeLessThan(at(result, 'n10').x);
+        expect(at(result, 'n50').x).toBeGreaterThan(at(result, 'n40').x);
+        // The band lies below every column, with a gap for its heading, and the heading counts it.
+        const columns = result.placements.filter(placement => !placement.mixed);
+        const lowest = Math.min(...columns.map(placement => placement.y));
+        for (const name of mixed) expect(at(result, name).y).toBeLessThan(lowest - 2 * SCOPED_HIERARCHY_ROW_GAP);
+        expect(result.band).toMatchObject({ count: 3 });
+        expect(result.band!.y).toBeLessThan(lowest);
+        expect(result.band!.y).toBeGreaterThan(Math.max(...mixed.map(name => at(result, name).y)));
+        // The band is centred under the root, not under one of the sides.
+        const xs = mixed.map(name => at(result, name).x);
+        expect(Math.abs((Math.min(...xs) + Math.max(...xs)) / 2)).toBeLessThan(1);
+        // Its frame, the heading on the top edge, holds every band node and none of the columns.
+        for (const name of mixed) {
+            const placement = at(result, name);
+            expect(placement.x).toBeGreaterThan(result.band!.left); expect(placement.x).toBeLessThan(result.band!.right);
+            expect(placement.y).toBeGreaterThan(result.band!.bottom); expect(placement.y).toBeLessThan(result.band!.y);
+        }
+        for (const placement of columns) expect(placement.y).toBeGreaterThan(result.band!.y);
+    });
+
+    it('names every node up to the budget; above it the root and its direct neighbours keep names and single columns', () => {
+        const fan = (count: number, first: number) => Array.from({ length: count }, (_, at) => node(first + at));
+        const small = scoped([node(1), ...fan(20, 100)], fan(20, 100).map(entry => ({ source: entry.id, target: 1, type: 'CALLS' })),
+            [[1, 0], ...fan(20, 100).map(entry => [entry.id, 1] as [number, number])]);
+        expect(small.names).toBe('all');
+        // 40 direct callers, each with four callers of its own: 201 nodes.
+        const callers = fan(40, 100), outer = fan(160, 1000);
+        const edges = [...callers.map(entry => ({ source: entry.id, target: 1, type: 'CALLS' })),
+            ...outer.map((entry, at) => ({ source: entry.id, target: callers[at % 40]!.id, type: 'CALLS' }))];
+        const large = scoped([node(1), ...callers, ...outer], edges,
+            [[1, 0], ...callers.map(entry => [entry.id, 1] as [number, number]), ...outer.map(entry => [entry.id, 2] as [number, number])]);
+        expect(large.names).toBe('neighbours');
+        // The direct callers stand in one column, spaced for their names.
+        const first = large.placements.filter(placement => placement.hop === 1);
+        expect(new Set(first.map(placement => placement.x)).size).toBe(1);
+        expect(new Set(large.namedIds)).toEqual(new Set(large.placements.filter(placement => placement.hop <= 1).map(placement => placement.id)));
+        // A hub with more direct neighbours than the budget names only the root, and a side of them that fits.
+        const hub = fan(200, 100), callees = fan(5, 2000);
+        const none = scoped([node(1), ...hub, ...callees], [...hub.map(entry => ({ source: entry.id, target: 1, type: 'CALLS' })),
+            ...callees.map(entry => ({ source: 1, target: entry.id, type: 'CALLS' }))],
+        [[1, 0], ...hub.map(entry => [entry.id, 1] as [number, number]), ...callees.map(entry => [entry.id, 1] as [number, number])]);
+        expect(none.names).toBe('none');
+        const namedNames = none.placements.filter(placement => none.namedIds?.includes(placement.id)).map(placement => placement.name).sort();
+        expect(namedNames).toEqual(['n1', ...callees.map(entry => entry.name)].sort());
     });
 
     it('spaces columns by the names they carry, so long names keep their full width', () => {
