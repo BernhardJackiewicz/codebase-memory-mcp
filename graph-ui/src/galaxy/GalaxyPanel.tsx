@@ -135,6 +135,7 @@ import { GraphScene, computeCameraTarget, computeFitTarget, computeFrameTarget }
 import type { CameraTarget } from './GraphScene';
 import type { LabelBox } from './NodeLabels';
 import { NodeTooltipCard } from './NodeTooltipCard';
+import { HoverCardHtml } from './hover-layer';
 import GalaxyNavigator from './GalaxyNavigator';
 import { TraceEdgeFilter } from './TraceEdgeFilter';
 import { PathPicker, PathSteps } from './ScopePathControls';
@@ -2919,9 +2920,9 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
                             props.onSelectShadowNode?.(node);
                             setNote(`${node.file_path ?? node.name}: coverage shadow. Detailed indexing reasons are not included in this layout.`);
                         }}
-                        renderShadowTooltip={(node) => <Html position={[node.x, node.y, node.z]} center style={{ pointerEvents: 'none' }}>
+                        renderShadowTooltip={(node) => <HoverCardHtml position={[node.x, node.y, node.z]}>
                             <div className="atlas-coverage-tooltip"><b>{node.file_path ?? node.name}</b><p>Coverage shadow: not fully indexed.</p></div>
-                        </Html>}
+                        </HoverCardHtml>}
                         onBackgroundClick={handleBackgroundClick}
                         renderTooltip={(node) => <NodeTooltipCard node={node} />}
                         overlay={overlay}
