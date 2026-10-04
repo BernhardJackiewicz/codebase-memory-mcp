@@ -430,11 +430,20 @@ try {
     const filterBefore = measured?.filter ?? '';
     const perspectiveName = measured?.perspective ?? 'Endpoints';
     await page.locator('.atlas-architecture input[type="search"]').click();
+    // Gemessen in der Seite: vom letzten Tastendruck bis zum Klick, der den Knopf erreicht.
+    // Date.now() um click() herum zaehlte auch Playwrights eigene Wartezeit und schwankte unter Last.
+    await page.evaluate(() => {
+        window.__typedAt = 0; window.__backAt = 0;
+        document.addEventListener('input', () => { window.__typedAt = performance.now(); }, true);
+        document.addEventListener('click', (event) => {
+            if (event.target instanceof Element && event.target.closest('button') && !window.__backAt) window.__backAt = performance.now();
+        }, true);
+    });
     await page.keyboard.press('ControlOrMeta+A');
     await page.keyboard.type('/adm');
-    const typedAt = Date.now();
+    await page.evaluate(() => { window.__backAt = 0; });
     await historyButton(page, 'Back').click();
-    const typingElapsed = Date.now() - typedAt;
+    const typingElapsed = Math.round(await page.evaluate(() => window.__backAt - window.__typedAt));
     const typedBack = { view: 'routes', filter: filterBefore, forward: { disabled: false, title: `Forward to Routes · ${perspectiveName} · /adm (Alt+Right)` } };
     measured = await settle(page, typedBack);
     check('T-back', 'Getippt und sofort Zurueck (vor der Pause von 600 ms): Zurueck verlaesst den Text, Vor nennt ihn', typingElapsed < 600 && matches(measured, typedBack).length === 0,
