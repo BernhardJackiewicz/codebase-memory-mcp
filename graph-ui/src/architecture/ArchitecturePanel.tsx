@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX, ReactNode } from 'react';
 import type { ArchitectureHotspot, ArchitectureOverviewDto } from '../core/intelligence-provider';
 import {
@@ -7,6 +7,8 @@ import {
 import type { ArchitectureView, ConfigStorage } from './architecture-model';
 import { architectureHistoryText as historyText, architectureText as text } from './strings';
 import { peekNavigation, type NavigationHistory } from '../graph/navigation-history';
+import { useDismissibleMenu } from '../graph/use-dismissible-menu';
+import { FitLabel, useToolbarFit } from '../galaxy/toolbar-fit';
 import {
     architectureEntryDetail, architectureEntryLabel, architectureEntryName, architectureHistoryOptions, initialArchitecturePlace,
     type ArchitectureHistoryEntry, type PlaceChange, type RoutesPerspective, type SpatialPlace, type SystemPlace,
@@ -125,6 +127,9 @@ const paletteStyle = scenePaletteStyle();
  * Back, Forward and the Recent list for the whole workspace (K27). The
  * tooltips name the target ("Back to Overview · django"); the list holds the
  * last distinct places, newest first, and the current one is not a target.
+ * They stand at the start of the subtab row and read as in Galaxy, "← Back",
+ * "Forward →" and "▾", with the glyphs alone once the tabs would scroll
+ * (hand test 2026-10-04, A1). The menu closes as Galaxy's does (A2).
  */
 function HistoryControls({ history, place, onGo, onJump }: {
     history: NavigationHistory<ArchitectureHistoryEntry>; place: ArchitectureHistoryEntry;
@@ -132,23 +137,23 @@ function HistoryControls({ history, place, onGo, onJump }: {
 }): JSX.Element {
     const back = peekNavigation(history, -1), forward = peekNavigation(history, 1);
     const here = architectureHistoryOptions.recentKey?.(place);
+    const menu = useDismissibleMenu(architectureHistoryOptions.key(place));
     return <div className="atlas-arch-history" role="group" aria-label={historyText.group} data-position={`${history.index + 1}/${history.entries.length}`}>
         <button type="button" aria-label={historyText.back} disabled={!back} onClick={() => onGo(-1)}
-            title={back ? historyText.backTo(architectureEntryLabel(back)) : historyText.noBack}>{historyText.backGlyph}</button>
+            title={back ? historyText.backTo(architectureEntryLabel(back)) : historyText.noBack}>
+            <FitLabel wide={historyText.backWide} narrow={historyText.backGlyph} /></button>
         <button type="button" aria-label={historyText.forward} disabled={!forward} onClick={() => onGo(1)}
-            title={forward ? historyText.forwardTo(architectureEntryLabel(forward)) : historyText.noForward}>{historyText.forwardGlyph}</button>
-        {history.recent.length > 1 && <details className="atlas-arch-recent" onKeyDown={event => {
-            if (event.key === 'Escape') { event.stopPropagation(); event.currentTarget.open = false; }
-        }}>
+            title={forward ? historyText.forwardTo(architectureEntryLabel(forward)) : historyText.noForward}>
+            <FitLabel wide={historyText.forwardWide} narrow={historyText.forwardGlyph} /></button>
+        {history.recent.length > 1 && <details className="atlas-arch-recent" ref={menu.ref}>
             <summary title={historyText.recentTitle} aria-label={historyText.recent}>{historyText.recentGlyph}</summary>
             <ul className="atlas-arch-recent-menu" aria-label={historyText.recentList}>{history.recent.map(entry => {
                 const id = architectureHistoryOptions.recentKey?.(entry);
                 const current = id === here;
                 const detail = architectureEntryDetail(entry);
                 return <li key={id}>
-                    <button type="button" disabled={current} aria-current={current ? 'true' : undefined} title={architectureEntryLabel(entry)} onClick={event => {
-                        const details = event.currentTarget.closest('details');
-                        if (details) details.open = false;
+                    <button type="button" disabled={current} aria-current={current ? 'true' : undefined} title={architectureEntryLabel(entry)} onClick={() => {
+                        menu.close();
                         onJump(entry);
                     }}><strong>{architectureEntryName(entry)}</strong>{detail && <span>{detail}</span>}</button>
                 </li>;
@@ -164,7 +169,7 @@ function ArchitectureWorkspace({ projectName, overview, loading = false, error, 
      * route perspective and filter, System structure focus and groups, Behavior
      * start, destination and position, and Plan or 3D of each scene. The views
      * below read their part of it and report changes back, so Back and Forward
-     * restore every part at once; the one Back for all of them sits beside the
+     * restore every part at once; the one Back for all of them sits before the
      * subtabs. A filter is a search for this visit: one saved by an earlier
      * session would silently hide routes, so only the subtab is read back.
      */
@@ -172,6 +177,9 @@ function ArchitectureWorkspace({ projectName, overview, loading = false, error, 
         active, escapeTaken, onRestore: (from, to) => { if (from.view !== to.view) onSelectionEvidence?.(undefined); },
     });
     const { place, navigate } = navigation;
+    // The row measures itself as Galaxy's toolbar does (toolbar-fit.tsx): it counts as narrow once the tabs would scroll.
+    const tabRow = useRef<HTMLDivElement>(null);
+    useToolbarFit(tabRow, true);
     useEffect(() => { saveArchitectureConfig(storage, projectName, { view: place.view, filter: place.filter }); }, [place.view, place.filter, projectName, storage]);
     const setView = useCallback((view: ArchitectureView) => navigate(current => ({ ...current, view: view === 'dependencies' ? 'overview' : view })), [navigate]);
     const changeSpatial = useCallback<PlaceChange<SpatialPlace>>((change, automatic) =>
@@ -198,11 +206,11 @@ function ArchitectureWorkspace({ projectName, overview, loading = false, error, 
     } : undefined;
     // Every scene below draws with the same palette; the DOM reads it as CSS variables.
     return <section className="atlas-architecture" data-testid="atlas-architecture" data-system-view={systemView} aria-label={text.title} aria-busy={!systemView && loading} style={paletteStyle}>
-        <div className="atlas-arch-tabrow">
-            <nav className="atlas-arch-tabs" aria-label={text.navigation}>{ARCHITECTURE_VIEWS.map(view =>
+        <div className="atlas-arch-tabrow" ref={tabRow}>
+            <HistoryControls history={navigation.history} place={place} onGo={navigation.go} onJump={navigation.jump} />
+            <nav className="atlas-arch-tabs" aria-label={text.navigation} data-fit-whole="">{ARCHITECTURE_VIEWS.map(view =>
                 <button className="atlas-arch-tab" key={view} aria-pressed={place.view === view || (view === 'overview' && ['dependencies', 'entryPoints'].includes(place.view))} data-view={view}
                     onClick={() => { if (view !== place.view) onSelectionEvidence?.(undefined); setView(view); }}>{text.views[view]}</button>)}</nav>
-            <HistoryControls history={navigation.history} place={place} onGo={navigation.go} onJump={navigation.jump} />
         </div>
         {systemView && projectName ? <Suspense fallback={<div role="status"><Empty>Preparing system analysis…</Empty></div>}><SystemArchitecture
             project={projectName} generation={graphGeneration} view={systemView} filter={filter} active={active}

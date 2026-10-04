@@ -114,6 +114,9 @@ export const architectureHistoryText = {
     forward: 'Forward',
     backGlyph: '←',
     forwardGlyph: '→',
+    /** The words while the subtab row has room, as in Galaxy; the glyphs alone once the tabs would scroll. */
+    backWide: '← Back',
+    forwardWide: 'Forward →',
     backTo: (label: string) => `Back to ${label} (Alt+Left)`,
     forwardTo: (label: string) => `Forward to ${label} (Alt+Right)`,
     noBack: 'Nothing to go back to yet',

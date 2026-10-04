@@ -100,8 +100,11 @@ async function state(page) {
             behaviorCamera: text(root.querySelector('[aria-label="Behavior camera"] button[aria-pressed="true"]')),
             chain: text(root.querySelector('[aria-label="Walk the call chain"] span')),
             path: paths.length ? paths.findIndex((element) => element.getAttribute('aria-pressed') === 'true') + 1 : null,
-            /* Das "← Back", das System structure und Behavior frueher in der eigenen Leiste hatten. */
-            inViewBack: [...root.querySelectorAll('button')].filter((element) => element.textContent?.trim() === '← Back').length,
+            /*
+             * Das "← Back", das System structure und Behavior frueher in der eigenen Leiste hatten. Das gemeinsame
+             * Zurueck traegt seit dem Handtest vom 2026-10-04 (A1) dieselben Worte wie in Galaxy und zaehlt nicht mit.
+             */
+            inViewBack: [...root.querySelectorAll('button')].filter((element) => element.textContent?.trim() === '← Back' && !history?.contains(element)).length,
             back: button('Back'), forward: button('Forward'),
             position: history?.getAttribute('data-position') ?? null,
             recent: [...(history?.querySelectorAll('[aria-label="Recently visited places"] li button') ?? [])].map((element) => ({
