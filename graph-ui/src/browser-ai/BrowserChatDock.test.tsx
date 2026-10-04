@@ -147,7 +147,7 @@ describe('persistent local browser chat', () => {
         original.text = 'Different code';
         await render(props); await type('Why?'); await click('Send ↑');
         const second = runtime.chat.mock.calls[1][0];
-        expect(second.at(-1)?.content).toBe('Why?');
+        expect(second.at(-1)?.content).toBe('Answer in English.\n\nWhy?');
         expect(second[1].content).toContain(selection.text);
         expect(props.onAttachmentConsumed).toHaveBeenCalledOnce();
         expect(container.querySelector('.cbm-chat-answer .cbm-chat-source-content pre')?.textContent).toBe(selection.text);
@@ -293,7 +293,7 @@ describe('persistent local browser chat', () => {
         expect(container.querySelector('[aria-label="Remove graph selection"]')).toBeNull();
         await click('Retry'); expect(runtime.chat.mock.calls[1][0]).toEqual(runtime.chat.mock.calls[0][0]);
         await render({ ...props, ...callbacks, pendingContext }); await type('Follow up'); await click('Send ↑');
-        expect(runtime.chat.mock.calls[2][0].at(-1)!.content).toBe('Follow up'); expect(callbacks.onContextConsumed).toHaveBeenCalledOnce();
+        expect(runtime.chat.mock.calls[2][0].at(-1)!.content).toBe('Answer in English.\n\nFollow up'); expect(callbacks.onContextConsumed).toHaveBeenCalledOnce();
     });
 
     it('keeps a controlled graph selection pending on overflow or tokenizer failure', async () => {
@@ -372,8 +372,8 @@ describe('persistent local browser chat', () => {
         expect(requests[2].map(message => message.content).join('\n')).not.toContain('WHOLE_FIRST_FILE');
         expect(requests[2].map(message => message.content).join('\n')).not.toContain(selection.text);
         // The marked code is in the same file and keeps the conversation; another file starts a new topic (K17).
-        expect(requests[1].filter(message => message.role === 'user').map(message => message.content)).toEqual(['Explain the file', 'Explain the marked code']);
-        expect(requests[2].filter(message => message.role === 'user').map(message => message.content)).toEqual(['Explain this other file']);
+        expect(requests[1].filter(message => message.role === 'user').map(message => message.content)).toEqual(['Explain the file', 'Answer in English.\n\nExplain the marked code']);
+        expect(requests[2].filter(message => message.role === 'user').map(message => message.content)).toEqual(['Answer in English.\n\nExplain this other file']);
         expect(props.onAttachmentConsumed).not.toHaveBeenCalled();
         expect(container.querySelectorAll('.cbm-chat-answer .cbm-chat-attachment')).toHaveLength(3);
         await render(props); await type('Ask from another workspace'); await click('Send ↑');
@@ -548,7 +548,7 @@ describe('proactive selection explanations', () => {
         const question = runtime.chat.mock.calls[1][0];
         expect(question[0].content).toContain('ORIGINAL_SOURCE');
         expect(question[0].content).not.toMatch(/MUTATED_ORIGINAL|INTERMEDIATE_SOURCE|LATEST_SOURCE/);
-        expect(question.at(-1)?.content).toBe('Explain this exact code');
+        expect(question.at(-1)?.content).toBe('Answer in English.\n\nExplain this exact code');
         expect(container.querySelector('textarea')?.value).toBe('Next draft');
         expect(container.textContent).not.toContain('STALE_AUTOMATIC_ANSWER');
         await settleSelection(); expect(runtime.chat).toHaveBeenCalledTimes(2);
@@ -572,7 +572,7 @@ describe('proactive selection explanations', () => {
         await act(async () => counting.resolve(100));
         expect(runtime.countTokens).toHaveBeenCalledTimes(2);
         expect(runtime.chat).toHaveBeenCalledOnce();
-        expect(runtime.chat.mock.calls[0][0].at(-1)?.content).toBe('Question');
+        expect(runtime.chat.mock.calls[0][0].at(-1)?.content).toBe('Answer in English.\n\nQuestion');
     });
 
     it('cancels a queued question on Stop without silently sending or restarting it', async () => {
@@ -606,7 +606,7 @@ describe('proactive selection explanations', () => {
         expect(container.querySelector('.cbm-chat-turn')).toBeNull();
         await click('Load model (cached, no download)'); await click('Send ↑');
         expect(runtime.chat).toHaveBeenCalledTimes(2);
-        expect(runtime.chat.mock.calls[1][0].at(-1)?.content).toBe('Do not send after unload');
+        expect(runtime.chat.mock.calls[1][0].at(-1)?.content).toBe('Answer in English.\n\nDo not send after unload');
     });
 
     it('drains old project work and retains the model without sending its queued question into the new project', async () => {
@@ -974,6 +974,18 @@ describe('graph answers and answer limits', () => {
         expect(runtime.chat.mock.calls[0][0].some(message => /Wähle einen Knoten|Select a node in Galaxy/.test(message.content))).toBe(false);
     });
 
+    it('asks the model to answer in the language of the question (C4)', async () => {
+        const { props, runtime } = fixture();
+        await render({ ...props, proactiveSelection: jsonbAggEvidence() }); await click('Download & load');
+        await type('Erklär diese Klasse ausführlich, Zeile für Zeile'); await click('Send ↑');
+        expect(runtime.chat.mock.calls[0][0].at(-1)!.content).toContain('Answer in German.\nUser question:\nErklär diese Klasse ausführlich, Zeile für Zeile');
+        await type('Explain this class in detail, line by line.'); await click('Send ↑');
+        expect(runtime.chat.mock.calls[1][0].at(-1)!.content).toContain('Answer in English.\nUser question:\nExplain this class in detail, line by line.');
+        await render({ ...props, readerContext: reader('name: New contributor message', 'file', '.github/workflows/new_contributor_pr.yml') });
+        await type('Wie viele Jobs gibt es?'); await click('Send ↑');
+        expect(runtime.chat.mock.calls[2][0].at(-1)!.content).toBe('Answer in German.\n\nWie viele Jobs gibt es?');
+    });
+
     it('does not resend earlier answers about another file or selection and marks the new topic (K17)', async () => {
         const { props, runtime } = fixture();
         runtime.chat.mockResolvedValueOnce('This runs the flake8 linter on Python files.');
@@ -1173,7 +1185,7 @@ describe('graph answers and answer limits', () => {
         await type('Fourth question'); await click('Send ↑');
         const request = runtime.chat.mock.calls.at(-1)![0];
         expect(request.length).toBeLessThanOrEqual(4);
-        expect(request.at(-1)!.content).toBe('Fourth question');
+        expect(request.at(-1)!.content).toBe('Answer in English.\n\nFourth question');
         expect(request.map(message => message.content).join('\n')).not.toContain('First question');
         expect(container.querySelectorAll('.cbm-chat-answer-note')[0]?.textContent).toMatch(/earlier messages were left out to fit the input limit/);
     });

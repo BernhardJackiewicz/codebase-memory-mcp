@@ -15,7 +15,7 @@ import { isGpuRuntimeFailure, BrowserRuntimeFatalError } from './runtime-fault';
 import ChatMarkdown from './ChatMarkdown';
 import AgentSettingsDialog from './AgentSettingsDialog';
 import { useChatHistory } from './use-chat-history';
-import { chatTopic, followedTopic, missingContextAnswer, topicHistory } from './chat-context';
+import { chatTopic, followedTopic, missingContextAnswer, questionLanguage, topicHistory } from './chat-context';
 import { isDataFile, readerFacts } from './file-facts';
 import './browser-chat.css';
 
@@ -632,7 +632,7 @@ export default function BrowserChatDock({ proactiveSelection, selectionScope = "
         // last change of topic: an earlier wrong answer must not become evidence for this one (K17).
         const earlier = topicHistory(ask ? turns.filter(item => item.id !== retry.id) : turns, topic);
         let history: ChatTurn[] = earlier;
-        const makeRequest = () => buildChatMessages(history, prompt, source, extra, reader, currentGraph, packet ? formatExplanationEvidence(packet) : undefined);
+        const makeRequest = () => buildChatMessages(history, prompt, source, extra, reader, currentGraph, packet ? formatExplanationEvidence(packet) : undefined, questionLanguage(prompt));
         const queued = { cancelled: false }; manualRequest.current = queued;
         const waitingEpoch = epoch.current;
         // The selected symbol's source grounds a question as it grounds the explanation (K14).
