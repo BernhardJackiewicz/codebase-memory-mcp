@@ -2113,7 +2113,9 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     const expandPast = expandOutlook && expandPastLimit(expandOutlook);
     const expandWarning = Boolean(expandPast);
     const expandBlocked = Boolean(scope.loading || scope.result?.exhausted || scope.result?.partial);
-    const expandTitle = partial ? galaxyLayerText.expandPartial : scope.result?.exhausted ? galaxyLayerText.expandEnd
+    // Review zu K31: gesperrt heisst immer mit Grund, auch waehrend eine Ebene laedt.
+    const expandTitle = scope.loading ? galaxyLayerText.expandLoading(scope.depth)
+        : partial ? galaxyLayerText.expandPartial : scope.result?.exhausted ? galaxyLayerText.expandEnd
         : expandOutlook ? galaxyLayerText.expandHint(expandOutlook, expandPast) : undefined;
 
     /*
