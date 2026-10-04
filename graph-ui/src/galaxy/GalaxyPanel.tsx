@@ -1213,9 +1213,12 @@ export default function GalaxyPanel(props: GalaxyPanelProps): JSX.Element {
     const agentEvidence = useMemo(() => scope.scope ? galaxyScopeEvidence({ project, identity: scope.scope,
         nodes: scope.result?.data.nodes ?? [], edges: scope.result?.data.edges ?? [], roots: scope.result?.roots ?? new Set<number>(),
         depth: scope.depth, direction: props.workspaceExpanded ? scope.direction : 'both', edgeTypes: traceTypes ?? 'all',
-        state: scope.complete ? 'complete-indexed-scope' : scope.loading ? 'loading-partial-preview' : 'partial',
-        error: scope.error, exhausted: scope.result?.exhausted }) : undefined,
-    [project, scope.scope, scope.result, scope.depth, scope.direction, scope.complete, scope.loading, scope.error, traceTypes, props.workspaceExpanded]);
+        // A layer that stopped at the render limit is loaded, not complete: the chat says so (C1).
+        state: scope.complete ? scope.result?.partial ? 'render-limit-partial' : 'complete-indexed-scope' : scope.loading ? 'loading-partial-preview' : 'partial',
+        error: scope.error, exhausted: scope.result?.exhausted,
+        ...scope.complete && scope.result?.partial ? { renderLimit: { layer: scope.result.partial.layer, kind: scope.result.partial.limit,
+            limit: scope.result.partial.limit === 'nodes' ? nodeBudget : edgeBudget } } : {} }) : undefined,
+    [project, scope.scope, scope.result, scope.depth, scope.direction, scope.complete, scope.loading, scope.error, traceTypes, props.workspaceExpanded, nodeBudget, edgeBudget]);
     useSelectionEvidence(props.onSelectionEvidence, agentEvidence, visible && props.workspaceExpanded === true);
     const toggleKind = useCallback((type: string) => {
         if (props.workspaceExpanded && scope.scope) {

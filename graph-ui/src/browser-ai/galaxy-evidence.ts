@@ -16,7 +16,10 @@ export interface GalaxyEvidence {
     edgeTypes: 'all' | string[];
     nodes: number;
     edges: number;
-    state: 'complete' | 'loading' | 'partial';
+    /** `limited`: loaded, but a layer stopped at the render limit (C1). */
+    state: 'complete' | 'loading' | 'partial' | 'limited';
+    /** Where a `limited` scope stopped. */
+    renderLimit?: { layer: number; kind: 'nodes' | 'edges'; limit: number };
     error?: string;
     exhausted: boolean;
     /** Distinct related symbols per side; undefined when the snapshot lost the total. */
@@ -65,7 +68,11 @@ export function readGalaxyEvidence(snapshot: string): GalaxyEvidence | undefined
     const total = (value: unknown) => typeof value === 'number' ? count(value) : undefined;
     const direction = scope.direction === 'inbound' || scope.direction === 'outbound' ? scope.direction : 'both';
     const edgeTypes = Array.isArray(scope.edgeTypes) ? scope.edgeTypes.flatMap(type => text(type, 60) ?? []) : 'all';
-    const state = limits?.state === 'complete-indexed-scope' ? 'complete' : limits?.state === 'loading-partial-preview' ? 'loading' : 'partial';
+    const stopped = record(limits?.renderLimit);
+    const renderLimit = stopped && line(stopped.layer) && line(stopped.limit) && (stopped.kind === 'nodes' || stopped.kind === 'edges')
+        ? { layer: stopped.layer as number, kind: stopped.kind as 'nodes' | 'edges', limit: stopped.limit as number } : undefined;
+    const state = limits?.state === 'complete-indexed-scope' ? 'complete' : limits?.state === 'loading-partial-preview' ? 'loading'
+        : limits?.state === 'render-limit-partial' && renderLimit ? 'limited' : 'partial';
     const roots = records(selected?.roots).flatMap(root => {
         const name = text(root.name, 120);
         return name ? [{ name, kind: text(root.kind, 40), qualifiedName: text(root.qualifiedName, 400), filePath: text(root.filePath, 240), startLine: line(root.startLine),
@@ -76,7 +83,7 @@ export function readGalaxyEvidence(snapshot: string): GalaxyEvidence | undefined
         identity, selectionKind: text(identity.kind, 20) ?? 'node',
         roots, rootCount: Math.max(count(selected?.rootCount), roots.length),
         depth: count(scope.depth), direction, edgeTypes, nodes: count(scope.nodes), edges: count(scope.edges),
-        state, error: text(limits?.error, 200), exhausted: limits?.exhausted === true,
+        state, ...state === 'limited' ? { renderLimit } : {}, error: text(limits?.error, 200), exhausted: limits?.exhausted === true,
         relationships: { incoming: groups(relationships?.incoming), incomingSymbols: total(relationships?.incomingSymbols),
             outgoing: groups(relationships?.outgoing), outgoingSymbols: total(relationships?.outgoingSymbols),
             internal: totals(relationships?.internal), beyond: totals(relationships?.beyond) },
@@ -96,11 +103,12 @@ export function fairShares(natural: readonly number[], budget: number): number[]
     return shares;
 }
 
-/** One edge type: complete count, then names until the budget, then an explicit "+N more". */
+/** One edge type: complete count, then names until the budget, then an explicit "+N more".
+ * A listed answer heads it "**TESTS (11):**", the prompt "TESTS from 11:" (C2). */
 export function relationshipLine(group: RelationshipGroup, side: 'incoming' | 'outgoing', budget: number,
     words: RelationshipWords, markdown = false): { text: string; listed: number } {
     const quote = (value: string) => markdown ? `\`${value.replace(/`/g, "'")}\`` : value;
-    const head = `- ${markdown ? `**${group.type}**` : group.type} ${side === 'incoming' ? words.from : words.to} ${group.count}: `;
+    const head = markdown ? `- **${words.typeCount(group.type, group.count)}:** ` : `- ${group.type} ${side === 'incoming' ? words.from : words.to} ${group.count}: `;
     let body = '', listed = 0;
     const more = (shown: number) => group.count > shown ? `${body ? '; ' : ''}${words.more(group.count - shown)}` : '';
     if (head.length + more(0).length > budget) return { text: '', listed: 0 };
@@ -128,7 +136,9 @@ export function relationshipLine(group: RelationshipGroup, side: 'incoming' | 'o
 export function scopeSentence(evidence: GalaxyEvidence, words: RelationshipWords): string {
     const direction = evidence.direction === 'inbound' ? words.inbound : evidence.direction === 'outbound' ? words.outbound : words.both;
     const types = evidence.edgeTypes === 'all' ? words.allTypes : words.onlyTypes(evidence.edgeTypes);
-    const state = evidence.state === 'complete' ? words.complete : evidence.state === 'loading' ? words.loading : words.partial(evidence.error);
+    const state = evidence.state === 'complete' ? words.complete : evidence.state === 'loading' ? words.loading
+        : evidence.state === 'limited' && evidence.renderLimit ? words.renderLimited(evidence.renderLimit.layer, evidence.renderLimit.limit, evidence.renderLimit.kind)
+            : words.partial(evidence.error);
     const notes = [state, ...evidence.state === 'complete' && evidence.exhausted ? [words.exhausted] : [], ...evidence.truncated ? [words.truncated] : []];
     return words.scope(`${words.hops(evidence.depth)} ${direction}, ${types}`, words.size(evidence.nodes, evidence.edges), notes.join('; '));
 }
@@ -138,16 +148,16 @@ export function sideLoaded(evidence: GalaxyEvidence, side: 'incoming' | 'outgoin
     return evidence.depth > 0 && evidence.direction !== (side === 'incoming' ? 'outbound' : 'inbound');
 }
 
-export function selectionSentence(evidence: GalaxyEvidence): string[] {
+/** What is selected, in the words of the prompt (English) or of a question (C5). */
+export function selectionSentence(evidence: GalaxyEvidence, words: RelationshipWords): string[] {
     const [first] = evidence.roots;
     const range = (root: GalaxyEvidence['roots'][number]) => root.filePath
         ? ` in ${root.filePath}${root.startLine ? `:${root.startLine}${root.endLine && root.endLine !== root.startLine ? `-${root.endLine}` : ''}` : ''}` : '';
     if (evidence.rootCount <= 1 && first) {
-        return [`Selected: ${first.name}${first.kind ? ` (${first.kind})` : ''}${range(first)}.`,
-            ...first.documentation ? [`Documentation: ${first.documentation}`] : []];
+        return [words.selected(`${first.name}${first.kind ? ` (${first.kind})` : ''}${range(first)}`),
+            ...first.documentation ? [words.documentation(first.documentation)] : []];
     }
-    if (!first) return [`Selected: ${evidence.label} (${evidence.selectionKind}); its symbols are not in the loaded scope yet.`];
+    if (!first) return [words.notInScope(evidence.label, evidence.selectionKind)];
     const listed = evidence.roots.map(root => `${root.name}${root.kind ? ` (${root.kind})` : ''}`).join(', ');
-    const omitted = evidence.rootCount - evidence.roots.length;
-    return [`Selected ${evidence.selectionKind}: ${evidence.label} with ${evidence.rootCount} symbols: ${listed}${omitted > 0 ? `; +${omitted} more` : ''}.`];
+    return [words.selectedGroup(evidence.selectionKind, evidence.label, evidence.rootCount, listed, evidence.rootCount - evidence.roots.length)];
 }

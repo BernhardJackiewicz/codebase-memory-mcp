@@ -42,7 +42,7 @@ export function topicHistory<T extends BrowserChatTurn>(turns: readonly T[], top
 export function followedTopic(turns: readonly BrowserChatTurn[], scope: string): ChatTopic | undefined {
     for (let index = turns.length - 1; index >= 0; index--) {
         const topic = turns[index].topic;
-        if (!topic || turns[index].answeredFrom === 'local') continue;
+        if (!topic || turns[index].answeredFrom === 'local' || turns[index].answeredFrom === 'hint') continue;
         // Stored history is data: a damaged key ends the follow-up instead of the send.
         let turnScope: unknown;
         try { [turnScope] = JSON.parse(topic.key) as unknown[]; } catch { return undefined; }
@@ -52,8 +52,9 @@ export function followedTopic(turns: readonly BrowserChatTurn[], scope: string):
 }
 
 /** German when the question reads German; the chat's own replies follow the question.
- * "was" and "die" are English words too and decide nothing on their own. */
-const GERMAN = /[äöüß]|\b(?:ich|du|der|das|und|ist|nicht|wie|wer|wo|warum|kannst|über|mir|mich|diese[rsnm]?|datei|sagen|erkl\w*|zeig\w*|welche\w*|gibt|wird|macht)\b/i;
+ * "was" and "die" are English words too and decide nothing on their own. Short questions
+ * with typos ("was mcht die klasse") and greetings ("hallo") read German too (C4). */
+const GERMAN = /[äöüß]|\b(?:ich|du|der|das|und|ist|nicht|wie|wer|wo|warum|wieso|weshalb|kannst|kann|mir|mich|diese[rsnm]?|dise[rsnm]?|datei|sagen|erkl\w*|zeig\w*|welche\w*|gibt|wird|macht|mach|mcht|tut|klasse|klase|funktion|methode|modul|hallo|moin|servus|danke|bitte|kurz\w*|antwort\w*|sehr|ein|eine[rsnm]?|sind|noch|auch|hier|zeile\w*|genau|beschreib\w*|detailliert\w*|ausf\w*)\b/i;
 export function questionLanguage(prompt: string): 'en' | 'de' {
     return GERMAN.test(prompt) ? 'de' : 'en';
 }

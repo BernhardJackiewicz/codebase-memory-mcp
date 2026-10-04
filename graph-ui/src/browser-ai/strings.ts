@@ -32,36 +32,54 @@ export const browserAiText = {
 };
 
 /** Words for graph facts in the prompt (always English) and for the listed
- * relationship answer, which follows the language of the question. */
+ * relationship answer, which follows the language of the question. Numbers are
+ * written as the language writes them: 5,548 and 5.548 (C1). */
+const en = (value: number) => value.toLocaleString('en-US');
+const de = (value: number) => value.toLocaleString('de-DE');
 const englishRelationshipWords = {
     from: 'from', to: 'to',
-    more: (count: number) => `+${count} more`,
+    more: (count: number) => `+${en(count)} more`,
     hops: (depth: number) => depth === 0 ? 'the selection only' : depth === 1 ? '1 hop' : `${depth} hops`,
     both: 'in both directions', inbound: 'incoming only', outbound: 'outgoing only',
     allTypes: 'all relationship types',
     onlyTypes: (types: readonly string[]) => types.length ? `only ${types.join(', ')}` : 'no relationship types',
-    size: (nodes: number, edges: number) => `${nodes} ${nodes === 1 ? 'symbol' : 'symbols'} and ${edges} ${edges === 1 ? 'relationship' : 'relationships'}`,
+    size: (nodes: number, edges: number) => `${en(nodes)} ${nodes === 1 ? 'symbol' : 'symbols'} and ${en(edges)} ${edges === 1 ? 'relationship' : 'relationships'}`,
     complete: 'complete for the indexed graph',
     loading: 'still loading, so this is a partial preview',
     partial: (error?: string) => `incomplete${error ? `: ${error}` : ''}`,
+    /** A layer stopped at the render limit: the layers inside it are whole, it and those further out are not (C1). */
+    renderLimited: (layer: number, limit: number, kind: 'nodes' | 'edges') => `partial: layer ${layer} stopped at the render limit of ${en(limit)} ${kind}, `
+        + (layer > 1 ? 'so counts and names further out can be incomplete' : 'so counts and names can be incomplete, the direct relationships included'),
     exhausted: 'nothing further beyond this depth',
     scope: (shape: string, size: string, state: string) => `Scope: ${shape}; ${size}; ${state}.`,
-    incoming: (total: number, symbols?: number) => `Incoming relationships: ${total}${symbols === undefined ? '' : ` from ${symbols} ${symbols === 1 ? 'symbol' : 'symbols'}`}.`,
-    outgoing: (total: number, symbols?: number) => `Outgoing relationships: ${total}${symbols === undefined ? '' : ` to ${symbols} ${symbols === 1 ? 'symbol' : 'symbols'}`}.`,
+    incoming: (total: number, symbols?: number) => `Incoming relationships: ${en(total)}${symbols === undefined ? '' : ` from ${en(symbols)} ${symbols === 1 ? 'symbol' : 'symbols'}`}.`,
+    outgoing: (total: number, symbols?: number) => `Outgoing relationships: ${en(total)}${symbols === undefined ? '' : ` to ${en(symbols)} ${symbols === 1 ? 'symbol' : 'symbols'}`}.`,
     noIncoming: 'Incoming relationships: none in this scope.',
     noOutgoing: 'Outgoing relationships: none in this scope.',
     incomingNotLoaded: 'Incoming relationships: not loaded; the scope does not follow incoming edges.',
     outgoingNotLoaded: 'Outgoing relationships: not loaded; the scope does not follow outgoing edges.',
     cut: (side: 'incoming' | 'outgoing') => `${side === 'incoming' ? 'Incoming' : 'Outgoing'} relationships: left out of this snapshot.`,
     truncated: 'the snapshot left part of its relationships out, so counts and names can be incomplete',
-    moreTypes: (count: number) => `+${count} more relationship ${count === 1 ? 'type' : 'types'}`,
+    moreTypes: (count: number) => `+${en(count)} more relationship ${count === 1 ? 'type' : 'types'}`,
     internal: (summary: string) => `Between the selected symbols: ${summary}.`,
     beyond: (summary: string) => `Further out in the scope: ${summary}.`,
+    selected: (what: string) => `Selected: ${what}.`,
+    documentation: (text: string) => `Documentation: ${text}`,
+    notInScope: (label: string, kind: string) => `Selected: ${label} (${kind}); its symbols are not in the loaded scope yet.`,
+    selectedGroup: (kind: string, label: string, count: number, listed: string, omitted: number) =>
+        `Selected ${kind}: ${label} with ${en(count)} symbols: ${listed}${omitted > 0 ? `; +${en(omitted)} more` : ''}.`,
     callersOf: (name: string) => `Callers of ${name} in the loaded graph`,
-    calleesOf: (name: string) => `Called by ${name} in the loaded graph`,
+    calleesOf: (name: string) => `What ${name} calls in the loaded graph`,
+    /** The total of a listed answer: "23 incoming relationships from 12 symbols", never "23 from 12" (C2). */
+    total: (side: 'incoming' | 'outgoing', total: number, symbols?: number) => `${en(total)} ${side} ${total === 1 ? 'relationship' : 'relationships'}`
+        + `${symbols === undefined ? '' : ` ${side === 'incoming' ? 'from' : 'to'} ${en(symbols)} ${symbols === 1 ? 'symbol' : 'symbols'}`}.`,
+    /** One edge type of a listed answer with the number of its symbols: "TESTS (11)". */
+    typeCount: (type: string, count: number) => `${type} (${en(count)})`,
+    /** What an incoming DEFINES edge from a file, module or class says about the selection. */
+    definer: (kind: string, count: number, name: string) => count === 1 ? `the ${kind.toLowerCase()} that defines ${name}` : `the ${kind.toLowerCase()}s that define ${name}`,
     noCalls: (name: string, side: 'incoming' | 'outgoing') => side === 'incoming'
         ? `No CALLS edge reaches ${name} in this scope.` : `${name} has no outgoing CALLS edge in this scope.`,
-    otherRelationships: 'Other relationships in the same direction:',
+    otherRelationships: (side: 'incoming' | 'outgoing') => `Other ${side} relationships:`,
     noRelationships: 'None in this scope.',
     notLoaded: (side: 'incoming' | 'outgoing'): string => side === 'incoming'
         ? 'The current scope does not follow incoming relationships. Trace incoming or both directions, then ask again.'
@@ -83,33 +101,48 @@ export const relationshipWords: { en: RelationshipWords; de: RelationshipWords }
     en: englishRelationshipWords,
     de: {
         from: 'von', to: 'zu',
-        more: (count: number) => `+${count} weitere`,
+        more: (count: number) => `+${de(count)} weitere`,
         hops: (depth: number) => depth === 0 ? 'nur die Auswahl' : depth === 1 ? '1 Schritt' : `${depth} Schritte`,
         both: 'in beide Richtungen', inbound: 'nur eingehend', outbound: 'nur ausgehend',
         allTypes: 'alle Beziehungstypen',
         onlyTypes: (types: readonly string[]) => types.length ? `nur ${types.join(', ')}` : 'keine Beziehungstypen',
-        size: (nodes: number, edges: number) => `${nodes} ${nodes === 1 ? 'Symbol' : 'Symbole'} und ${edges} ${edges === 1 ? 'Beziehung' : 'Beziehungen'}`,
+        size: (nodes: number, edges: number) => `${de(nodes)} ${nodes === 1 ? 'Symbol' : 'Symbole'} und ${de(edges)} ${edges === 1 ? 'Beziehung' : 'Beziehungen'}`,
         complete: 'vollständig für den indizierten Graphen',
         loading: 'lädt noch, das ist eine Vorschau',
         partial: (error?: string) => `unvollständig${error ? `: ${error}` : ''}`,
+        renderLimited: (layer: number, limit: number, kind: 'nodes' | 'edges') => `unvollständig: Ebene ${layer} hielt am Darstellungslimit von ${de(limit)} ${kind === 'nodes' ? 'Knoten' : 'Kanten'} an, `
+            + (layer > 1 ? 'Anzahlen und Namen weiter außen können daher fehlen' : 'Anzahlen und Namen können daher fehlen, auch bei den direkten Beziehungen'),
         exhausted: 'dahinter folgt nichts mehr',
         scope: (shape: string, size: string, state: string) => `Ausschnitt: ${shape}; ${size}; ${state}.`,
-        incoming: (total: number, symbols?: number) => `Eingehende Beziehungen: ${total}${symbols === undefined ? '' : ` von ${symbols} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
-        outgoing: (total: number, symbols?: number) => `Ausgehende Beziehungen: ${total}${symbols === undefined ? '' : ` zu ${symbols} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
+        incoming: (total: number, symbols?: number) => `Eingehende Beziehungen: ${de(total)}${symbols === undefined ? '' : ` aus ${de(symbols)} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
+        outgoing: (total: number, symbols?: number) => `Ausgehende Beziehungen: ${de(total)}${symbols === undefined ? '' : ` zu ${de(symbols)} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
         noIncoming: 'Eingehende Beziehungen: keine in diesem Ausschnitt.',
         noOutgoing: 'Ausgehende Beziehungen: keine in diesem Ausschnitt.',
         incomingNotLoaded: 'Eingehende Beziehungen: nicht geladen; der Ausschnitt folgt keinen eingehenden Kanten.',
         outgoingNotLoaded: 'Ausgehende Beziehungen: nicht geladen; der Ausschnitt folgt keinen ausgehenden Kanten.',
         cut: (side: 'incoming' | 'outgoing') => `${side === 'incoming' ? 'Eingehende' : 'Ausgehende'} Beziehungen: in diesem Schnappschuss ausgelassen.`,
         truncated: 'der Schnappschuss hat einen Teil der Beziehungen ausgelassen, Anzahlen und Namen können unvollständig sein',
-        moreTypes: (count: number) => `+${count} weitere ${count === 1 ? 'Beziehungstyp' : 'Beziehungstypen'}`,
+        moreTypes: (count: number) => `+${de(count)} weitere ${count === 1 ? 'Beziehungstyp' : 'Beziehungstypen'}`,
         internal: (summary: string) => `Zwischen den ausgewählten Symbolen: ${summary}.`,
         beyond: (summary: string) => `Weiter außen im Ausschnitt: ${summary}.`,
+        selected: (what: string) => `Ausgewählt: ${what}.`,
+        documentation: (text: string) => `Dokumentation: ${text}`,
+        notInScope: (label: string, kind: string) => `Ausgewählt: ${label} (${kind}); seine Symbole sind noch nicht im geladenen Ausschnitt.`,
+        selectedGroup: (kind: string, label: string, count: number, listed: string, omitted: number) =>
+            `Ausgewählt (${kind}): ${label} mit ${de(count)} Symbolen: ${listed}${omitted > 0 ? `; +${de(omitted)} weitere` : ''}.`,
         callersOf: (name: string) => `Aufrufer von ${name} im geladenen Graphen`,
-        calleesOf: (name: string) => `Von ${name} aufgerufen, im geladenen Graphen`,
+        calleesOf: (name: string) => `Was ${name} im geladenen Graphen aufruft`,
+        total: (side: 'incoming' | 'outgoing', total: number, symbols?: number) => `${de(total)} ${side === 'incoming' ? 'eingehende' : 'ausgehende'} ${total === 1 ? 'Beziehung' : 'Beziehungen'}`
+            + `${symbols === undefined ? '' : ` ${side === 'incoming' ? 'aus' : 'zu'} ${de(symbols)} ${symbols === 1 ? 'Symbol' : 'Symbolen'}`}.`,
+        typeCount: (type: string, count: number) => `${type} (${de(count)})`,
+        definer: (kind: string, count: number, name: string) => {
+            const noun = ({ file: ['die Datei', 'die Dateien'], module: ['das Modul', 'die Module'], class: ['die Klasse', 'die Klassen'] } as Record<string, string[]>)[kind.toLowerCase()]
+                ?? [`${kind}`, `${kind}`];
+            return count === 1 ? `${noun[0]}, ${noun[0].startsWith('das') ? 'das' : 'die'} ${name} definiert` : `${noun[1]}, die ${name} definieren`;
+        },
         noCalls: (name: string, side: 'incoming' | 'outgoing') => side === 'incoming'
             ? `Keine CALLS-Kante führt in diesem Ausschnitt zu ${name}.` : `${name} hat in diesem Ausschnitt keine ausgehende CALLS-Kante.`,
-        otherRelationships: 'Weitere Beziehungen in derselben Richtung:',
+        otherRelationships: (side: 'incoming' | 'outgoing') => `Weitere ${side === 'incoming' ? 'eingehende' : 'ausgehende'} Beziehungen:`,
         noRelationships: 'Keine in diesem Ausschnitt.',
         notLoaded: (side: 'incoming' | 'outgoing') => side === 'incoming'
             ? 'Der aktuelle Ausschnitt folgt keinen eingehenden Beziehungen. Verfolge eingehend oder beide Richtungen und frage noch einmal.'
@@ -170,6 +203,42 @@ export const browserChatText = {
     outputLimit: 'Output (answer)',
     limitRange: (min: number, max: number) => `${min.toLocaleString('en-US')} to ${max.toLocaleString('en-US')} tokens`,
     limitsNote: (input: number, output: number) => `Stored in this browser for each model. Automatic explanations use at most ${input.toLocaleString('en-US')} input and ${output.toLocaleString('en-US')} output tokens.`,
+};
+
+/** Who wrote which part of the answer to a general question about a selection, in its language (C5). */
+export const groundedText = {
+    en: { factsAndSentence: browserChatText.factsAndSentence, factsOnly: browserChatText.factsOnly, sentenceDropped: browserChatText.sentenceDropped,
+        writingSentence: browserChatText.writingSentence },
+    de: {
+        factsAndSentence: 'Fakten aus dem indizierten Graphen gelistet; der letzte Satz ist vom Modell erzeugt.',
+        factsOnly: 'Aus dem indizierten Graphen gelistet, nicht vom Modell erzeugt.',
+        sentenceDropped: 'Aus dem indizierten Graphen gelistet. Der Satz des Modells nannte etwas, das die Fakten nicht zeigen, und wurde weggelassen.',
+        writingSentence: 'Der Quelltext wird gelesen; das Modell fügt einen Satz hinzu…',
+    },
+};
+
+/** The reply to a prompt that asks nothing ("test", "hallo"): questions it could ask (C6). */
+export const noQuestionText = {
+    en: {
+        heading: (typed: string) => `No question was recognized in "${typed}". You can ask, for example:`,
+        note: 'Answered without the model.',
+        whatDoes: (name: string) => `What does ${name} do?`,
+        whoCalls: (name: string) => `Who calls ${name}?`,
+        whatCalls: (name: string) => `What does ${name} call?`,
+        inDetail: (name: string) => `Explain ${name} in detail.`,
+        markedDoes: 'What does the marked code do?',
+        markedInDetail: 'Explain the marked code line by line.',
+    },
+    de: {
+        heading: (typed: string) => `In "${typed}" wurde keine Frage erkannt. Frage zum Beispiel:`,
+        note: 'Ohne das Modell beantwortet.',
+        whatDoes: (name: string) => `Was macht ${name}?`,
+        whoCalls: (name: string) => `Wer ruft ${name} auf?`,
+        whatCalls: (name: string) => `Was ruft ${name} auf?`,
+        inDetail: (name: string) => `Erklär ${name} ausführlich.`,
+        markedDoes: 'Was macht der markierte Code?',
+        markedInDetail: 'Erklär den markierten Code Zeile für Zeile.',
+    },
 };
 
 /** The chat's own reply when a question has no code or graph context (K11), in the language of the question. */
@@ -237,6 +306,7 @@ export const architectureWords = {
 };
 
 const counted = (value: number, one: string, many: string) => `${value.toLocaleString('en-US')} ${value === 1 ? one : many}`;
+const gezaehlt = (value: number, one: string, many: string) => `${value.toLocaleString('de-DE')} ${value === 1 ? one : many}`;
 /** A GitHub Actions workflow as facts counted from its keys: for the prompt and the explanation card (K12). */
 export const workflowWords = {
     heading: 'Facts read from the file (counted, not guessed):',
@@ -247,6 +317,45 @@ export const workflowWords = {
     job: (id: string, name: string | undefined, runsOn: string | undefined, steps: number) =>
         `${id} (${[name ? `"${name}"` : '', runsOn ? `runs on ${runsOn}` : '', counted(steps, 'step', 'steps')].filter(Boolean).join(', ')})`,
     uses: (items: readonly string[]) => `Actions used: ${items.join(', ')}.`,
+};
+export type WorkflowWords = typeof workflowWords;
+/** The same facts for an outline asked for in German (C7). */
+export const germanWorkflowWords: WorkflowWords = {
+    heading: 'Aus der Datei gelesene Fakten (gezählt, nicht geraten):',
+    name: (name: string) => `Name des Workflows: ${name}.`,
+    triggers: (items: readonly string[]) => `Auslöser: ${items.join(', ')}.`,
+    trigger: (event: string, types: readonly string[]) => `${event}${types.length ? ` (Typen: ${types.join(', ')})` : ''}`,
+    jobs: (total: number, items: readonly string[]) => `${gezaehlt(total, 'Job', 'Jobs')}: ${items.join('; ')}${total > items.length ? `; +${(total - items.length).toLocaleString('de-DE')} weitere` : ''}.`,
+    job: (id: string, name: string | undefined, runsOn: string | undefined, steps: number) =>
+        `${id} (${[name ? `"${name}"` : '', runsOn ? `läuft auf ${runsOn}` : '', gezaehlt(steps, 'Schritt', 'Schritte')].filter(Boolean).join(', ')})`,
+    uses: (items: readonly string[]) => `Verwendete Actions: ${items.join(', ')}.`,
+};
+
+/** The outline of a configuration file, answered from the file instead of the model (C7). */
+const englishOutlineWords = {
+    heading: (name: string, kind: string, lines: number) => `${name}: ${kind}, ${counted(lines, 'line', 'lines')}. Read from the file:`,
+    kinds: { yaml: 'YAML configuration', json: 'JSON data', toml: 'TOML configuration', workflow: 'GitHub Actions workflow' },
+    list: (total: number) => `list of ${total.toLocaleString('en-US')}`,
+    keys: (total: number) => counted(total, 'key', 'keys'),
+    empty: 'empty',
+    text: 'text block',
+    more: (total: number) => `+${total.toLocaleString('en-US')} more`,
+    cut: 'The rest of the file is left out here.',
+    note: 'Read from the file; not generated by the model.',
+};
+export const fileOutlineWords: { en: typeof englishOutlineWords; de: typeof englishOutlineWords } = {
+    en: englishOutlineWords,
+    de: {
+        heading: (name: string, kind: string, lines: number) => `${name}: ${kind}, ${gezaehlt(lines, 'Zeile', 'Zeilen')}. Aus der Datei gelesen:`,
+        kinds: { yaml: 'YAML-Konfiguration', json: 'JSON-Daten', toml: 'TOML-Konfiguration', workflow: 'GitHub-Actions-Workflow' },
+        list: (total: number) => `Liste mit ${gezaehlt(total, 'Eintrag', 'Einträgen')}`,
+        keys: (total: number) => gezaehlt(total, 'Schlüssel', 'Schlüssel'),
+        empty: 'leer',
+        text: 'Textblock',
+        more: (total: number) => `+${total.toLocaleString('de-DE')} weitere`,
+        cut: 'Der Rest der Datei ist hier ausgelassen.',
+        note: 'Aus der Datei gelesen, nicht vom Modell erzeugt.',
+    },
 };
 
 const listed = (items: readonly string[], total: number) => `${items.join(', ')}${total > items.length ? `, +${(total - items.length).toLocaleString('en-US')} more` : ''}`;

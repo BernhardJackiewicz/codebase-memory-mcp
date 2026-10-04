@@ -1,6 +1,7 @@
 import type { BrowserChatMessage } from './browser-ai-controller';
 import type { PreparedExplanationContext } from './explanation-context';
 import { fileKind } from './file-kind';
+import { ANSWER_LANGUAGE } from './chat-model';
 import { workflowWords } from './strings';
 
 export const AUTO_INPUT_TOKENS = 1536;
@@ -41,28 +42,51 @@ const EXPLANATION_TASK: Record<Exclude<ExplanationMode, 'symbol'>, string> = {
  * beside it the small model described the tests instead and guessed inputs and outputs. */
 const SYMBOL_SYSTEM = 'Answer only from the code you are given. Never state types, parameters, inputs, outputs, return values or purposes that the code does not show.';
 
-export function explanationMessages(packet: PreparedExplanationContext, subject?: { name: string; kind?: string }): BrowserChatMessage[] {
+/** `language` asks for the sentence of a general question in the language of that question (C5). */
+export function explanationMessages(packet: PreparedExplanationContext, subject?: { name: string; kind?: string }, language?: keyof typeof ANSWER_LANGUAGE): BrowserChatMessage[] {
     const mode = explanationMode(packet);
+    const answerIn = language ? ` ${ANSWER_LANGUAGE[language]}` : '';
     if (mode === 'symbol' && subject) {
         const code = packet.evidence.filter(item => item.source === 'code').map(item => item.text).join('\n');
         const kind = subject.kind?.toLowerCase() ?? 'code';
         return [{ role: 'system', content: SYMBOL_SYSTEM },
-            { role: 'user', content: `\`\`\`\n${code}\n\`\`\`\n\nDescribe this ${kind} in one short sentence that starts with \`${subject.name.replace(/`/g, "'")}\`.` }];
+            { role: 'user', content: `\`\`\`\n${code}\n\`\`\`\n\nDescribe this ${kind} in one short sentence that starts with \`${subject.name.replace(/`/g, "'")}\`.${answerIn}` }];
     }
     return [{ role: 'system', content: EXPLANATION_SYSTEM },
-        { role: 'user', content: `${formatExplanationEvidence(packet)}\n\n${EXPLANATION_TASK[mode === 'symbol' ? 'code' : mode]} Stop after that.` }];
+        { role: 'user', content: `${formatExplanationEvidence(packet)}\n\n${EXPLANATION_TASK[mode === 'symbol' ? 'code' : mode]} Stop after that.${answerIn}` }];
 }
 
 /** Without source, a sentence about types, values or inputs and outputs is a guess. */
 const UNSUPPORTED_CLAIM = /\b(?:returns?|returning|list of|lists of|integers?|strings?|booleans?|dict(?:ionar(?:y|ies))?|arrays?|inputs?|outputs?|parameters?|arguments?|data types?)\b/i;
+/** The same claims in a German sentence, each with the word the code would show for it (C5). */
+const GERMAN_CLAIMS: readonly [RegExp, string][] = [
+    [/\bgibt\b[^.!?]*?\bzurück|\bzurückgegeben|\brückgabe/iu, 'return'],
+    [/\blisten? (?:von|mit|aus)\b/iu, 'list'],
+    [/\bparameter/iu, 'parameter'],
+    [/\bargument/iu, 'argument'],
+    [/\beingabe/iu, 'input'],
+    [/\bausgabe/iu, 'output'],
+    [/\bdatentyp/iu, 'type'],
+];
 /** Identifier-shaped words: snake_case, camelCase, PascalCase with an inner capital, or letters with digits. */
 const IDENTIFIER = /\b(?:[A-Za-z]+_\w+|[a-z]+[A-Z]\w*|[A-Z][a-z0-9]+[A-Z]\w*|[A-Za-z]+\d+\w*)\b/g;
+
+/** Whether `given` holds a name: a single identifier as one of its identifier words in any
+ * case ("DISTINCT" for "%(distinct)s", "Flake8" for "flake8"), anything longer as written,
+ * case aside. A mangled name ("jsonb_agg_distinct_false" for "test_jsonb_agg_distinct_false")
+ * is no identifier word of the text and stays unknown (C3). */
+function nameCheck(given: string): (name: string) => boolean {
+    const words = new Set((given.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? []).map(word => word.toLowerCase()));
+    const text = given.toLowerCase();
+    return name => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? words.has(name.toLowerCase()) : text.includes(name.toLowerCase());
+}
 
 /** Names an answer uses that the request it was given does not contain: written in
  * backticks or shaped like an identifier (flake8, json_agg_helper). Shown under the answer (K12). */
 export function namesNotIn(answer: string, given: string): string[] {
     const named = [...answer.matchAll(/`([^`\n]+)`/g)].map(match => match[1].trim()).concat(answer.replace(/`[^`]*`/g, ' ').match(IDENTIFIER) ?? []);
-    return [...new Set(named.filter(name => name && !given.includes(name)))];
+    const known = nameCheck(given);
+    return [...new Set(named.filter(name => name && !known(name)))];
 }
 
 /** The model's part of an automatic explanation: its first sentence (two for reader code),
@@ -82,12 +106,13 @@ export function explanationSentence(output: string, packet: PreparedExplanationC
     const keep = mode === 'code' ? 2 : 1;
     const sentence = (ends.length >= keep ? text.slice(0, ends[keep - 1]) : ends.length ? text.slice(0, ends.at(-1)) : text).trim();
     // Everything the model was given counts: the evidence, its headings and the file kind.
-    const evidence = [packet.label, ...packet.evidence.map(item => item.text), given].join('\n');
+    const known = nameCheck([packet.label, ...packet.evidence.map(item => item.text), given].join('\n'));
     const named = [...sentence.matchAll(/`([^`]+)`/g)].map(match => match[1]).concat(sentence.replace(/`[^`]*`/g, ' ').match(IDENTIFIER) ?? []);
     // Without source every type or input/output claim is a guess; with source only one the code itself shows.
     const code = packet.evidence.filter(item => item.source === 'code').map(item => item.text).join('\n').toLowerCase();
-    const claims = [...sentence.matchAll(new RegExp(UNSUPPORTED_CLAIM.source, 'gi'))].map(match => match[0].toLowerCase().replace(/(?:s|ing)$/, ''));
-    if (named.some(name => !evidence.includes(name)) || (mode !== 'code' && claims.some(claim => mode === 'graph' || !code.includes(claim.split(' ')[0])))) return { dropped: 'unsupported' };
+    const claims = [...sentence.matchAll(new RegExp(UNSUPPORTED_CLAIM.source, 'gi'))].map(match => match[0].toLowerCase().replace(/(?:s|ing)$/, '').split(' ')[0])
+        .concat(GERMAN_CLAIMS.flatMap(([pattern, word]) => pattern.test(sentence) ? [word] : []));
+    if (named.some(name => !known(name)) || (mode !== 'code' && claims.some(claim => mode === 'graph' || !code.includes(claim)))) return { dropped: 'unsupported' };
     return { sentence };
 }
 

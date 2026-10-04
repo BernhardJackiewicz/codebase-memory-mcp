@@ -213,7 +213,7 @@ function galaxyFacts(galaxy: GalaxyEvidence): GraphPreparation {
         ...galaxy.relationships.beyond.length ? [words.beyond(counts(galaxy.relationships.beyond))] : [],
     ].join('\n');
     return {
-        facts: [fixedFact(selectionSentence(galaxy).join('\n')), fixedFact(scopeSentence(galaxy, words)),
+        facts: [fixedFact(selectionSentence(galaxy, words).join('\n')), fixedFact(scopeSentence(galaxy, words)),
             relationshipFact(galaxy, 'incoming'), relationshipFact(galaxy, 'outgoing'), ...further ? [fixedFact(further)] : []],
         limitations: ['Static graph relationships do not establish runtime execution or repository purpose.'],
         scope: { nodes: galaxy.nodes, edges: galaxy.edges },
@@ -257,12 +257,13 @@ function graphEvidence(context: BrowserChatContext): GraphPreparation {
 }
 
 /** The selection in a few bullets, listed from the graph and never written by the model:
- * what is selected, its relationships by direction and type, how the scope was drawn (K7). */
-export function selectionSummary(context: BrowserChatContext | undefined): string[] {
+ * what is selected, its relationships by direction and type, how the scope was drawn (K7).
+ * The card lists them in English, the answer to a general question in its language (C5). */
+export function selectionSummary(context: BrowserChatContext | undefined, language: 'en' | 'de' = 'en'): string[] {
     if (!context || context.text.length > 128_000) return [];
     const galaxy = readGalaxyEvidence(context.text);
     if (galaxy) {
-        const words = relationshipWords.en;
+        const words = relationshipWords[language];
         const side = (name: 'incoming' | 'outgoing') => {
             const groups = galaxy.relationships[name];
             if (!sideLoaded(galaxy, name)) return name === 'incoming' ? words.incomingNotLoaded : words.outgoingNotLoaded;
@@ -271,7 +272,7 @@ export function selectionSummary(context: BrowserChatContext | undefined): strin
             const line = name === 'incoming' ? words.incoming(total, galaxy.relationships.incomingSymbols) : words.outgoing(total, galaxy.relationships.outgoingSymbols);
             return `${line.slice(0, -1)} (${groups.map(group => `${group.type} ${group.count}`).join(', ')}).`;
         };
-        return [selectionSentence(galaxy)[0], side('incoming'), side('outgoing'), scopeSentence(galaxy, words)];
+        return [selectionSentence(galaxy, words)[0], side('incoming'), side('outgoing'), scopeSentence(galaxy, words)];
     }
     let parsed: Record<string, unknown> | undefined;
     try { parsed = record(record(JSON.parse(context.text))?.evidence); } catch { return []; }

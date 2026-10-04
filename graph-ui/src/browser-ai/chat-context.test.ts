@@ -11,6 +11,10 @@ describe('questions without context (K11)', () => {
     it.each([
         ['was kansnt du mir über den code sagen', 'de'], ['was macht das', 'de'], ['Erklär mir die Datei', 'de'],
         ['test', 'en'], ['What does this do?', 'en'], ['explain the code', 'en'], ['Why was this added?', 'en'],
+        // Short German questions with typos and greetings (C4).
+        ['was macht diese klasse? sehr kurze antwort', 'de'], ['was mcht die klasse', 'de'], ['wass macht dise klase?', 'de'], ['erklaer das', 'de'],
+        ['hallo', 'de'], ['was ist das', 'de'], ['kurz bitte', 'de'], ['was tut die funktion', 'de'], ['zeile für zeile', 'de'],
+        ['hi', 'en'], ['what is this', 'en'], ['explain this class in detail', 'en'], ['Who calls it?', 'en'],
     ] as const)('answers %s in %s', (prompt, language) => {
         expect(questionLanguage(prompt)).toBe(language);
     });

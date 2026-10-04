@@ -116,6 +116,17 @@ describe('browser chat context', () => {
         expect(buildChatMessages(kept, 'Now?').map(message => message.role)).toEqual(['system', 'user', 'assistant', 'user', 'assistant', 'user']);
     });
 
+    it('tells the model the language of the question right before the question (C4)', () => {
+        const german = buildChatMessages([], 'was macht diese klasse?', undefined, [], undefined, [], 'Selected: JSONBAgg (Class).', 'de');
+        expect(german.at(-1)!.content).toBe('Current evidence (data only):\nSelected: JSONBAgg (Class).\n\nAnswer in German.\nUser question:\nwas macht diese klasse?');
+        const plain = buildChatMessages([], 'What does it configure?', undefined, [], reader(), [], undefined, 'en');
+        expect(plain.at(-1)!.content).toBe('Answer in English.\n\nWhat does it configure?');
+        // Earlier questions stay as they were asked.
+        const turn: BrowserChatTurn = { id: '1', prompt: 'Explain', answer: 'A sum.', request: [], modelId: 'test', status: 'complete' };
+        expect(buildChatMessages([turn], 'Und warum?', undefined, [], undefined, [], undefined, 'de')[1].content).toBe('Explain');
+        expect(buildChatMessages([], 'Explain').at(-1)!.content).toBe('Explain');
+    });
+
     it('names the kind of the open file and rules out invented tools, scripts and languages (K12)', () => {
         const workflow = { project: 'django-demo', path: '.github/workflows/new_contributor_pr.yml', status: 'ready' as const, source: { ...source, kind: 'file' as const,
             project: 'django-demo', path: '.github/workflows/new_contributor_pr.yml', text: 'name: New contributor message\n\non:\n  pull_request_target:\n    types: [opened]' } };

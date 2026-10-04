@@ -35,6 +35,10 @@ describe('selection identity for explanations', () => {
         expect(explanationInput('p:galaxy', undefined, jsonbAggEvidence())?.waiting).toBeUndefined();
         expect(explanationInput('p:galaxy', undefined, jsonbAggEvidence({ state: 'loading-partial-preview' }))?.waiting).toBe('loading');
         expect(explanationInput('p:galaxy', undefined, jsonbAggEvidence({ state: 'partial' }))?.waiting).toBe('partial');
+        // A layer that stopped at the render limit is settled: it is explained, and its facts say it is partial (C1).
+        const limited = jsonbAggEvidence({ state: 'render-limit-partial', renderLimit: { layer: 2, kind: 'nodes', limit: 500 } });
+        expect(explanationInput('p:galaxy', undefined, limited)).toMatchObject({ evidence: limited.id });
+        expect(explanationInput('p:galaxy', undefined, limited)?.waiting).toBeUndefined();
         const architecture = { id: 'a', label: 'Component', text: JSON.stringify({ evidence: { kind: 'current-selection-evidence', view: 'architecture-structure', selected: { name: 'api' } } }) };
         expect(explanationInput('p:architecture', undefined, architecture)).toEqual({ key: JSON.stringify(['p:architecture', 'Component', architecture.text]), label: 'Component', graph: architecture });
     });

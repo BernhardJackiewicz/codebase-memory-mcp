@@ -117,6 +117,23 @@ it('K8: a layer past the render limit stops there, says it is partial and cannot
     await settle(() => expect(status()?.textContent).toBe('2 nodes · 1 edge'));
 });
 
+it('C1: tells the chat that a layer stopped at the render limit, not that the scope is complete', async () => {
+    window.localStorage.setItem(viewPreferencesKey('sample'), JSON.stringify({ version: 1, preferences: { galaxyNodes: 500, galaxyEdges: 1000 } }));
+    const fan = Array.from({ length: 600 }, (_, at) => scopeNode(100 + at));
+    const edges: GraphEdge[] = [{ id: 1, source: 1, target: 2, type: 'CALLS' }, ...fan.map((node, at) => ({ id: 10 + at, source: 2, target: node.id, type: 'CALLS' }))];
+    const onSelectionEvidence = vi.fn();
+    await act(async () => root.render(<GalaxyPanel project="sample" visible workspaceExpanded onOpenNode={vi.fn()} onSelectionEvidence={onSelectionEvidence}
+        fetch={scopeFetch({ nodes: [scopeNode(1), scopeNode(2), ...fan], edges }).fetch} />));
+    await settle(() => expect(seam().nodes).toBeGreaterThan(0));
+    await act(async () => { seam().clickNode('sample.n1'); });
+    await settle(() => expect(status()?.textContent).toBe('2 nodes · 1 edge'));
+    const limitations = () => JSON.parse(onSelectionEvidence.mock.lastCall![0].text).evidence.limitations;
+    expect(limitations().state).toBe('complete-indexed-scope');
+    await act(async () => button('Expand +1').click());
+    await settle(() => expect(status()?.textContent).toBe('Partial: 602 nodes · 601 edges'));
+    await settle(() => expect(limitations()).toMatchObject({ state: 'render-limit-partial', renderLimit: { layer: 2, kind: 'nodes', limit: 500 } }));
+});
+
 it('K8: a large finished layer keeps its arranged cloud instead of being pushed apart on screen', async () => {
     const fan = Array.from({ length: 1600 }, (_, at) => scopeNode(100 + at));
     const nodes = [scopeNode(1), ...fan];
