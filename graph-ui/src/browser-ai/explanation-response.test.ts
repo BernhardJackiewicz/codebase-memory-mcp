@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { citedInterpretation, explanationMessages, formatExplanationEvidence, parseExplanationResponse } from './explanation-response';
+import { citedInterpretation, explanationMessages, explanationSentence, formatExplanationEvidence, namesNotIn, parseExplanationResponse } from './explanation-response';
 import { prepareExplanationContext } from './explanation-context';
 import { jsonbAggEvidence } from './galaxy-evidence.fixture';
 const packet = { label: 'file.c', evidence: [{ id: 'E1', text: 'u.i = (uintptr_t)CBM_NOT_FOUND;', source: 'code' as const, location: { path: 'file.c', startLine: 103, startColumn: 5, endLine: 103, endColumn: 36, sourceVersion: 'v1' } }], limitations: [], fallback: 'Source excerpt', characterCount: 50 };
@@ -82,6 +82,30 @@ describe('generated explanation response', () => {
         expect(messages[1].content).toContain('two short sentences');
         expect(messages[1].content).toContain('at most 50 words');
         expect(messages[1].content).toContain('do not guess from names');
+    });
+});
+
+describe('names an answer was not given (C3)', () => {
+    const source = 'class JSONBAgg(OrderableAggMixin, Aggregate):\n    function = "JSONB_AGG"\n    template = "%(function)s(%(distinct)s%(expressions)s %(order_by)s)"\n'
+        + 'def test_jsonb_agg_distinct_false(self):\ndef test_jsonb_agg_integerfield_order_by(self):\ndef test_jsonb_agg_key_index_transforms(self):\n';
+    const config = 'repos:\n  - repo: https://github.com/PyCQA/flake8\n    hooks:\n      - id: flake8\n        args: ["--rst-literal-block"]\n';
+
+    it('finds a name of the source in another case, as identifier words', () => {
+        expect(namesNotIn('It supports `DISTINCT`, `EXPRESSIONS` and `ORDER_BY` in the template.', source)).toEqual([]);
+        expect(namesNotIn('The `Flake8` hook of `PycQA` passes the `lITERAL` block option.', config)).toEqual([]);
+        expect(namesNotIn('`jsonbagg` is an aggregate.', source)).toEqual([]);
+    });
+
+    it('still marks mangled and invented names', () => {
+        expect(namesNotIn('`Jsonb_agg_distinct_false` and test_jsonb_agg_integer_field_order_by and `test_jsonb_agg_key_index_transformations`', source))
+            .toEqual(['Jsonb_agg_distinct_false', 'test_jsonb_agg_key_index_transformations', 'test_jsonb_agg_integer_field_order_by']);
+        expect(namesNotIn('It runs `subprocess.run` with `docs/*.txt$`.', config)).toEqual(['subprocess.run', 'docs/*.txt$']);
+    });
+
+    it('applies the same comparison to the sentence of an automatic explanation', () => {
+        const packet = { label: 'JSONBAgg', evidence: [{ id: 'source-1', text: source, source: 'code' as const }], limitations: [], fallback: '', characterCount: 0 };
+        expect(explanationSentence('`JSONBAGG` sets the `distinct` and `ORDER_BY` parts of its template.', packet)).toEqual({ sentence: '`JSONBAGG` sets the `distinct` and `ORDER_BY` parts of its template.' });
+        expect(explanationSentence('`Jsonb_agg_distinct_false` checks it.', packet)).toEqual({ dropped: 'unsupported' });
     });
 });
 
