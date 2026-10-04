@@ -1,3 +1,5 @@
+import type { ExpandOutlook } from './graph-scope';
+
 /**
  * The words of the Galaxy path view, beside the view like the other domain
  * copy (agents/agent-strings.ts, architecture/strings.ts).
@@ -134,20 +136,40 @@ export const galaxyLayerText = {
     partial: (counts: string) => `Partial: ${counts}`,
     partialPreview: 'Partial preview',
     previewLoading: (layer: number) => `Partial preview while layer ${layer} loads`,
+    // G3: a layer stops after the request that passes the limit, so it can hold more than the limit (5,548 of 5,000); the scene draws up to the limit.
     partialTitle: (layer: number, limit: number, kind: 'nodes' | 'edges') =>
-        `Layer ${layer} stopped at the render limit of ${limit.toLocaleString()} ${kind}. Raise the limit under Limits or trace fewer edge types to load all of it.`,
+        `Layer ${layer} stopped loading after the request that took it past the render limit of ${limit.toLocaleString()} ${kind}, so it is incomplete; `
+        + `the scene draws at most ${limit.toLocaleString()} ${kind}. Raise the limit under Limits or trace fewer edge types to load all of it.`,
     removeLayer: 'Remove the outermost layer',
     cancelLoading: (layer: number) => `Cancel loading layer ${layer} and return to ${layer - 1 === 1 ? '1 layer' : `${layer - 1} layers`}`,
     /* Measured, not promised: a hub at the edge can bring far more than the last layer did (JSONBAgg layer 3: about 400 expected, over 9,000 loaded). */
     /* With `calls` the index has counted the calls at the edge nodes (review of K8): a floor, where the growth alone missed the hubs. */
-    expandTitle: (layer: number, frontier: number, estimate: number, limit: number, calls?: number) =>
-        `Load layer ${layer}: ${count(frontier, 'node', 'nodes')} to expand. `
-        + (calls === undefined
-            ? `Growing like the last layer it adds about ${estimate.toLocaleString()} nodes; a hub can add many more. `
-            : `The index lists ${count(calls, 'call', 'calls')} at them that ${calls === 1 ? 'is' : 'are'} not loaded yet; growing like the last layer it adds about ${estimate.toLocaleString()} nodes. `)
-        + `Loading stops at the render limit of ${limit.toLocaleString()} nodes and marks the layer partial.`,
-    expandOverLimit: 'Likely past the render limit.',
-    expandPartial: 'This layer stopped at the render limit, so there is no complete edge to grow from. Raise the limit under Limits first.',
+    /*
+     * Hand test 2026-10-04 (G3): every sentence true on its own. The warning
+     * names the limit and the number behind it (`expandPastLimit` in
+     * graph-scope.ts); the growth estimate stands only where it is the larger
+     * number, so "about 402 nodes" no longer sits next to a warning it
+     * contradicts. Loading stops after the request that passes a limit, not
+     * at the limit (JSONBAgg layer 3 ended at 5,548 nodes), and where no limit
+     * applies (the Explore mini-Galaxy) the hint claims none.
+     */
+    expandHint: (outlook: ExpandOutlook, past: { limit: 'nodes' | 'edges'; by: 'calls' | 'growth' } | undefined) => {
+        const { layer, frontier, estimate, calls, loaded, limits } = outlook;
+        const unit = (kind: 'nodes' | 'edges', value: number) => count(value, kind === 'nodes' ? 'node' : 'edge', kind);
+        const evidence = calls === undefined
+            ? `Growing like the last layer it adds about ${estimate.toLocaleString()} nodes, and a hub can add many more`
+            : `The index lists ${count(calls, 'call', 'calls')} at them that ${calls === 1 ? 'is' : 'are'} not loaded yet`
+                + (calls >= estimate ? `, and each can bring a new node` : `; growing like the last layer it adds about ${estimate.toLocaleString()} nodes`);
+        const kind = past?.limit;
+        return [
+            past && limits && kind ? `Likely past the render limit of ${unit(kind, limits[kind])}.` : '',
+            `Load layer ${layer}: ${count(frontier, 'node', 'nodes')} to expand.`,
+            `${evidence}${kind ? `; ${unit(kind, loaded[kind])} ${loaded[kind] === 1 ? 'is' : 'are'} loaded now` : ''}.`,
+            limits ? `Loading stops after the first request to the index that takes it past ${unit('nodes', limits.nodes)} or ${unit('edges', limits.edges)}, `
+                + `so the layer can end above the limit; it is then marked partial, and the scene draws at most ${unit('nodes', limits.nodes)} and ${unit('edges', limits.edges)}.` : '',
+        ].filter(Boolean).join(' ');
+    },
+    expandPartial: 'This layer stopped loading after it passed the render limit, so there is no complete edge to grow from. Raise the limit under Limits first.',
     expandEnd: 'End of trace: no relationship leads further.',
 };
 

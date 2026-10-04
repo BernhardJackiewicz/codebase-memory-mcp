@@ -289,6 +289,38 @@ export function nextLayerEstimate(scope: ScopedGraph | undefined): { layer: numb
     return { layer: scope.depth + 1, frontier, perNode, estimate: Math.round(frontier * perNode) };
 }
 
+/** Was "Expand +1" laden wird, und was dabei schon geladen ist (Handtest 2026-10-04, G3). */
+export interface ExpandOutlook {
+    layer: number;
+    /** Die Randknoten, von denen die naechste Ebene ausgeht. */
+    frontier: number;
+    /** Neue Knoten nach dem Wachstum der letzten Ebene ({@link nextLayerEstimate}). */
+    estimate: number;
+    /** Die noch nicht geladenen Aufrufe am Rand ({@link frontierCallCount}); ohne CALLS im Trace keine Zahl. */
+    calls?: number | undefined;
+    loaded: { nodes: number; edges: number };
+    /** Die Render-Limits; ohne sie (Mini-Galaxy in Explore) laedt eine Ebene ganz. */
+    limits?: { nodes: number; edges: number } | undefined;
+}
+
+/*
+ * Ob die naechste Ebene vermutlich ueber ein Render-Limit fuehrt, und woran
+ * das haengt (G3). Bis hierher stand im Tooltip "Likely past the render limit"
+ * ohne Grund, und daneben die Schaetzung aus dem Wachstum (402 Knoten um
+ * JSONBAgg), die allein weit unter dem Limit blieb: gewarnt hatten die 9.031
+ * gezaehlten Aufrufe. Fuer die Knoten zaehlt die groessere der beiden Zahlen,
+ * jeder Aufruf kann einen neuen Knoten bringen; fuer die Kanten nur die
+ * Aufrufe, denn das Wachstum zaehlt Knoten. Die Knoten gehen vor.
+ */
+export function expandPastLimit(outlook: ExpandOutlook): { limit: 'nodes' | 'edges'; by: 'calls' | 'growth' } | undefined {
+    if (!outlook.limits) return undefined;
+    const calls = outlook.calls ?? 0;
+    const by = outlook.calls !== undefined && calls >= outlook.estimate ? 'calls' as const : 'growth' as const;
+    if (outlook.loaded.nodes + Math.max(outlook.estimate, calls) > outlook.limits.nodes) return { limit: 'nodes', by };
+    if (outlook.loaded.edges + calls > outlook.limits.edges) return { limit: 'edges', by: 'calls' };
+    return undefined;
+}
+
 /** Was die Galaxie zeigt, waehrend ein Scope angeordnet wird: das aktuelle
  * Bild, sonst die letzte Anordnung, sonst den ganzen Graphen. Eine Anordnung
  * ohne Knoten ist kein Bild. Liegt das gewaehlte Symbol ausserhalb des

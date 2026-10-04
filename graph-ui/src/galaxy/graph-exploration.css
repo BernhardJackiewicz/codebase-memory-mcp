@@ -8,9 +8,10 @@
 .atlas-graph-coverage-filter { cursor:pointer; white-space:nowrap; }
 .atlas-graph-coverage-filter input { accent-color:#80ac96; }
 .atlas-graph-exploration button { appearance:none; padding:.25rem .6rem; font:inherit; line-height:1.4; color:var(--atlas-fg, #cbdbd0); background:rgba(17, 34, 26, .72); border:1px solid var(--atlas-line, #29473a); border-radius:6px; cursor:pointer; }
-.atlas-graph-exploration button:hover:not(:disabled) { background:rgba(68, 112, 86, .24); border-color:#517d65; }
+.atlas-graph-exploration button:hover:not(:disabled, [aria-disabled=true]) { background:rgba(68, 112, 86, .24); border-color:#517d65; }
 .atlas-graph-exploration button:focus-visible, .atlas-galaxy-selection-details > summary:focus-visible { outline:2px solid #75ac94; outline-offset:2px; }
-.atlas-graph-exploration button:disabled { opacity:.4; cursor:not-allowed; }
+/* G3: Expand ist gesperrt statt abgeschaltet (aria-disabled), damit Zeiger und Fokus seinen Grund noch lesen; es sieht gleich aus. */
+.atlas-graph-exploration button:is(:disabled, [aria-disabled=true]) { opacity:.4; cursor:not-allowed; }
 .atlas-graph-scope-name { max-width:14rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .atlas-graph-scope-count { color:#93b2a1; margin-inline-start:auto; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .atlas-graph-scope-groups { white-space:nowrap; }

@@ -40,6 +40,8 @@ const settle = (check: () => void) => vi.waitFor(async () => {
 const status = () => host.querySelector('.atlas-graph-scope-count');
 const button = (label: string) => [...host.querySelectorAll('button')].find(entry => entry.textContent === label)!;
 const minus = () => host.querySelector<HTMLButtonElement>('button[aria-label="Remove graph layer"]')!;
+/* G3: the Expand explanation is the Galaxy's own tooltip; its text stands on the button as data-hint. */
+const hint = (element: HTMLElement) => element.getAttribute('data-hint');
 const layers = () => [...host.querySelectorAll('.atlas-graph-exploration span')].map(entry => entry.textContent ?? '').find(text => /^\d+ layers?$/.test(text));
 
 it('K8: shows loaded nodes and edges while a layer loads, and "−" cancels back to the previous layer at once', async () => {
@@ -92,14 +94,24 @@ it('K8: a layer past the render limit stops there, says it is partial and cannot
     await settle(() => expect(seam().nodes).toBeGreaterThan(0));
     await act(async () => { seam().clickNode('sample.n1'); });
     await settle(() => expect(status()?.textContent).toBe('2 nodes · 1 edge'));
-    expect(button('Expand +1').title).toContain('Load layer 2: 1 node to expand');
+    expect(hint(button('Expand +1'))).toContain('Load layer 2: 1 node to expand');
 
     await act(async () => button('Expand +1').click());
     await settle(() => expect(status()?.textContent).toBe('Partial: 602 nodes · 601 edges'));
     expect(status()?.getAttribute('data-state')).toBe('partial');
-    expect(status()?.getAttribute('title')).toBe('Layer 2 stopped at the render limit of 500 nodes. Raise the limit under Limits or trace fewer edge types to load all of it.');
-    expect(button('Expand +1').disabled).toBe(true);
-    expect(button('Expand +1').title).toContain('stopped at the render limit');
+    // G3: 602 nodes loaded with a limit of 500, so the words say "after passing", not "at".
+    expect(status()?.getAttribute('title')).toBe('Layer 2 stopped loading after the request that took it past the render limit of 500 nodes, so it is incomplete; '
+        + 'the scene draws at most 500 nodes. Raise the limit under Limits or trace fewer edge types to load all of it.');
+    expect(scene.nodes).toBe(500);
+    // G3: blocked, not disabled: a disabled button takes neither the pointer nor the focus, and the reason would be out of reach.
+    expect(button('Expand +1').getAttribute('aria-disabled')).toBe('true');
+    expect(hint(button('Expand +1'))).toContain('stopped loading after it passed the render limit');
+    await act(async () => { button('Expand +1').dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); });
+    expect(document.querySelector('[data-testid="atlas-hint"][data-hint-for="galaxy-expand"]')?.textContent).toContain('stopped loading after it passed the render limit');
+    await act(async () => { button('Expand +1').dispatchEvent(new MouseEvent('mouseout', { bubbles: true })); });
+    await act(async () => button('Expand +1').click());
+    expect(layers()).toBe('2 layers');
+    expect(status()?.textContent).toBe('Partial: 602 nodes · 601 edges');
     // The partial layer can still be left the normal way.
     await act(async () => minus().click());
     await settle(() => expect(status()?.textContent).toBe('2 nodes · 1 edge'));
@@ -128,8 +140,40 @@ it('K8: Expand warns before loading when the nodes at the edge have more indexed
     await settle(() => expect(seam().nodes).toBe(3));
     await act(async () => { seam().clickNode('sample.n1'); });
     await settle(() => expect(button('Expand +1').getAttribute('data-warning')).toBe('true'));
-    // 1,270 + 3 + 2 calls, less the two already loaded.
-    expect(button('Expand +1').title).toBe(`Likely past the render limit. Load layer 2: 2 nodes to expand. The index lists ${(1273).toLocaleString()} calls at them that are not loaded yet; `
-        + 'growing like the last layer it adds about 4 nodes. Loading stops at the render limit of 500 nodes and marks the layer partial.');
+    // 1,270 + 3 + 2 calls, less the two already loaded. G3: the calls drive the warning, so the smaller growth estimate is not offered beside it.
+    const text = `Likely past the render limit of 500 nodes. Load layer 2: 2 nodes to expand. The index lists ${(1273).toLocaleString()} calls at them that are not loaded yet, `
+        + `and each can bring a new node; 3 nodes are loaded now. Loading stops after the first request to the index that takes it past 500 nodes or ${(1000).toLocaleString()} edges, `
+        + `so the layer can end above the limit; it is then marked partial, and the scene draws at most 500 nodes and ${(1000).toLocaleString()} edges.`;
+    expect(hint(button('Expand +1'))).toBe(text);
     expect(calls.filter(call => String(call.args.query).includes('n.in_degree'))).toHaveLength(1);
+
+    /*
+     * G3: the warning came as a native title, after the browser's delay. It is
+     * the Galaxy's own tooltip now: at once on hover and on keyboard focus,
+     * described by aria-describedby, closed on leave, blur and Escape.
+     */
+    const expand = button('Expand +1');
+    expect(expand.hasAttribute('title')).toBe(false);
+    const shown = () => document.querySelector<HTMLElement>('[data-testid="atlas-hint"][data-hint-for="galaxy-expand"]');
+    expect(shown()).toBeNull();
+    await act(async () => { expand.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); });
+    expect(shown()?.textContent).toBe(text);
+    expect(shown()?.getAttribute('role')).toBe('tooltip');
+    expect(expand.getAttribute('aria-describedby')).toBe(shown()?.id);
+    await act(async () => { expand.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })); });
+    expect(shown()).toBeNull();
+    expect(expand.hasAttribute('aria-describedby')).toBe(false);
+    await act(async () => { expand.focus(); });
+    expect(shown()?.textContent).toBe(text);
+    // Escape on the focused button closes the tooltip and nothing else: the scope stays.
+    // A real key press can be cancelled; that is what keeps the Escape of the tooltip from leaving the scope too.
+    await act(async () => { expand.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); });
+    expect(shown()).toBeNull();
+    expect(button('Expand +1')).toBe(expand);
+    expect(status()?.textContent).toBe('3 nodes · 2 edges');
+    await act(async () => { expand.blur(); });
+    await act(async () => { expand.focus(); });
+    expect(shown()).not.toBeNull();
+    await act(async () => { expand.blur(); });
+    expect(shown()).toBeNull();
 });

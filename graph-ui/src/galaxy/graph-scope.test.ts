@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { arrangeScopedGraph, frontierCallCount, graphEdgeTypesKey, hierarchyLabelWidth, limitGraphRender, loadGraphScope, nextLayerEstimate, readGraphPages, scenePictureFor, SCOPED_HIERARCHY_ROW_GAP, scopedHierarchy, type GraphQueryClient } from './graph-scope';
+import { arrangeScopedGraph, expandPastLimit, frontierCallCount, graphEdgeTypesKey, hierarchyLabelWidth, limitGraphRender, loadGraphScope, nextLayerEstimate, readGraphPages, scenePictureFor, SCOPED_HIERARCHY_ROW_GAP, scopedHierarchy, type GraphQueryClient } from './graph-scope';
 import type { QueryGraphResult } from '../provider/rpc-schemas';
 import type { GraphData, GraphNode } from './types';
 
@@ -396,6 +396,22 @@ describe('handtest K8: deep layers load in few large pages, report progress and 
         await loadGraphScope('p', scope, 3, 'outbound', undefined, { client: { queryGraph: fresh }, previous: result, limits: { nodes: 50, edges: 1000 } });
         // A partial layer is no base for the next one: the load starts again from the root.
         expect(fresh.mock.calls[0]![1]).toMatch(/^MATCH \(n\) WHERE/);
+    });
+
+    /*
+     * Hand test 2026-10-04 (G3): the warning named no reason, and next to it
+     * stood the growth estimate (402 nodes), which alone stays far below the
+     * limit. The warning says which limit it expects to pass, and the calls
+     * counted at the edge drive it when they are the larger number.
+     */
+    it('G3: says which render limit the next layer likely passes and what drives it, and none where no limit applies', () => {
+        const outlook = { layer: 3, frontier: 75, estimate: 402, calls: 9031, loaded: { nodes: 90, edges: 201 }, limits: { nodes: 5000, edges: 20000 } };
+        expect(expandPastLimit(outlook)).toEqual({ limit: 'nodes', by: 'calls' });
+        expect(expandPastLimit({ ...outlook, calls: 10 })).toBeUndefined();
+        expect(expandPastLimit({ ...outlook, calls: undefined, loaded: { nodes: 4700, edges: 9000 } })).toEqual({ limit: 'nodes', by: 'growth' });
+        expect(expandPastLimit({ ...outlook, calls: 3000, loaded: { nodes: 90, edges: 18500 } })).toEqual({ limit: 'edges', by: 'calls' });
+        // The Explore mini-Galaxy loads without render limits: nothing to pass.
+        expect(expandPastLimit({ ...outlook, limits: undefined })).toBeUndefined();
     });
 
     it('estimates the next layer from the frontier and the growth of the last layer', () => {
