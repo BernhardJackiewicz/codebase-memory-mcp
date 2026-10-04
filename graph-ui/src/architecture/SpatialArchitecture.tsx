@@ -15,7 +15,7 @@ import type { CoverageIndex } from '../app/tree-model';
 import { buildHotspotGraph, collectHotspots, hotspotsForNode, hotspotSignals, hotspotIdentity } from './hotspot-map';
 import { hotspotAreas } from './hotspot-areas';
 import { useViewPreferences } from '../settings/view-preferences';
-import { RefreshControl, useRefreshFeedback } from './refresh-feedback';
+import { RefreshControl, useRefreshFeedback } from '../ui/refresh/refresh-feedback';
 import './spatial-architecture.css';
 
 interface Props {

@@ -7,7 +7,7 @@ import { loadContainerInventory, loadContainerTopology, type ContainerReading, t
 import type { ServiceEvidence } from './container-topology';
 import { useSelectionEvidence, type SelectionEvidenceListener } from '../galaxy/selection-evidence';
 import { architectureText as text } from './strings';
-import { RefreshControl, useRefreshFeedback } from './refresh-feedback';
+import { RefreshControl, useRefreshFeedback } from '../ui/refresh/refresh-feedback';
 import './spatial-architecture.css';
 import './container-map.css';
 

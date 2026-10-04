@@ -210,7 +210,7 @@ it('A3: Refresh connections says that it runs and what it found, and keeps the m
         const input: GraphData = { nodes: [node, route], edges: [], total_nodes: 2 };
         await act(async () => root.render(<SpatialArchitecture project="sample" graph={input} overview={overview} view="routes" filter="" active onNavigate={vi.fn()} onView={vi.fn()} />));
         const refresh = () => [...host.querySelectorAll('button')].find(button => /^Refresh(ing)? connections/.test(button.textContent ?? ''))!;
-        const status = () => host.querySelector('[role="status"].atlas-arch-refresh-status')?.textContent;
+        const status = () => host.querySelector('[role="status"].atlas-refresh-status')?.textContent;
         expect(refresh().textContent).toBe('Refresh connections');
         expect(status()).toBe('');
 

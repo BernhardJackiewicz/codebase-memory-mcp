@@ -11,7 +11,7 @@ import BehaviorJourney from './BehaviorJourney';
 import { defaultJourneyStart } from './behavior-journey-model';
 import type { BehaviorPlace, JourneyPlace, PlaceChange, SystemPlace } from './architecture-history';
 import { useLiftedPlace, useOnIdentityChange } from './lifted-place';
-import { RefreshControl, useRefreshFeedback } from './refresh-feedback';
+import { RefreshControl, useRefreshFeedback } from '../ui/refresh/refresh-feedback';
 import { nameOperations } from './operation-choices';
 import { RpcIntelligenceClient } from '../provider/rpc-client';
 import './system-architecture.css';

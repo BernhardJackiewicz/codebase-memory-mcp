@@ -282,3 +282,8 @@ export function impactUntestedRule(count: number): string {
 export function impactSymbolRule(name: string, level: 'low' | 'medium' | 'high', reasons: string[]): string {
     return `${name} is ${RISK_LABELS[level]}: ${reasons.join('; ')}.`;
 }
+
+// Review zu K42: der Knopf Refresh der Dateiwirkung in Explore sagt, dass er laeuft, dann wann er lief ---
+// (die gemeinsamen Saetze "Up to date at …" und "Refresh failed at …" stehen in ui/refresh/strings.ts).
+
+export const FILE_IMPACT_REFRESH = { idle: 'Refresh', busy: 'Refreshing…', done: (time: string) => `Impact refreshed at ${time}` };

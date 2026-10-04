@@ -3,6 +3,7 @@ import type { JSX } from 'react';
 import type { ProjectEntry } from '../provider/rpc-schemas';
 import { projectSwitcherStrings as text } from './project-switcher-strings';
 import { projectPickerPlacement } from './project-picker-placement';
+import { RefreshControl, useRefreshFeedback } from '../ui/refresh/refresh-feedback';
 import './project-switcher.css';
 
 interface ProjectSwitcherProps {
@@ -18,6 +19,8 @@ export default function ProjectSwitcher(props: ProjectSwitcherProps): JSX.Elemen
     const [entries, setEntries] = useState<readonly ProjectEntry[]>([]);
     const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
     const [revision, setRevision] = useState(0);
+    // Every reading of the list counts, also the one an opening starts; the Refresh status speaks about one of them (review of K42).
+    const [reads, setReads] = useState(0);
     const [placement, setPlacement] = useState({ top: 64, left: 12, width: 370, maxHeight: 520 });
     const disclosure = useRef<HTMLDetailsElement>(null);
     const trigger = useRef<HTMLElement>(null);
@@ -49,6 +52,7 @@ export default function ProjectSwitcher(props: ProjectSwitcherProps): JSX.Elemen
         if (!open) return;
         let current = true;
         setStatus('loading');
+        setReads(value => value + 1);
         void Promise.resolve().then(props.listProjects).then(
             (projects) => {
                 if (!current) return;
@@ -68,6 +72,15 @@ export default function ProjectSwitcher(props: ProjectSwitcherProps): JSX.Elemen
         document.addEventListener('pointerdown', outside);
         return () => document.removeEventListener('pointerdown', outside);
     }, [open]);
+
+    /*
+     * Review of K42: "Refresh projects" showed "Loading projects..." for about
+     * 150 ms and then the same list. Now it says that it runs, then when and
+     * whether the list changed; a failure only gets its time, the list area
+     * says what failed and offers Try again.
+     */
+    const refresh = useRefreshFeedback({ key: String(reads), settled: status !== 'loading',
+        value: entries.map(entry => [entry.name, entry.root_path]), error: status === 'error' ? '' : undefined });
 
     const projects = Array.from(new Map(entries.map(entry => [entry.name, entry])).values())
         .filter(entry => entry.name.length > 0)
@@ -120,7 +133,7 @@ export default function ProjectSwitcher(props: ProjectSwitcherProps): JSX.Elemen
             </button>}
             <footer>
                 <button type="button" onClick={() => { close(true); props.onAddProject(); }}>{text.add}</button>
-                <button type="button" disabled={status === 'loading'} onClick={() => setRevision(value => value + 1)}>{text.refresh}</button>
+                <RefreshControl labels={text.refreshFeedback} feedback={refresh.feedback} onRefresh={() => { refresh.begin(); setRevision(value => value + 1); }} />
             </footer>
         </div>}
     </details>;

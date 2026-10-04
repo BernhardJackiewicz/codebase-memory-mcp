@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type JSX } from 'react';
-import { architectureText } from './strings';
-
-const text = architectureText.refreshFeedback;
+import { refreshText as text } from './strings';
+import './refresh.css';
 
 /**
- * What a Refresh button of Architecture says it did (hand test 2026-10-04, A3:
- * "Refresh connections" fetched everything again and nothing on screen
- * changed). While the reading runs the button reads "Refreshing …"; then a
- * status beside it names the time and whether anything changed, or the error.
+ * What a Refresh button says it did (hand test 2026-10-04, A3: "Refresh
+ * connections" fetched everything again and nothing on screen changed). While
+ * the reading runs the button reads "Refreshing …"; then a status beside it
+ * names the time and whether anything changed, or the error. Made for the
+ * four Refresh buttons of Architecture and shared since the review of K42 with
+ * those of ADR, the project picker and the file impact in Explore.
  */
 export type RefreshFeedback =
     | { phase: 'running' }
@@ -74,9 +75,9 @@ export function RefreshControl({ labels, feedback, onRefresh, className }: {
     feedback?: RefreshFeedback; onRefresh: () => void; className?: string;
 }): JSX.Element {
     const running = feedback?.phase === 'running';
-    return <span className="atlas-arch-refresh" data-phase={feedback?.phase}>
+    return <span className="atlas-refresh" data-phase={feedback?.phase}>
         <button type="button" className={className} aria-disabled={running || undefined} aria-busy={running || undefined}
             onClick={() => { if (!running) onRefresh(); }}>{running ? labels.busy : labels.idle}</button>
-        <span className="atlas-arch-refresh-status" role="status" data-phase={feedback?.phase}>{refreshStatus(feedback, labels.done)}</span>
+        <span className="atlas-refresh-status" role="status" data-phase={feedback?.phase}>{refreshStatus(feedback, labels.done)}</span>
     </span>;
 }

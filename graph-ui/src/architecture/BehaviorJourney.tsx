@@ -7,7 +7,7 @@ import { useLiftedPlace, useOnIdentityChange } from './lifted-place';
 import type { SystemProjection, SystemSymbol } from './system-architecture-source';
 import BehaviorSourceEvidence, { type BehaviorSourceSnapshot } from './BehaviorSourceEvidence';
 import { useSelectionEvidence, type SelectionEvidenceListener } from '../galaxy/selection-evidence';
-import { RefreshControl, type RefreshFeedback } from './refresh-feedback';
+import { RefreshControl, type RefreshFeedback } from '../ui/refresh/refresh-feedback';
 import { operationChoices } from './operation-choices';
 import './behavior-journey.css';
 
