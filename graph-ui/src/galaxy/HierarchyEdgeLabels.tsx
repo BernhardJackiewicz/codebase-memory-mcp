@@ -15,6 +15,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { Html, Line } from '@react-three/drei';
 import * as THREE from 'three';
 import { placeAlongSegment, type ScreenRect } from './path-frame';
+import { screenBlockers } from './PathLayer';
 import type { LabelBox } from './NodeLabels';
 import { HIERARCHY_LABEL_FONT_SIZE } from './hierarchy-layout';
 import { galaxyHierarchyText } from './galaxy-strings';
@@ -101,9 +102,6 @@ export function edgeLabelVisible(namePixels: number, at: { x: number; y: number 
     return namePixels >= EDGE_LABEL_MIN_NAME_PIXELS && at.x >= canvas.left && at.x <= canvas.right && at.y >= canvas.top && at.y <= canvas.bottom;
 }
 
-/** Was ausser den Namen frei bleibt: die Ueberschrift des Bandes (DOM, wie die Schilder selbst). */
-const BLOCKER_SELECTOR = '.atlas-hierarchy-band-label';
-
 export function HierarchyEdgeLabels({ nodes, edges, layout, nameBoxes }: {
     nodes: readonly GraphNode[];
     edges: readonly GraphEdge[];
@@ -139,11 +137,9 @@ export function HierarchyEdgeLabels({ nodes, edges, layout, nameBoxes }: {
             const a = toScreen(name.x - name.width / 2, name.y + name.height / 2), b = toScreen(name.x + name.width / 2, name.y - name.height / 2);
             return { left: Math.min(a.x, b.x), right: Math.max(a.x, b.x), top: Math.min(a.y, b.y), bottom: Math.max(a.y, b.y) };
         });
+        // Was ausser den Namen frei bleibt, als DOM wie die Schilder selbst: die Ueberschrift des Bandes (dieselbe Liste wie der Pfad).
         const host = connected instanceof HTMLElement ? connected : gl.domElement.parentElement;
-        for (const element of host?.querySelectorAll<HTMLElement>(BLOCKER_SELECTOR) ?? []) {
-            const rect = element.getBoundingClientRect();
-            if (rect.width > 0) blockers.push({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom });
-        }
+        if (host) blockers.push(...screenBlockers(host));
         const placed: ScreenRect[] = [];
         // So hoch steht ein Name auf dem Schirm: die Schriftgroesse der Hierarchie, durch dieselbe Kamera.
         const anchor = labels[0]?.from;

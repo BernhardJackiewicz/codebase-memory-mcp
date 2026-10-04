@@ -76,4 +76,22 @@ describe('hand test K6: edge labels avoid node names', () => {
         expect(placed.overlap).toBe(0);
         expect(names.some(name => overlaps(placed.rect, name))).toBe(false);
     });
+
+    /*
+     * Hand test 2026-10-04 (G2): a wide heading (the band title of the
+     * hierarchy) covers the middle of a steep edge. Every point from 0.2 to
+     * 0.8 lies under it, and a side step on a steep edge only moves sideways
+     * along the heading. The label still finds the free stretch of its edge
+     * just before or after the heading instead of lying on it.
+     */
+    it('finds the free stretch of its edge beyond a wide heading that covers every usual spot', () => {
+        const heading = { left: -500, right: 500, top: 50, bottom: 250 };
+        const placed = placeAlongSegment({ x: 0, y: 0 }, { x: 10, y: 300 }, size, [heading], []);
+        expect(placed.overlap).toBe(0);
+        expect(overlaps(placed.rect, heading)).toBe(false);
+        // On the edge, not beside it, and not on its end points.
+        expect(placed.side).toBe(0);
+        expect(placed.t).toBeGreaterThan(0.05);
+        expect(placed.t).toBeLessThan(0.95);
+    });
 });

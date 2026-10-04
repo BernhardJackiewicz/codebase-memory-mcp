@@ -77,6 +77,8 @@ function overlapArea(a: ScreenRect, b: ScreenRect): number {
 }
 
 const SIDES = [0, 1, -1, 2, -2, 3, -3];
+/* Wie nah ein Label seinen Enden kommen darf, wenn es nur so frei steht: dort laufen die Linien eines Knotens zusammen. */
+const LABEL_CLEAR_RANGE = [0.1, 0.9] as const;
 
 /**
  * Wo das Label einer Kante steht: der erste Punkt auf der Kante, an dem es
@@ -84,6 +86,13 @@ const SIDES = [0, 1, -1, 2, -2, 3, -3];
  * Ueberdeckung. `t` ist der Anteil auf der Kante, `side` der seitliche Versatz
  * in Labelhoehen, hoechstens `maxSide` davon (die Hierarchie bleibt mit ihren
  * vielen Linien bei einem, damit ein Schild bei seiner Linie steht).
+ *
+ * Handtest 2026-10-04 (G2): eine breite Ueberschrift (die des Bandes der
+ * Hierarchie) deckte auf einer steilen Kante jeden der Punkte von 0.2 bis 0.8,
+ * und ein Schritt zur Seite fuehrt dort nur an ihr entlang. Bevor das Label
+ * sich mit der kleinsten Ueberdeckung begnuegt, versucht es darum die Stellen
+ * der Kante, an denen es gerade aus einem Hindernis heraustritt, davor und
+ * dahinter, zwischen {@link LABEL_CLEAR_RANGE}.
  */
 export function placeAlongSegment(from: { x: number; y: number }, to: { x: number; y: number }, size: { width: number; height: number },
     blockers: readonly ScreenRect[], placed: readonly ScreenRect[], maxSide = 3): { t: number; side: number; rect: ScreenRect; overlap: number } {
@@ -91,16 +100,25 @@ export function placeAlongSegment(from: { x: number; y: number }, to: { x: numbe
     const normal = { x: -(to.y - from.y) / length, y: (to.x - from.x) / length };
     // One side step clears the label's own extent across the edge: its height on a flat edge, its width on a steep one.
     const step = (size.width / 2) * Math.abs(normal.x) + (size.height / 2) * Math.abs(normal.y) + 6;
+    const others = [...blockers, ...placed];
     let best: { t: number; side: number; rect: ScreenRect; overlap: number } | undefined;
+    const tryAt = (t: number, side: number) => {
+        const offset = side * step;
+        const x = from.x + (to.x - from.x) * t + normal.x * offset, y = from.y + (to.y - from.y) * t + normal.y * offset;
+        const rect = { left: x - size.width / 2, right: x + size.width / 2, top: y - size.height / 2, bottom: y + size.height / 2 };
+        const overlap = others.reduce((sum, other) => sum + overlapArea(rect, other), 0);
+        if (!best || overlap < best.overlap) best = { t, side, rect, overlap };
+        return overlap === 0;
+    };
     for (const side of SIDES.filter((value) => Math.abs(value) <= maxSide)) {
-        for (const t of LABEL_STEPS) {
-            const offset = side * step;
-            const x = from.x + (to.x - from.x) * t + normal.x * offset, y = from.y + (to.y - from.y) * t + normal.y * offset;
-            const rect = { left: x - size.width / 2, right: x + size.width / 2, top: y - size.height / 2, bottom: y + size.height / 2 };
-            const overlap = [...blockers, ...placed].reduce((sum, other) => sum + overlapArea(rect, other), 0);
-            if (overlap === 0) return { t, side, rect, overlap };
-            if (!best || overlap < best.overlap) best = { t, side, rect, overlap };
-        }
+        for (const t of LABEL_STEPS) if (tryAt(t, side)) return best!;
     }
+    // The points on the edge where the label just leaves an obstacle, on each of its four sides, nearest the middle first.
+    const dx = to.x - from.x, dy = to.y - from.y, margin = LABEL_PAD + 0.5;
+    const leaving = others.flatMap((other) => [
+        dx ? (other.left - margin - size.width / 2 - from.x) / dx : NaN, dx ? (other.right + margin + size.width / 2 - from.x) / dx : NaN,
+        dy ? (other.top - margin - size.height / 2 - from.y) / dy : NaN, dy ? (other.bottom + margin + size.height / 2 - from.y) / dy : NaN,
+    ]).filter((t) => t >= LABEL_CLEAR_RANGE[0] && t <= LABEL_CLEAR_RANGE[1]).sort((a, b) => Math.abs(a - 0.5) - Math.abs(b - 0.5));
+    for (const t of leaving) if (tryAt(t, 0)) return best!;
     return best!;
 }
