@@ -95,7 +95,8 @@ function TokenLimitNote({ limit, automatic, chat, model, onChangeOutput }: Limit
         <summary>{browserChatText.shortened}</summary>
         <p>{automatic ? browserChatText.limitAutomatic(limit.inputTokens, limit.outputTokens, chat.inputTokens, chat.outputTokens) : browserChatText.limitReached(limit.inputTokens, limit.outputTokens)}</p>
         <p>{browserChatText.outputRoom(chat.outputTokens, model.maxOutputTokens)}</p>
-        <button type="button" onClick={onChangeOutput}>{browserChatText.changeOutputLimit}</button>
+        {/* At its maximum the limit cannot be raised, so there is nothing to change (C8). */}
+        {chat.outputTokens < model.maxOutputTokens && <button type="button" onClick={onChangeOutput}>{browserChatText.changeOutputLimit}</button>}
         {larger.length > 0 && <><p>{browserChatText.largerModels}</p>
             <ul>{larger.map(candidate => <li key={candidate.id}>{browserChatText.modelDownload(candidate.displayName, sizeLabel(candidate.bytes))}</li>)}</ul></>}
     </details>;

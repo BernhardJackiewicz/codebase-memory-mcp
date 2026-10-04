@@ -1089,6 +1089,19 @@ describe('graph answers and answer limits', () => {
         expect(document.activeElement?.id).toBe('cbm-chat-output-tokens');
     });
 
+    it('does not offer to change an output limit that is already at its maximum, and still lists the larger models (C8)', async () => {
+        const { props, runtime } = fixture();
+        runtime.chat.mockImplementationOnce(async (_messages, _onToken, options) => {
+            options?.onComplete?.({ stopReason: 'length' }); return 'A long answer that';
+        });
+        await render({ ...props, attachment: selection }); await click('Download & load');
+        await type('Explain this part'); await click('Send ↑');
+        const note = container.querySelector<HTMLDetailsElement>('.cbm-chat-turn details.cbm-chat-limit-note');
+        expect(note?.textContent).toContain('The output limit is at the maximum of 512 tokens for this model.');
+        expect([...note?.querySelectorAll('button') ?? []].map(item => item.textContent)).not.toContain('Change the output limit');
+        expect(note?.textContent).toContain('Qwen3 0.6B · 579 MB download');
+    });
+
     it('says why an automatic explanation stops early and that a question may answer longer (K1)', async () => {
         vi.useFakeTimers();
         try {
