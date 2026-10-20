@@ -14,6 +14,8 @@ import type { ArchitectureOverviewDto } from '../core/intelligence-provider';
 import type { GraphData, GraphNode } from '../galaxy/types';
 import type { SystemSceneModel } from './system-architecture-model';
 import type { SystemArchitectureLoader, SystemProjection, SystemSymbol } from './system-architecture-source';
+import { systemGraphResponse } from './system-graph-fixture';
+import type { SystemGraphLoader } from './system-graph-source';
 
 vi.mock('./ArchitectureScene', () => ({ ArchitectureScene: (props: ArchitectureSceneProps) => <div data-testid="scene">
     {props.model.nodes.map(node => <button key={node.id} data-node={node.id} onClick={() => props.onSelect(node.id)} onDoubleClick={() => props.onOpen?.(node.id)}>{node.label}</button>)}
@@ -67,6 +69,7 @@ let container: HTMLDivElement;
 let root: Root;
 let storageDescriptor: PropertyDescriptor | undefined;
 let loader: ReturnType<typeof vi.fn<SystemArchitectureLoader>>;
+let graphLoader: ReturnType<typeof vi.fn<SystemGraphLoader>>;
 
 beforeEach(() => {
     (globalThis as unknown as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
@@ -77,6 +80,12 @@ beforeEach(() => {
         getItem: (key: string) => contents.get(key) ?? null, setItem: (key: string, value: string) => { contents.set(key, value); },
     } });
     loader = vi.fn<SystemArchitectureLoader>().mockImplementation(async () => ({ status: 'ready', generation: 'g1', result: projection() }));
+    graphLoader = vi.fn<SystemGraphLoader>().mockImplementation(async () => {
+        const response = systemGraphResponse(), data = response.result!;
+        data.entities[1].kind = 'code';
+        data.entities.push({ ...data.entities[3], id: 'worker', name: 'Worker deployment', ref: { ...data.entities[3].ref, node_id: 6 } });
+        return response;
+    });
 });
 afterEach(async () => {
     await act(async () => root.unmount()); container.remove();
@@ -86,7 +95,7 @@ afterEach(async () => {
 
 async function render(changes: Partial<ArchitecturePanelProps> = {}): Promise<void> {
     await act(async () => root.render(<ArchitecturePanel projectName="sample" overview={overview} graph={graph} graphGeneration="g1"
-        systemArchitectureLoader={loader} onNavigate={vi.fn()} active {...changes} />));
+        systemArchitectureLoader={loader} systemGraphLoader={graphLoader} onNavigate={vi.fn()} active {...changes} />));
     await settle();
 }
 async function settle(): Promise<void> {
@@ -124,12 +133,17 @@ const trail = () => [...container.querySelectorAll('[aria-label="Architecture lo
 const planar = () => container.querySelector('[aria-label="Map camera"] button[aria-pressed="true"]')?.textContent;
 const perspective = () => container.querySelector('[aria-label="Routes perspective"] button[aria-pressed="true"]')?.textContent;
 const filter = () => container.querySelector<HTMLInputElement>('input[type="search"]')?.value;
-const focus = () => container.querySelector('[data-testid="system-scene"]')?.getAttribute('data-focus');
+const focus = () => container.querySelector('[data-testid="system-graph"]')?.getAttribute('data-focus-kind')
+    ?? container.querySelector('[data-testid="system-scene"]')?.getAttribute('data-focus');
 const heading = () => container.querySelector('.behavior-heading h2')?.textContent;
 const sceneLabels = () => [...container.querySelectorAll('[data-testid="scene"] [data-node]')].map(item => item.textContent);
 /** System structure and Behavior use the shared history rather than another local Back. */
 const inViewBack = () => buttons().find(button => button.textContent === '← Back' && !history()?.contains(button));
-const systemCamera = () => container.querySelector('[aria-label="System camera"] button[aria-pressed="true"]')?.textContent;
+const systemCamera = () => container.querySelector('[aria-label="System graph camera"] button[aria-pressed="true"]')?.textContent;
+async function openSystemGroup(kind: string) {
+    await press(container.querySelector<HTMLElement>(`[data-system-node="view:kind:${kind}"]`));
+    await press(container.querySelector<HTMLElement>('[data-action="drill-group"]'));
+}
 const behaviorCamera = () => container.querySelector('[aria-label="Behavior camera"] button[aria-pressed="true"]')?.textContent;
 const chainPosition = () => container.querySelector('[aria-label="Walk the call chain"] span')?.textContent;
 const pathButtons = () => [...container.querySelectorAll<HTMLButtonElement>('[aria-label="Indexed paths"] button')];
@@ -240,51 +254,49 @@ describe('Architecture back and forward (K27)', () => {
         expect(position()).toBe('2/2');
     });
 
-    it('records System structure focus and restores expanded groups without expansion-only stops', async () => {
+    it('records System graph group drills and restores filters and expanded original members', async () => {
         await render();
         await selectView('structure');
         expect(focus()).toBe('');
         expect(inViewBack()).toBeUndefined();
         expect(back()?.disabled).toBe(true);
-        await doubleClick('[data-system-node="g:api"]');
-        expect(focus()).toBe('g:api');
-        expect(container.querySelector('[data-system-node="member:g:api:api"]')).not.toBeNull();
-        expect(back()?.title).toBe('Back to System structure (Alt+Left)');
-        await press(container.querySelector<HTMLButtonElement>('[data-system-node="g:api"]'));
-        await clickText('Collapse group');
+        await openSystemGroup('code');
+        expect(focus()).toBe('code');
+        expect(container.querySelector('[data-system-node="api"]')).not.toBeNull();
+        expect(back()?.title).toBe('Back to System graph (Alt+Left)');
+        await press(container.querySelector<HTMLElement>('[data-layer="documentation"]'));
         expect(position()).toBe('2/2');
-        expect(container.querySelector('[data-system-node="member:g:api:api"]')).toBeNull();
-        await clickText('Expand group');
+        expect(container.querySelector('[data-system-node="doc"]')).toBeNull();
+        await press(container.querySelector<HTMLElement>('[data-layer="documentation"]'));
         expect(position()).toBe('2/2');
-        await press(container.querySelector<HTMLButtonElement>('[data-system-node="g:service"]'));
-        await clickText('Focus here');
-        expect(focus()).toBe('g:service');
-        expect(back()?.title).toBe('Back to System structure · api · 1 group open (Alt+Left)');
+        await openSystemGroup('deployment');
+        expect(focus()).toBe('deployment');
+        expect(back()?.title).toBe('Back to System graph · Code · 1 group open (Alt+Left)');
         expect(inViewBack()).toBeUndefined();
 
         await goBack();
-        expect(focus()).toBe('g:api');
-        expect(container.querySelector('[data-system-node="member:g:api:api"]')).not.toBeNull();
+        expect(focus()).toBe('code');
+        expect(container.querySelector('[data-system-node="api"]')).not.toBeNull();
         await goBack();
         expect(focus()).toBe('');
-        expect(container.querySelector('[data-system-node="member:g:api:api"]')).toBeNull();
+        expect(container.querySelector('[data-system-node="api"]')).toBeNull();
         expect(back()?.disabled).toBe(true);
         await goForward();
-        expect([view(), focus()]).toEqual(['structure', 'g:api']);
-        await clickText('Whole system');
+        expect([view(), focus()]).toEqual(['structure', 'code']);
+        await clickText('System graph', container.querySelector('[aria-label="System graph location"]')!);
         expect(focus()).toBe('');
         expect(forward()?.disabled).toBe(true);
-        expect(back()?.title).toBe('Back to System structure · api · 1 group open (Alt+Left)');
+        expect(back()?.title).toBe('Back to System graph · Code · 1 group open (Alt+Left)');
     });
 
     it('steps through Behavior starts and followed calls, and an automatic start is no extra step', async () => {
         await render();
         await selectView('structure');
-        await doubleClick('[data-system-node="g:api"]');
+        await openSystemGroup('code');
         await selectView('behavior');
         expect(heading()).toBe('What can main call?');
         expect(position()).toBe('2/2');
-        expect(back()?.title).toBe('Back to System structure (Alt+Left)');
+        expect(back()?.title).toBe('Back to System graph (Alt+Left)');
         await choose('Behavior entry point', '2');
         expect(heading()).toBe('What can handle call?');
         expect(back()?.title).toBe('Back to Behavior · main (Alt+Left)');
@@ -333,23 +345,22 @@ describe('Architecture back and forward (K27)', () => {
         expect(forward()?.title).toBe('Forward to Behavior · main (Alt+Right)');
     });
 
-    it('restores System Plan or 3D with the focused visit without making camera or tab stops', async () => {
+    it('restores System graph 2D or 3D with the focused visit without making camera or tab stops', async () => {
         await render();
         await selectView('structure');
         expect(systemCamera()).toBe('3D');
         expect(container.querySelector('[data-testid="system-scene"]')?.getAttribute('data-planar')).toBe('false');
-        await doubleClick('[data-system-node="g:api"]');
-        await clickText('Plan', container.querySelector('[aria-label="System camera"]')!);
+        await openSystemGroup('code');
+        await clickText('2D', container.querySelector('[aria-label="System graph camera"]')!);
         expect(container.querySelector('[data-testid="system-scene"]')?.getAttribute('data-planar')).toBe('true');
         expect(position()).toBe('2/2');
-        await press(container.querySelector<HTMLButtonElement>('[data-system-node="g:service"]'));
-        await clickText('Focus here');
+        await openSystemGroup('deployment');
         await selectView('overview');
         expect(position()).toBe('3/3');
-        expect(back()?.title).toBe('Back to System structure · api · 1 group open · Plan (Alt+Left)');
+        expect(back()?.title).toBe('Back to System graph · Code · 1 group open · Plan (Alt+Left)');
 
         await goBack();
-        expect([view(), focus(), systemCamera()]).toEqual(['structure', 'g:api', 'Plan']);
+        expect([view(), focus(), systemCamera()]).toEqual(['structure', 'code', '2D']);
         expect(container.querySelector('[data-testid="system-scene"]')?.getAttribute('data-planar')).toBe('true');
         await goBack();
         expect([view(), focus(), systemCamera()]).toEqual(['structure', '', '3D']);
@@ -448,10 +459,10 @@ describe('Architecture back and forward (K27)', () => {
     it('drops the forward branch on a new focus after Back and keeps at most 25 real stops', async () => {
         await render();
         await selectView('structure');
-        await doubleClick('[data-system-node="g:api"]');
-        await doubleClick('[data-system-node="g:service"]');
+        await openSystemGroup('code');
+        await openSystemGroup('deployment');
         await goBack();
-        expect(focus()).toBe('g:api');
+        expect(focus()).toBe('code');
         expect(forward()?.disabled).toBe(false);
         await selectView('behavior');
         expect(position()).toBe('2/3');
@@ -546,7 +557,7 @@ describe('Architecture history controls beside the current location', () => {
             ['overview', '[data-testid="spatial-architecture"]'],
             ['routes', '[data-testid="container-map"]'],
             ['hotspots', '[data-testid="spatial-architecture"]'],
-            ['structure', '[data-testid="system-architecture"]'],
+            ['structure', '[data-testid="system-graph"]'],
             ['behavior', '.behavior-journey'],
         ];
         for (const [name, selector] of contexts) {

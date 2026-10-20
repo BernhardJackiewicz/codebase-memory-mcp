@@ -637,8 +637,8 @@ export default function AtlasChrome(props: AtlasChromeProps): JSX.Element {
                     <nav className="atlas-workspace-tabs" role="tablist" aria-label={workspaceStrings.navigation}>
                         {availableWorkspaces(props.experimentalAgents).map((workspace, index) => (
                             <button type="button" role="tab" key={workspace.id} data-workspace-tab={workspace.id}
-                                tabIndex={(props.workspace ?? 'explore') === workspace.id ? 0 : -1}
-                                aria-selected={(props.workspace ?? 'explore') === workspace.id}
+                                tabIndex={(props.workspace === 'adr' ? 'docs' : props.workspace ?? 'explore') === workspace.id ? 0 : -1}
+                                aria-selected={(props.workspace === 'adr' ? 'docs' : props.workspace ?? 'explore') === workspace.id}
                                 onKeyDown={(event) => {
                                     const choices = availableWorkspaces(props.experimentalAgents);
                                     const next = event.key === 'ArrowRight' ? (index + 1) % choices.length

@@ -126,20 +126,31 @@ function connectionGeometry(source: SystemSceneNode, target: SystemSceneNode, of
 
 interface ConnectionStrand { type: string; geometry: ReturnType<typeof connectionGeometry> }
 
-function Connection({ edge, strands, selected, dimmed, emphasized, onSelect, colorOf }: {
+function Connection({ edge, strands, selected, dimmed, emphasized, onSelect, colorOf, sourceLabel, targetLabel }: {
     edge: SystemSceneEdge; strands: ConnectionStrand[]; selected: boolean;
     dimmed: boolean; emphasized: boolean; onSelect: () => void;
     colorOf: (type: string, types?: readonly string[]) => string;
+    sourceLabel: string; targetLabel: string;
 }) {
     const internal = edge.source === edge.target;
     const opacity = selected ? 0.98 : dimmed ? 0.065 : emphasized ? 0.86 : internal ? 0.15 : 0.34;
     return <group onClick={event => { event.stopPropagation(); onSelect(); }}>
-        {strands.map(({ type, geometry }) => <group key={type}>
-            <Line points={geometry.points} color={colorOf(type)} lineWidth={selected ? 2 : emphasized ? 1.6 : 0.7}
+        {strands.map(({ type, geometry }) => {
+            const tip = geometry.curve.getPoint(0.8), direction = geometry.curve.getTangent(0.8).normalize();
+            const side = direction.clone().cross(new Vector3(0, 1, 0)).normalize();
+            const arrow = [tip.clone().addScaledVector(direction, -4).addScaledVector(side, 2), tip,
+                tip.clone().addScaledVector(direction, -4).addScaledVector(side, -2)];
+            return <group key={type}>
+            <Line points={geometry.points} color={colorOf(type)} lineWidth={selected ? 2.4 : emphasized ? 1.8 : 0.7}
                 transparent opacity={opacity} depthWrite={false} />
-        </group>)}
+            {(edge.directed ?? isDirectedEdge(type)) && (selected || emphasized) && <Line points={arrow}
+                color={colorOf(type)} lineWidth={selected ? 2.4 : 1.8} transparent opacity={opacity} depthWrite={false} />}
+        </group>;
+        })}
         {selected && <Html position={strands[0].geometry.curve.getPoint(0.5).lerp(strands.at(-1)!.geometry.curve.getPoint(0.5), 0.5)} center zIndexRange={[15, 10]} style={{ pointerEvents: 'none' }}>
-            <span className="system-scene-edge-label" style={{ borderColor: colorOf(edge.type, edge.types) }}>{internal ? 'Within group · ' : ''}{edge.types?.length ? edge.types.join(' · ').replaceAll('_', ' ') : edge.type.replaceAll('_', ' ')} · {edge.count}</span>
+            <span className="system-scene-edge-label" data-indexed-direction={edge.directed} style={{ borderColor: colorOf(edge.type, edge.types) }}>
+                {edge.directed !== undefined && <strong>{sourceLabel} {edge.directed ? '→' : '—'} {targetLabel}</strong>}
+                {internal ? 'Within group · ' : ''}{edge.types?.length ? edge.types.join(' · ').replaceAll('_', ' ') : edge.type.replaceAll('_', ' ')} · {edge.count}</span>
         </Html>}
     </group>;
 }
@@ -196,7 +207,8 @@ function NodeLabels({ model, selectedNode, highlightedPathIndex, onSelect, onExp
             if (z < -1 || z > 1) continue;
             const compact = node.kind === 'group' && !node.expanded;
             const { width, height } = journey ? chipForm === 'compact' ? JOURNEY_COMPACT : JOURNEY_CHIP
-                : { width: compact ? 76 : node.parentId ? 110 : node.expanded ? 126 : 96, height: compact ? 24 : 28 };
+                : { width: node.labelSize?.[0] ?? (compact ? 76 : node.parentId ? 110 : node.expanded ? 126 : 96),
+                    height: node.labelSize?.[1] ?? (compact ? 24 : 28) };
             const box = { left: x - width / 2, right: x + width / 2, top: y - height / 2, bottom: y + height / 2 };
             if (!journey && (box.left < 2 || box.right > size.width - 2 || box.top < 2 || box.bottom > size.height - captionHeight)) continue;
             if (!journey && boxes.some(other => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top)) continue;
@@ -233,8 +245,10 @@ function NodeLabels({ model, selectedNode, highlightedPathIndex, onSelect, onExp
             data-selected={selectedNode === node.id} data-focus={model.focusId === node.id}
             data-node-id={node.id} data-position={center(node).toArray().join(',')} data-size={dimensions(node).join(',')}
             data-color={node.visual?.color} data-color-label={node.visual?.label}
+            data-full-label={Boolean(node.labelSize)}
             data-connection-load={loads?.get(node.id)?.links}
-            style={{ '--system-node-tint': node.visual?.color ?? SCENE_PALETTE.node } as CSSProperties}
+            style={{ '--system-node-tint': node.visual?.color ?? SCENE_PALETTE.node,
+                ...(node.labelSize ? { '--system-label-width': `${node.labelSize[0]}px`, '--system-label-height': `${node.labelSize[1]}px` } : {}) } as CSSProperties}
             data-muted={!activeNode(model, node, highlightedPathIndex)} title={`${node.label} · ${node.detail}${loads ? ` · ${loads.get(node.id)?.links ?? 0} visible links · ${loads.get(node.id)?.neighbors ?? 0} connected items` : ''}${node.visual ? ` · ${node.visual.label}${node.visual.basis ? ` (${node.visual.basis})` : ''}` : ''}`}
             type="button" aria-label={`${node.label} · ${node.detail}`} aria-pressed={selectedNode === node.id}
             onClick={() => onSelect(node.id)} onDoubleClick={onExpand && (node.group || presentation === 'journey') ? () => onExpand(node.id) : undefined}>
@@ -281,7 +295,7 @@ export default function SystemArchitectureScene({ model, selectedNode, selectedE
             const types = [...new Set((edge.types?.length ? edge.types : [edge.type]).map(normalizeEdgeType).filter(Boolean))].sort();
             if (!types.length) types.push(normalizeEdgeType(edge.type));
             result.set(edge.id, types.map((type, index) => ({ type,
-                geometry: connectionGeometry(source, target, (offsets.get(edge.id) ?? 0) + (index - (types.length - 1) / 2) * 4.5) })));
+                geometry: connectionGeometry(source, target, (edge.curveOffset ?? 0) + (offsets.get(edge.id) ?? 0) + (index - (types.length - 1) / 2) * 4.5) })));
         }
         return result;
     }, [model.edges, nodes, offsets]);
@@ -289,7 +303,7 @@ export default function SystemArchitectureScene({ model, selectedNode, selectedE
     const colorOf = presentation === 'journey' ? journeyEdgeColor : edgeColor;
     const pulsePaths = useMemo(() => model.edges.flatMap(edge => {
         const dimmed = !activeEdge(model, edge, activePath) || !focusedEdge(edge), emphasized = (model.highlightActive || neighborhood.size > 0) && !dimmed;
-        return (edgeStrands.get(edge.id) ?? []).filter(strand => isDirectedEdge(strand.type)).map(({ type, geometry }) => ({ id: `${edge.id}:${type}`, type, points: geometry.points, color: colorOf(type),
+        return (edgeStrands.get(edge.id) ?? []).filter(strand => edge.directed ?? isDirectedEdge(strand.type)).map(({ type, geometry }) => ({ id: `${edge.id}:${type}`, type, points: geometry.points, color: colorOf(type),
             opacity: edge.id === selectedEdge ? 0.95 : dimmed ? 0.04 : emphasized ? 0.8 : edge.source === edge.target ? 0.22 : 0.65 }));
     }), [model, edgeStrands, activePath, selectedEdge, selectedNode, neighborhood, colorOf]);
     const background = useGraphBackgroundReset(onClearSelection);
@@ -320,7 +334,8 @@ export default function SystemArchitectureScene({ model, selectedNode, selectedE
                 return strands ? <Connection key={edge.id} edge={edge} strands={strands}
                     selected={selectedEdge === edge.id} dimmed={!activeEdge(model, edge, activePath) || !focusedEdge(edge)}
                     emphasized={Boolean((model.highlightActive || neighborhood.size > 0) && activeEdge(model, edge, activePath) && focusedEdge(edge))}
-                    onSelect={() => onSelectEdge(edge.id)} colorOf={colorOf} /> : null;
+                    onSelect={() => onSelectEdge(edge.id)} colorOf={colorOf}
+                    sourceLabel={nodes.get(edge.source)?.label ?? edge.source} targetLabel={nodes.get(edge.target)?.label ?? edge.target} /> : null;
             })}
             <EdgePulseLayer paths={pulsePaths} active={active} />
             {model.nodes.map(node => {

@@ -1,0 +1,47 @@
+#ifndef PREFIX_RUNTIME_H
+#define PREFIX_RUNTIME_H
+#include <stdint.h>
+#include <stddef.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct {
+    uint64_t invocation;
+    uint64_t bindings[128], sites[256];
+    const char *file, *hash, *symbol;
+} PREFIX_frame_t;
+void PREFIX_enter(PREFIX_frame_t *, const char *, const char *, const char *, int);
+void PREFIX_gap(PREFIX_frame_t *, int, const char *);
+void PREFIX_record(PREFIX_frame_t *, int, int, int, int, int, const char *,
+                   int, const void *, size_t, int);
+#ifdef __cplusplus
+}
+#include <type_traits>
+template<class T>
+static inline T PREFIX_probe(PREFIX_frame_t *frame, int site, int line, int slot,
+                            int a, int b, const char *name, int operation, T value) noexcept {
+    const int kind = std::is_integral<T>::value
+        ? (std::is_same<T, bool>::value ? 3 : (std::is_signed<T>::value ? 1 : 2)) : 0;
+    PREFIX_record(frame, site, line, slot, a, b, name, operation, &value, sizeof(value), kind);
+    return value;
+}
+#define PREFIX_PROBE(f,s,l,k,a,b,n,o,v) PREFIX_probe(f,s,l,k,a,b,n,o,v)
+#else
+#define PREFIX_PROBE(f,s,l,k,a,b,n,o,v) __extension__ ({ \
+    __auto_type PREFIX_value = (v); \
+    int PREFIX_kind = _Generic((PREFIX_value), \
+        _Bool: 3, char: ((char)-1 < 0 ? 1 : 2), \
+        signed char: 1, short: 1, int: 1, long: 1, long long: 1, \
+        unsigned char: 2, unsigned short: 2, unsigned int: 2, \
+        unsigned long: 2, unsigned long long: 2, default: 0); \
+    PREFIX_record(f,s,l,k,a,b,n,o,&PREFIX_value,sizeof(PREFIX_value),PREFIX_kind); \
+    PREFIX_value; })
+#endif
+#define PREFIX_PARAM(f,s,l,k,a,b,n,v) PREFIX_PROBE(f,s,l,k,a,b,n,0,v)
+#define PREFIX_READ(f,s,l,k,a,b,n,v) PREFIX_PROBE(f,s,l,k,a,b,n,1,v)
+#define PREFIX_ASSIGN(f,s,l,k,a,b,n,v) PREFIX_PROBE(f,s,l,k,a,b,n,2,v)
+#define PREFIX_TRANSFORM(f,s,l,k,a,b,n,v) PREFIX_PROBE(f,s,l,k,a,b,n,3,v)
+#define PREFIX_RETURN(f,s,l,k,a,b,n,v) PREFIX_PROBE(f,s,l,k,a,b,n,4,v)
+#define PREFIX_FIELD(f,s,l,k,a,b,n,v) PREFIX_PROBE(f,s,l,k,a,b,n,5,v)
+#define PREFIX_OPAQUE(f,s,l,k,a,b,n,v) PREFIX_PROBE(f,s,l,k,a,b,n,6,v)
+#endif

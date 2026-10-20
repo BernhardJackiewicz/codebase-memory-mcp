@@ -1,0 +1,161 @@
+/* Explicit developer build helper. The application only writes bounded local
+ * datagrams; the separately launched Python parent owns HTTP and credentials. */
+#include "runtime.h"
+#include <errno.h>
+#include <pthread.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+static pthread_mutex_t PREFIX_mutex = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t PREFIX_sequence, PREFIX_invocations;
+static int PREFIX_fd = -2;
+static pid_t PREFIX_pid;
+static char PREFIX_fields[16385];
+__attribute__((constructor(101))) static void PREFIX_initialize(void) {
+    const char *setting = getenv("CBM_NATIVE_FD");
+    char *end = NULL;
+    long fd = setting ? strtol(setting, &end, 10) : -1;
+    PREFIX_fd = setting && end && !*end && fd >= 3 && fd <= 1048576 ? (int)fd : -1;
+    const char *fields = getenv("CBM_NATIVE_FIELDS");
+    if (fields && strlen(fields) < sizeof(PREFIX_fields)) memcpy(PREFIX_fields, fields, strlen(fields) + 1);
+    PREFIX_pid = getpid();
+}
+
+typedef struct { char bytes[8192]; size_t used; int failed; } PREFIX_buffer;
+static void PREFIX_append(PREFIX_buffer *out, const char *format, ...) {
+    if (out->failed) return;
+    va_list args;
+    va_start(args, format);
+    int count = vsnprintf(out->bytes + out->used, sizeof(out->bytes) - out->used, format, args);
+    va_end(args);
+    if (count < 0 || (size_t)count >= sizeof(out->bytes) - out->used) out->failed = 1;
+    else out->used += (size_t)count;
+}
+static void PREFIX_string(PREFIX_buffer *out, const char *value) {
+    PREFIX_append(out, "\"");
+    if (value) for (const unsigned char *p = (const unsigned char *)value; *p; ++p) {
+        if (*p < 32 || *p == '"' || *p == '\\') PREFIX_append(out, "\\u%04x", *p);
+        else PREFIX_append(out, "%c", *p);
+    }
+    PREFIX_append(out, "\"");
+}
+static int PREFIX_field_allowed(const char *name) {
+    const char *fields = PREFIX_fields;
+    if (!name || !*name) return 0;
+    size_t length = strlen(name);
+    while (*fields) {
+        const char *end = strchr(fields, '\n');
+        size_t size = end ? (size_t)(end - fields) : strlen(fields);
+        if (size == length && !memcmp(fields, name, length)) return 1;
+        if (!end) break;
+        fields = end + 1;
+    }
+    return 0;
+}
+static void PREFIX_preview(PREFIX_buffer *out, const void *value, size_t size, int kind) {
+    /* Only builtin integral bytes; never user conversions, serializers,
+     * floating-point classification, object memory, pointers or strings. */
+    if (kind == 1) {
+        int64_t number = 0;
+        if (size == 1) { int8_t v; memcpy(&v, value, 1); number = v; }
+        else if (size == 2) { int16_t v; memcpy(&v, value, 2); number = v; }
+        else if (size == 4) { int32_t v; memcpy(&v, value, 4); number = v; }
+        else if (size == 8) memcpy(&number, value, 8);
+        else return;
+        if (number >= -INT64_C(9007199254740991) && number <= INT64_C(9007199254740991))
+            PREFIX_append(out, ",\"preview\":%lld", (long long)number);
+    } else if (kind == 2 || kind == 3) {
+        uint64_t number = 0;
+        if (size == 1) { uint8_t v; memcpy(&v, value, 1); number = v; }
+        else if (size == 2) { uint16_t v; memcpy(&v, value, 2); number = v; }
+        else if (size == 4) { uint32_t v; memcpy(&v, value, 4); number = v; }
+        else if (size == 8) memcpy(&number, value, 8);
+        else return;
+        if (kind == 3) PREFIX_append(out, ",\"preview\":%s", number ? "true" : "false");
+        else if (number <= UINT64_C(9007199254740991))
+            PREFIX_append(out, ",\"preview\":%llu", (unsigned long long)number);
+    }
+}
+/* Caller holds the mutex. A dropped datagram leaves a sequence gap, never
+ * a silently renumbered connection. Recording after fork is disabled. */
+static uint64_t PREFIX_emit(PREFIX_frame_t *frame, const char *operation, int line,
+                            const char *name, const char *detail, uint64_t a, uint64_t b,
+                            const void *value, size_t size, int kind) {
+    if (PREFIX_fd < 0 || PREFIX_pid != getpid() || PREFIX_sequence >= 10000) return 0;
+    uint64_t sequence = ++PREFIX_sequence;
+    if (sequence == 10000) {
+        operation = "gap"; detail = "Producer event budget reached; subsequent execution is unobserved";
+        a = b = 0; name = "";
+    }
+    PREFIX_buffer out = {{0}, 0, 0};
+    PREFIX_append(&out, "{\"sequence\":%llu,\"operation\":", (unsigned long long)sequence);
+    PREFIX_string(&out, operation);
+    PREFIX_append(&out, ",\"invocation_id\":\"i%llu\",\"value_id\":\"v%llu\",\"inputs\":[",
+                  (unsigned long long)frame->invocation, (unsigned long long)sequence);
+    if (a) PREFIX_append(&out, "\"v%llu\"", (unsigned long long)a);
+    if (b && b != a) PREFIX_append(&out, "%s\"v%llu\"", a ? "," : "", (unsigned long long)b);
+    PREFIX_append(&out, "]");
+    if (name && *name) { PREFIX_append(&out, ",\"access_path\":"); PREFIX_string(&out, name); }
+    if (detail && *detail) { PREFIX_append(&out, ",\"detail\":"); PREFIX_string(&out, detail); }
+    PREFIX_append(&out, ",\"source\":{\"file_path\":"); PREFIX_string(&out, frame->file);
+    PREFIX_append(&out, ",\"source_hash\":"); PREFIX_string(&out, frame->hash);
+    PREFIX_append(&out, ",\"symbol\":"); PREFIX_string(&out, frame->symbol);
+    PREFIX_append(&out, ",\"line\":%d}", line);
+    if (value && PREFIX_field_allowed(name)) PREFIX_preview(&out, value, size, kind);
+    PREFIX_append(&out, "}");
+    if (out.failed) return 0;
+    int flags = MSG_DONTWAIT;
+#ifdef MSG_NOSIGNAL
+    flags |= MSG_NOSIGNAL;
+#endif
+    ssize_t sent = send(PREFIX_fd, out.bytes, out.used, flags);
+    if (sent != (ssize_t)out.used) return 0;
+    return strcmp(operation, "gap") == 0 ? 0 : sequence;
+}
+void PREFIX_enter(PREFIX_frame_t *frame, const char *file, const char *hash,
+                   const char *symbol, int line) {
+    (void)line;
+    int saved_errno = errno;
+    memset(frame, 0, sizeof(*frame));
+    frame->file = file; frame->hash = hash; frame->symbol = symbol;
+    if (PREFIX_pid != getpid() || PREFIX_fd < 0) { errno = saved_errno; return; }
+    pthread_mutex_lock(&PREFIX_mutex);
+    frame->invocation = ++PREFIX_invocations;
+    pthread_mutex_unlock(&PREFIX_mutex);
+    errno = saved_errno;
+}
+void PREFIX_gap(PREFIX_frame_t *frame, int line, const char *detail) {
+    int saved_errno = errno;
+    memset(frame->bindings, 0, sizeof(frame->bindings));
+    memset(frame->sites, 0, sizeof(frame->sites));
+    if (!frame->invocation || PREFIX_pid != getpid()) { errno = saved_errno; return; }
+    pthread_mutex_lock(&PREFIX_mutex);
+    PREFIX_emit(frame, "gap", line, "", detail, 0, 0, NULL, 0, 0);
+    pthread_mutex_unlock(&PREFIX_mutex);
+    errno = saved_errno;
+}
+void PREFIX_record(PREFIX_frame_t *frame, int site, int line, int slot, int a, int b,
+                    const char *name, int operation, const void *value, size_t size, int kind) {
+    int saved_errno = errno;
+    if (!frame->invocation || PREFIX_pid != getpid()) return;
+    if (site < 0 || site >= 256 || slot >= 128 || a >= 256 || b >= 256) return;
+    if (operation == 5 || operation == 6)
+        PREFIX_gap(frame, line, operation == 5
+            ? "Field read observed once; alias/heap transport has no proof"
+            : "Opaque call executes unchanged; caller context and storage effects have no proof");
+    uint64_t first = a >= 0 ? frame->sites[a] : 0;
+    uint64_t second = b >= 0 ? frame->sites[b] : 0;
+    const char *names[] = {"value", "copy", "copy", "transform", "return", "field", "value"};
+    if (operation < 0 || operation > 6) return;
+    if (operation == 1) first = slot >= 0 ? frame->bindings[slot] : 0;
+    pthread_mutex_lock(&PREFIX_mutex);
+    uint64_t id = PREFIX_emit(frame, names[operation], line, name, "", first, second, value, size, kind);
+    pthread_mutex_unlock(&PREFIX_mutex);
+    frame->sites[site] = id;
+    if (slot >= 0 && (operation == 0 || operation == 2)) frame->bindings[slot] = id;
+    errno = saved_errno;
+}

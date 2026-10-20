@@ -1,0 +1,42 @@
+.field-flow,.verified-source{color:var(--text,#cedbd4);font-size:12px;line-height:1.55}
+.field-flow{border-top:1px solid var(--border,#274238);margin-top:16px;padding-top:16px}
+.field-flow h3,.field-flow h4,.verified-source h4{margin:0;font-size:14px;font-weight:600}
+.field-flow p,.verified-source p{margin:8px 0;color:var(--muted,#9cafA5)}
+.field-flow-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.field-flow-heading>span{color:var(--muted,#9cafa5);font-size:11px}
+.field-flow button,.verified-source button{border:1px solid var(--border,#274238);background:var(--surface,#102018);color:inherit;border-radius:4px;padding:7px 10px;text-align:left;cursor:pointer}
+.field-flow button:hover,.verified-source button:hover{border-color:var(--accent,#42f5b3)}
+.field-flow button:disabled,.verified-source button:disabled{opacity:.5;cursor:default}
+.field-flow button[aria-pressed=true]{border-color:var(--accent,#42f5b3);background:#17382a}
+.field-flow-form{display:grid;grid-template-columns:minmax(180px,1.2fr) minmax(160px,1fr) minmax(220px,1.3fr) 120px;gap:10px;margin:16px 0}
+.field-flow-form label{display:flex;flex-direction:column;gap:5px;color:var(--muted,#9cafa5);font-size:11px}
+.field-flow input{width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border,#274238);background:var(--surface,#0c1712);border-radius:4px;color:var(--text,#cedbd4);font:inherit}
+.field-flow-directions{display:flex;gap:4px;align-items:center}
+.field-flow-form>button{justify-self:start;align-self:end}
+.field-flow-boundary{padding:12px 14px;margin:12px 0;border-left:2px solid #ad9259;background:var(--surface,#102018)}
+.field-flow-candidates{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:8px;padding:0;list-style:none}
+.field-flow-candidates button{width:100%;height:100%}
+.field-flow-candidates strong,.field-flow-candidates span,.field-flow-candidates small,.field-flow-path strong,.field-flow-path small{display:block;overflow-wrap:anywhere}
+.field-flow-candidates small,.field-flow-path small{color:var(--muted,#9cafa5)}
+.field-flow-paths{display:flex;flex-direction:column;gap:12px;margin:14px 0}
+.field-flow-path{display:flex;align-items:stretch;gap:0;list-style:none;margin:0;padding:4px 0 12px;overflow-x:auto}
+.field-flow-path li{display:flex;align-items:center;gap:12px;flex:0 0 auto}
+.field-flow-path button{min-width:180px;max-width:260px;height:100%}
+.field-flow-step{max-width:150px;text-align:center;padding:0 12px;font-size:11px;flex:0 0 auto}
+[data-field-certainty=proven]{color:#9dd9ba}[data-field-certainty=derived]{color:#a9b9e8}[data-field-certainty=may]{color:#d8bb74}[data-field-certainty=control],[data-field-certainty=unknown]{color:#bca69c}
+.field-flow-detail{padding:12px 14px;border-left:2px solid var(--accent,#42f5b3);background:#0d1c15}
+.field-flow-identity{font-size:11px;overflow-wrap:anywhere}
+.field-flow-anchors{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}
+.field-flow-operation{border-top:1px solid var(--border,#274238);padding:8px 0}
+.field-flow-provenance{display:grid;grid-template-columns:minmax(130px,auto) minmax(0,1fr);gap:5px 14px;margin:12px 0;font-size:11px}
+.field-flow-provenance dt{color:var(--muted,#9cafa5)}
+.field-flow-provenance dd{margin:0;overflow-wrap:anywhere}
+.field-flow-resolution{padding:10px 12px;margin-top:12px;border:1px solid var(--border,#274238);border-radius:4px}
+.field-flow-gaps{margin:14px 0}.field-flow-gaps summary{cursor:pointer}
+.field-flow-gaps ul{list-style:none;padding:0}.field-flow-gaps li{border-left:2px solid #ad9259;padding:7px 12px;margin:8px 0}
+.field-flow-gaps li>span,.field-flow-gaps li>small{display:block}
+.verified-source{margin-top:14px;padding:14px;border:1px solid #70b8bb;background:#0a1611;border-radius:6px}
+.verified-source pre{margin:12px 0 0;padding:12px;max-height:400px;overflow:auto;background:#07100c;border:1px solid var(--border,#274238)}
+.verified-source-line>span{display:inline-block;min-width:4ch;text-align:right;margin-right:2ch;color:var(--muted,#9cafa5);user-select:none}
+@media(max-width:900px){.field-flow-form{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.field-flow-form{grid-template-columns:1fr}.field-flow-path button{min-width:150px}}

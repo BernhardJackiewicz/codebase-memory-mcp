@@ -1,0 +1,37 @@
+.system-graph .atlas-arch-context { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.system-graph .atlas-arch-context nav { display: flex; align-items: center; gap: 12px; margin-right: auto; }
+.system-graph .atlas-arch-context nav button { color: var(--arch-text); font: inherit; background: none; border: 0; padding: 0; }
+.system-graph .atlas-arch-context nav span { color: var(--arch-muted); font-size: 12px; }
+.system-graph-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; margin: 12px 0; }
+.system-graph-toolbar .atlas-arch-filter { flex: 1; min-width: min(280px, 100%); display: grid; gap: 6px; }
+.system-graph-search-label { font-size: 11px; color: var(--arch-muted); }
+.system-graph-toolbar input { min-width: 0; width: 100%; box-sizing: border-box; font: inherit; padding: 8px 10px; color: var(--arch-text); border: 1px solid var(--arch-line); border-radius: 6px; background: var(--arch-panel); }
+.system-graph-layers { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.system-graph-layers button { font: inherit; font-size: 11px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--arch-line); background: transparent; color: var(--arch-muted); }
+.system-graph-layers button[aria-pressed=true] { background: var(--arch-accent-bg); color: var(--arch-text); border-color: var(--arch-accent-line); }
+.system-graph button:focus-visible, .system-graph input:focus-visible, .system-graph summary:focus-visible { outline: 2px solid var(--arch-accent); outline-offset: 3px; }
+.system-graph .system-workspace { grid-template-columns: minmax(0, 1fr) minmax(240px, 280px); }
+.system-graph .system-map { height: clamp(380px, calc(100dvh - 360px), 800px); }
+.system-graph .system-inspector { max-height: clamp(380px, calc(100dvh - 360px), 800px); font-size: 12px; line-height: 1.5; }
+.system-graph-identity { overflow-wrap: anywhere; color: var(--arch-muted); font-size: 11px; }
+.system-graph-entity-list, .system-graph-witnesses { list-style: none; margin: 10px 0; padding: 0; }
+.system-graph-entity-list li + li, .system-graph-witnesses li + li { border-top: 1px solid var(--arch-line); }
+.system-graph-entity-list button { display: block; width: 100%; border: 0; background: transparent; color: var(--arch-text); text-align: left; padding: 8px 0; font: inherit; overflow-wrap: anywhere; }
+.system-graph-entity-list button:hover { color: var(--arch-accent); }
+.system-graph-entity-list small { display: block; color: var(--arch-muted); font-size: 11px; }
+.system-graph-witnesses li { display: grid; gap: 6px; padding: 8px 0; color: var(--arch-muted); }
+.system-graph-relation-proof + .system-graph-relation-proof { border-top: 1px solid var(--arch-line); padding-top: 8px; }
+.system-graph-catalog, .system-graph-coverage { color: var(--arch-muted); font-size: 12px; line-height: 1.5; border-bottom: 1px solid var(--arch-line); padding: 12px 0; }
+.system-graph-catalog summary, .system-graph-coverage summary { cursor: pointer; color: var(--arch-text); }
+.system-graph-catalog > .system-graph-entity-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr)); gap: 0 24px; }
+.system-graph-limit { font-size: 12px; line-height: 1.5; color: var(--arch-muted); }
+.system-graph-capture { padding: 14px 0; font-size: 12px; color: var(--arch-text); }
+.system-graph-capture > summary { cursor: pointer; }
+.system-graph .system-scene-node-label[data-full-label=true] { width: var(--system-label-width); height: var(--system-label-height); }
+.system-graph .system-scene-node-label[data-full-label=true] strong { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+.system-graph .system-scene-edge-label strong { display: block; font-weight: 500; margin-bottom: 3px; }
+.system-graph .system-scene-edge-label { width: max-content; min-width: 160px; max-width: 240px; }
+@media (max-width: 900px) {
+    .system-graph .system-workspace { grid-template-columns: minmax(0, 1fr); }
+    .system-graph .system-inspector { border-left: 0; border-top: 1px solid var(--arch-line); max-height: 320px; }
+}

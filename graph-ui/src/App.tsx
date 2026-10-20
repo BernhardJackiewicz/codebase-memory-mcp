@@ -120,7 +120,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AtlasChrome, { CLOSE_COMMAND_SEARCH_EVENT, OPEN_COMMAND_SEARCH_EVENT } from './app/AtlasChrome';
 import { AtlasTreeIndexDetails } from './app/AtlasTree';
 import ArchitecturePanel from './architecture/ArchitecturePanel';
-import AdrWorkspace from './adr/AdrWorkspace';
+import DocumentsWorkspace from './documents/DocumentsWorkspace';
+import type { DocumentNavigationTarget } from './documents/documents-source';
 import SelectionContextPanel, { type SelectionScope } from './why/SelectionContext';
 import FileImpactSummary from './impact/FileImpactSummary';
 import SourceEvidenceDrawer, { fileQualifiedName, type SourceEvidenceTarget } from './architecture/SourceEvidenceDrawer';
@@ -1150,6 +1151,7 @@ function ProjectWindowView({ projectWindow }: { projectWindow: ProjectWindow<Win
     const [galaxyOn, setGalaxyOn] = useState(true);
     const [layout, setLayout] = useState<GraphData | undefined>(undefined);
     const [sourceEvidence, setSourceEvidence] = useState<{ project: string; target: SourceEvidenceTarget }>();
+    const [documentEvidence, setDocumentEvidence] = useState<{ project: string; target: DocumentNavigationTarget }>();
     const [hits, setHits] = useState<RankedHit[]>(noHits);
     const [selectedHit, setSelectedHit] = useState(0);
     const [searchStatus, setSearchStatus] = useState<SearchOverlayStatus>('ready');
@@ -4512,6 +4514,11 @@ function ProjectWindowView({ projectWindow }: { projectWindow: ProjectWindow<Win
     const navigateEvidence = (filePath: string, line?: number, name?: string): void => {
         setSourceEvidence({ project, target: { filePath, line, name } });
     };
+    const navigateDocumentEvidence = (target: DocumentNavigationTarget): void => {
+        setSourceEvidence(undefined);
+        setDocumentEvidence({ project, target });
+        changeWorkspace('docs');
+    };
     const readMapSource = useCallback(async (path: string, startLine = 1, maxLines = 65) => {
         const qualifiedName = fileQualifiedName(repositoryReading.snapshot, path);
         if (!qualifiedName) throw new Error(workspaceText.sourceOutsideSnapshot);
@@ -4865,15 +4872,18 @@ function ProjectWindowView({ projectWindow }: { projectWindow: ProjectWindow<Win
                     onSelect={selectMapNode}
                     loading={overviewLoading} error={overviewError}
                     onRefresh={() => setOverviewRevision((value) => value + 1)}
-                    onNavigate={navigateEvidence} />
+                    onNavigate={navigateEvidence} onOpenDocument={navigateDocumentEvidence} />
                 </div>
                 {experimentalAgentsEnabled && <div hidden={workspace !== 'agents'}>
                 <ActivityPanel project={project} api={api} state={agents.state} status={agents.status} on={liveAgentsOn} port={bridgePort}
                     graph={evidenceGraph} onToggle={() => setLiveAgentsOn((value) => !value)}
                     onOpenNode={(node) => { setWorkspace('explore'); openGalaxyNode(node); }} />
                 </div>}
-                <div className="atlas-adr-host" hidden={workspace !== 'adr'}>
-                    <AdrWorkspace key={project} project={project} source={projectsSource} active={workspace === 'adr'} />
+                <div className="atlas-docs-host" hidden={workspace !== 'docs' && workspace !== 'adr'}>
+                    <DocumentsWorkspace key={project} project={project} adrSource={projectsSource}
+                        active={workspace === 'docs' || workspace === 'adr'} initialTab={workspace === 'adr' ? 'adr' : 'documents'}
+                        openDocument={documentEvidence?.project === project ? documentEvidence.target : undefined}
+                        onNavigate={navigateEvidence} onSelectionEvidence={onSelectionEvidence} />
                 </div>
                 <div hidden={workspace !== 'system'}>
                     <SystemWorkspace api={api} listProjects={projectsSource.listProjects} project={project} active={workspace === 'system'} version={ATLAS_VERSION}

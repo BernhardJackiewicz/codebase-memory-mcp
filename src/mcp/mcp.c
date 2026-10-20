@@ -61,6 +61,7 @@ enum {
 #include "mcp/test_impact_engine.h"
 #include "store/graph_mem.h"
 #include "store/store.h"
+#include "store/flow_ir.h"
 #include "store/store_impact.h"
 #include <sqlite3.h>
 #include "cypher/cypher.h"
@@ -646,6 +647,27 @@ static const tool_def_t TOOLS[] = {
      "\"description\":\"Add resolver class and confidence.\"}},"
      "\"required\":[\"function_name\",\"project\"]}"},
 
+    {"trace_field",
+     "Slice versioned static field-value dependencies with source evidence and matched call/return "
+     "contexts. Unknowns remain gaps; this does not report runtime values. Ambiguous source "
+     "occurrences return selection_required and candidate values.",
+     "{\"type\":\"object\",\"properties\":{"
+     "\"project\":{\"type\":\"string\"},\"expected_generation\":{\"type\":\"string\"},"
+     "\"source\":{\"type\":\"object\",\"properties\":{"
+     "\"value_id\":{\"type\":\"string\"},\"file_path\":{\"type\":\"string\"},"
+     "\"symbol\":{\"type\":\"string\"},"
+     "\"access_path\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"maxItems\":32},"
+     "\"start_byte\":{\"type\":\"integer\",\"minimum\":0}},"
+     "\"description\":\"value_id or file_path with optional symbol, field segments and exact "
+     "start_byte. Select a candidate if several values match.\",\"additionalProperties\":false},"
+     "\"direction\":{\"type\":\"string\",\"enum\":[\"forward\",\"backward\"],\"default\":"
+     "\"forward\"},"
+     "\"max_depth\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":128,\"default\":32},"
+     "\"max_paths\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":128,\"default\":32},"
+     "\"max_states\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":16384,\"default\":4096},"
+     "\"max_call_depth\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":8,\"default\":4}},"
+     "\"required\":[\"project\",\"source\"],\"additionalProperties\":false}"},
+
     {"get_code_snippet",
      "Read a search_graph symbol. auto bounds source and outlines large containers; full "
      "restores up to 500 lines. Source/outline pages continue; coverage_note marks gaps.",
@@ -704,16 +726,18 @@ static const tool_def_t TOOLS[] = {
     {"get_architecture",
      "Bounded static architecture; poll pending jobs. include_behavior_evidence=true adds "
      "indexed call arguments, parameter declarations and return types; not full dataflow or "
-     "runtime traces.",
+     "runtime traces. system_graph projects indexed code, data, documentation and deployment "
+     "relationships with source witnesses.",
      /* The aspects enum mirrors VALID_ASPECTS (see aspect_is_valid) — update both together. */
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},\"path\":{\"type\":"
      "\"string\",\"description\":\"Directory prefix.\"},"
      "\"aspects\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"enum\":[\"all\","
      "\"overview\",\"structure\",\"dependencies\",\"routes\",\"languages\",\"packages\","
      "\"entry_points\",\"hotspots\",\"boundaries\",\"layers\",\"file_tree\",\"clusters\","
-     "\"cycles\",\"system_structure\"]},"
+     "\"cycles\",\"system_structure\",\"system_graph\"]},"
      "\"description\":\"Default: languages/packages/entry_points. overview omits file_tree. "
-     "cycles/system_structure opt-in; system_structure alone, no path.\"},"
+     "cycles/system_structure/system_graph opt-in; system_structure or system_graph alone, "
+     "no path. system_graph has no symbol selectors.\"},"
      "\"entry_node_id\":{\"type\":\"integer\",\"minimum\":1,"
      "\"description\":\"Start symbol.\"},"
      "\"target_node_id\":{\"type\":\"integer\",\"minimum\":1,"
@@ -900,6 +924,7 @@ static const tool_annotation_def_t TOOL_ANNOTATIONS[] = {
     {"search_graph", true, false, true, false},
     {"query_graph", true, false, true, false},
     {"trace_path", true, false, true, false},
+    {"trace_field", true, false, true, false},
     {"get_code_snippet", true, false, true, false},
     {"get_file_outline", true, false, true, false},
     {"get_graph_schema", true, false, true, false},
@@ -970,7 +995,7 @@ static bool mcp_tool_allowed(cbm_mcp_tool_profile_t profile, const char *name) {
         "search_graph",     "query_graph",      "trace_path",     "get_code_snippet",
         "get_file_outline", "get_graph_schema", "compare_graphs", "get_architecture",
         "search_code",      "list_projects",    "index_status",   "check_index_coverage",
-        "detect_changes",
+        "detect_changes",   "trace_field",
     };
     static const char *const scout_tools[] = {
         "search_graph",     "trace_path",    "get_code_snippet", "get_file_outline",
@@ -7558,10 +7583,10 @@ static char *handle_delete_project(cbm_mcp_server_t *srv, const char *args) {
  * of truth for the server-side validation (authoritative); the JSON-Schema
  * enum in the TOOLS entry above is the advisory client-side mirror — update
  * both together when the aspect set changes. */
-static const char *VALID_ASPECTS[] = {"all",      "overview",   "structure",        "dependencies",
-                                      "routes",   "languages",  "packages",         "entry_points",
-                                      "hotspots", "boundaries", "layers",           "file_tree",
-                                      "clusters", "cycles",     "system_structure", NULL};
+static const char *VALID_ASPECTS[] = {
+    "all",      "overview",     "structure",        "dependencies", "routes", "languages",
+    "packages", "entry_points", "hotspots",         "boundaries",   "layers", "file_tree",
+    "clusters", "cycles",       "system_structure", "system_graph", NULL};
 
 /* ── SCC / cycle condensation (get_architecture "cycles") ─────────
  * Iterative Tarjan over the CALLS call graph. Recursion would overflow on a
@@ -8022,6 +8047,120 @@ static char *arch_node_qn(cbm_store_t *store, int64_t id) {
     return out;
 }
 
+static char *handle_trace_field(cbm_mcp_server_t *srv, const char *args) {
+    yyjson_doc *doc = yyjson_read(args, strlen(args), 0);
+    yyjson_val *root = doc ? yyjson_doc_get_root(doc) : NULL;
+    /* The source snapshot names the exact indexed project; borrow its name
+     * from the request for the lifetime of this read instead of allocating it. */
+    const char *project = yyjson_get_str(yyjson_obj_get(root, "project"));
+    cbm_store_t *store = resolve_store(srv, project);
+    if (!store) {
+        yyjson_doc_free(doc);
+        return cbm_mcp_text_result(
+            "No indexed project found. Select an indexed project before tracing fields.", true);
+    }
+    yyjson_val *source = yyjson_obj_get(root, "source");
+    char *access_path = NULL, *json = NULL, *reply = NULL;
+    cbm_flow_trace_options_t options = {0};
+    const char *error = NULL;
+    if (!yyjson_is_obj(source)) {
+        error = "source must identify a value_id or file_path and optional occurrence fields.";
+        goto finish;
+    }
+    yyjson_val *id = yyjson_obj_get(source, "value_id");
+    yyjson_val *file = yyjson_obj_get(source, "file_path");
+    yyjson_val *symbol = yyjson_obj_get(source, "symbol");
+    yyjson_val *path = yyjson_obj_get(source, "access_path");
+    yyjson_val *start = yyjson_obj_get(source, "start_byte");
+    if ((id && (!yyjson_is_str(id) || !yyjson_get_len(id) || file || symbol || path || start)) ||
+        (!id && (!yyjson_is_str(file) || !yyjson_get_len(file))) ||
+        (symbol && (!yyjson_is_str(symbol) || !yyjson_get_len(symbol))) ||
+        (start && (!yyjson_is_int(start) || yyjson_get_sint(start) < 0 ||
+                   yyjson_get_sint(start) > INT32_MAX))) {
+        error = "source requires value_id alone, or file_path with optional symbol, access_path "
+                "and nonnegative start_byte.";
+        goto finish;
+    }
+    options.value_id = yyjson_get_str(id);
+    options.file_path = yyjson_get_str(file);
+    options.symbol = yyjson_get_str(symbol);
+    options.has_start_byte = start != NULL;
+    options.start_byte = start ? (int)yyjson_get_sint(start) : 0;
+    if (path) {
+        bool valid = yyjson_is_arr(path) && yyjson_arr_size(path) <= 32;
+        size_t i, count;
+        yyjson_val *segment;
+        yyjson_arr_foreach(path, i, count,
+                           segment) if (!yyjson_is_str(segment) || !yyjson_get_len(segment) ||
+                                        yyjson_get_len(segment) > 512) valid = false;
+        if (!valid) {
+            error = "source.access_path must be an array of at most 32 nonempty field segments.";
+            goto finish;
+        }
+        access_path = yyjson_val_write_opts(path, 0, cbm_json_writer_allocator(), NULL, NULL);
+        if (!access_path) {
+            error = "Field source allocation failed.";
+            goto finish;
+        }
+        options.access_path = access_path;
+    }
+    yyjson_val *direction = yyjson_obj_get(root, "direction");
+    if (direction &&
+        (!yyjson_is_str(direction) || (strcmp(yyjson_get_str(direction), "forward") != 0 &&
+                                       strcmp(yyjson_get_str(direction), "backward") != 0))) {
+        error = "direction must be forward or backward.";
+        goto finish;
+    }
+    options.backward = direction && strcmp(yyjson_get_str(direction), "backward") == 0;
+    yyjson_val *generation = yyjson_obj_get(root, "expected_generation");
+    if (generation && (!yyjson_is_str(generation) || !yyjson_get_len(generation) ||
+                       yyjson_get_len(generation) >= 64)) {
+        error = "expected_generation must be a nonempty store generation token.";
+        goto finish;
+    }
+    options.expected_generation = yyjson_get_str(generation);
+    if (options.expected_generation) {
+        char current[64];
+        if (cbm_store_generation(store, current, sizeof(current)) != CBM_STORE_OK ||
+            strcmp(current, options.expected_generation) != 0) {
+            error = "The selected field-flow generation changed. Reload source occurrences.";
+            goto finish;
+        }
+    }
+    struct {
+        const char *name;
+        int *output;
+        int maximum;
+    } bounds[] = {{"max_depth", &options.max_depth, 128},
+                  {"max_paths", &options.max_paths, 128},
+                  {"max_states", &options.max_states, 16384},
+                  {"max_call_depth", &options.max_call_depth, 8}};
+    for (size_t i = 0; i < sizeof(bounds) / sizeof(bounds[0]); i++) {
+        yyjson_val *value = yyjson_obj_get(root, bounds[i].name);
+        if (!value)
+            continue;
+        if (!yyjson_is_int(value) || yyjson_get_sint(value) < 1 ||
+            yyjson_get_sint(value) > bounds[i].maximum) {
+            error = "Field-flow bounds must be positive integers within the advertised limits.";
+            goto finish;
+        }
+        *bounds[i].output = (int)yyjson_get_sint(value);
+    }
+    int rc = cbm_flow_ir_trace(store, project, &options, &json);
+    if (rc == CBM_STORE_NOT_FOUND)
+        error = "Field-flow IR is not indexed for this source. Reindex with supported adapters.";
+    else if (rc == CBM_STORE_SCAN_LIMIT)
+        error = "Field-flow analysis reached its resource bound. Narrow the source or depth.";
+    else if (rc != CBM_STORE_OK || !json)
+        error = "Could not read field-flow IR or its selected generation.";
+finish:
+    reply = cbm_mcp_text_result(error ? error : json, error != NULL);
+    cbm_free(CBM_MEM_CLASS_OTHER, json);
+    cbm_free(CBM_MEM_CLASS_OTHER, access_path);
+    yyjson_doc_free(doc);
+    return reply;
+}
+
 static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
     char *project = get_project_arg(args);
     cbm_store_t *store = resolve_store(srv, project);
@@ -8107,6 +8246,30 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
             result = cbm_mcp_text_result(msg, true);
             goto release_arguments;
         }
+    }
+
+    if (aspect_explicitly_named(aspects_arr, "system_graph")) {
+        yyjson_val *root = yyjson_doc_get_root(aspects_doc);
+        yyjson_val *generation = yyjson_obj_get(root, "expected_generation");
+        bool valid_generation =
+            !generation || (yyjson_is_str(generation) && yyjson_get_len(generation) > 0 &&
+                            yyjson_get_len(generation) < 64);
+        if (yyjson_arr_size(aspects_arr) != 1 || (scope_path && scope_path[0]) ||
+            yyjson_obj_get(root, "entry_node_id") || yyjson_obj_get(root, "target_node_id") ||
+            !valid_generation) {
+            result = cbm_mcp_text_result(
+                "Request system_graph alone, without path or symbol selectors; "
+                "expected_generation must be a nonempty store generation token.",
+                true);
+        } else {
+            char *json = cbm_architecture_jobs_request_system_graph(
+                srv->architecture_jobs, store, project,
+                generation ? yyjson_get_str(generation) : NULL);
+            result = cbm_mcp_text_result(json ? json : "Architecture request allocation failed.",
+                                         json == NULL);
+            cbm_free(CBM_MEM_CLASS_OTHER, json);
+        }
+        goto release_arguments;
     }
 
     if (aspect_explicitly_named(aspects_arr, "system_structure")) {
@@ -20520,6 +20683,9 @@ static char *dispatch_tool(cbm_mcp_server_t *srv, const char *tool_name, const c
     }
     if (strcmp(tool_name, "trace_path") == 0 || strcmp(tool_name, "trace_call_path") == 0) {
         return handle_trace_call_path(srv, args_json);
+    }
+    if (strcmp(tool_name, "trace_field") == 0) {
+        return handle_trace_field(srv, args_json);
     }
     if (strcmp(tool_name, "get_architecture") == 0) {
         return handle_get_architecture(srv, args_json);

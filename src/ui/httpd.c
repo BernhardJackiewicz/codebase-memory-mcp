@@ -6,6 +6,7 @@
  * single-threaded, localhost-only, strict CRLF, Connection: close).
  */
 #include "ui/httpd.h"
+#include "foundation/secure_random.h"
 #include "foundation/compat_thread.h"
 
 #include <ctype.h>
@@ -543,6 +544,8 @@ int cbm_http_parse_head(const char *data, size_t len, cbm_http_req_t *req, size_
     bool have_host = false;
     bool have_content_type = false;
     bool have_accept_language = false;
+    bool have_authorization = false;
+    bool have_content_encoding = false;
     const char *p = line_end + 2;
     const char *head_stop = data + head_end - 2; /* start of final CRLF */
     while (p < head_stop) {
@@ -574,6 +577,16 @@ int cbm_http_parse_head(const char *data, size_t len, cbm_http_req_t *req, size_
                                                            sizeof(req->accept_language)))
                 return have_accept_language ? 400 : 431;
             have_accept_language = true;
+        } else if (header_name_is(p, nlen, "authorization")) {
+            if (have_authorization ||
+                !copy_header_value(colon + 1, eol, req->authorization, sizeof(req->authorization)))
+                return have_authorization ? 400 : 431;
+            have_authorization = true;
+        } else if (header_name_is(p, nlen, "content-encoding")) {
+            if (have_content_encoding || !copy_header_value(colon + 1, eol, req->content_encoding,
+                                                            sizeof(req->content_encoding)))
+                return have_content_encoding ? 400 : 431;
+            have_content_encoding = true;
         } else if (header_name_is(p, nlen, "transfer-encoding")) {
             /* Chunked (or any transfer coding) is not supported. */
             return 411;
@@ -699,10 +712,14 @@ int cbm_httpd_read_request(cbm_http_conn_t *c, cbm_http_req_t *req) {
 
 void cbm_http_req_free(cbm_http_req_t *req) {
     if (req && req->body) {
+        if (strncmp(req->path, "/v1/", 4) == 0 || strncmp(req->path, "/api/capture/", 13) == 0)
+            cbm_secure_zero(req->body, req->body_len);
         free(req->body);
         req->body = NULL;
         req->body_len = 0;
     }
+    if (req)
+        cbm_secure_zero(req->authorization, sizeof(req->authorization));
 }
 
 /* ── Responses ────────────────────────────────────────────────── */

@@ -73,6 +73,9 @@ graph-ui/.npm-cache-local/
 __pycache__/
 *.pyc
 
+# Reproducible adapter downloads generated before the Lens build.
+/graph-ui/public/capture-adapters/
+
 # Local soak-leg outputs (uploaded as CI artifacts, never committed)
 soak-results/
 soak-results-query-leak/

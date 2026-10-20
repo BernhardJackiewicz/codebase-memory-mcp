@@ -75,8 +75,8 @@ describe('the Architecture history entry (K27)', () => {
         expect(architectureEntryLabel(at({ view: 'routes', routes: 'endpoints', filter: '/edit' }))).toBe('Routes · Endpoints · /edit');
         expect(architectureEntryLabel(at({ view: 'hotspots', spatial: { planar: false, hotspotArea: 'django/db' } }))).toBe('Hotspots · django/db');
         expect(architectureEntryLabel(at({ view: 'structure', system: { expanded: ['g:django'], focus: { id: 'g:django', label: 'django' } } })))
-            .toBe('System structure · django · 1 group open');
-        expect(architectureEntryLabel(at({ view: 'structure', system: { expanded: ['g:a', 'g:b'] } }))).toBe('System structure · 2 groups open');
+            .toBe('System graph · django · 1 group open');
+        expect(architectureEntryLabel(at({ view: 'structure', system: { expanded: ['g:a', 'g:b'] } }))).toBe('System graph · 2 groups open');
         expect(architectureEntryLabel(at({ view: 'behavior' }))).toBe('Behavior');
         expect(architectureEntryLabel(behavior(7, 'handle', { targetId: 9, targetName: 'save' }))).toBe('Behavior · handle → save');
         expect(architectureEntryLabel(behavior(8, 'get_autocommit', { from: symbol(7, 'handle') }))).toBe('Behavior · get_autocommit · followed from handle');
@@ -102,7 +102,7 @@ describe('the Architecture history entry (K27)', () => {
         expect(key(second)).not.toBe(key(reach));
         expect(key({ ...reach, system: { ...reach.system, behavior: { ...reach.system.behavior!, position: { path: 0, step: 2, page: 1 } } } })).toBe(key(reach));
         expect(recentKey(second)).toBe(recentKey(reach));
-        expect(architectureEntryLabel({ ...structure, system: { expanded: [], structurePlanar: true } })).toBe('System structure · Plan');
+        expect(architectureEntryLabel({ ...structure, system: { expanded: [], structurePlanar: true } })).toBe('System graph · Plan');
         expect(architectureEntryLabel({ ...second, system: { ...second.system, behaviorPlanar: true } })).toBe('Behavior · main → save · Path 2 · Plan');
         expect(architectureEntryLabel({ ...reach, system: { ...reach.system, behavior: { ...reach.system.behavior!, position: { step: 2 } } } })).toBe('Behavior · main → save');
     });
@@ -124,7 +124,7 @@ describe('the Architecture history entry (K27)', () => {
         expect(history.entries.map(architectureEntryLabel)).toEqual(['Overview', 'Overview · django', 'Routes · Service map']);
         history = moveNavigation(moveNavigation(history, -1, options), -1, options);
         history = push(history, at({ view: 'structure' }));
-        expect(history.entries.map(architectureEntryLabel)).toEqual(['Overview', 'System structure']);
+        expect(history.entries.map(architectureEntryLabel)).toEqual(['Overview', 'System graph']);
         expect(peekNavigation(history, 1)).toBeUndefined();
         const many = Array.from({ length: NAVIGATION_HISTORY_LIMIT + 10 }, (_, index) => behavior(index + 1, `operation${index + 1}`));
         history = push(history, ...many);

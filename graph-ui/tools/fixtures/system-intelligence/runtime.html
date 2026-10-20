@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Local capture fixture</title><link rel="icon" href="data:,"></head>
+<body><p id="result">Waiting</p><script type="module">
+import { run } from "./src/runtime-capture.ts";
+document.querySelector("#result").textContent = run("browser-example");
+</script></body></html>

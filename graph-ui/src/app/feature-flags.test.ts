@@ -16,6 +16,9 @@ it.each([undefined, '', 'false', '1', 'TRUE'])('keeps Agents unavailable for bui
     expect(allowedWorkspace('agents')).toBe('explore');
     expect(initialWorkspace('coverage', 'agents')).toBe('coverage');
     expect(initialWorkspace('adr', null)).toBe('adr');
+    expect(initialWorkspace('docs', null)).toBe('docs');
+    expect(availableWorkspaces().map(item => item.id)).toContain('docs');
+    expect(availableWorkspaces().map(item => item.id)).not.toContain('adr');
     expect(initialWorkspace(null, 'adr')).toBe('adr');
     expect(initialWorkspace(null, null)).toBe('architecture');
     expect(lineCommandOf('live agents')).toBe('none');

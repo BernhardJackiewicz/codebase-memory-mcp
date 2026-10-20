@@ -10,6 +10,7 @@
 
 #include "pipeline/pipeline.h"
 #include "pipeline/path_alias.h"
+#include "pipeline/flow_resolver.h"
 #include "graph_buffer/graph_buffer.h"
 #include "store/store.h"
 #include "discover/discover.h"
@@ -26,6 +27,7 @@
 #include <string.h>
 
 typedef struct cbm_pipeline_frozen cbm_pipeline_frozen_t;
+cbm_flow_resolver_t *cbm_pipeline_flow_resolver(cbm_pipeline_t *pipeline);
 
 typedef enum {
     CBM_PIPELINE_FROZEN_OK = 0,
@@ -1586,7 +1588,9 @@ int cbm_pipeline_build_fresh_semantic_manifest(cbm_pipeline_t *p, const char *pr
  *      (pass_ansible.c). An external Chart is keyed by its publisher URL.
  *      An index built before holds none of them, so it rebuilds once on
  *      upgrade. */
-enum { CBM_SEMANTIC_INDEX_VERSION = 9 };
+/* 10: independently typed Flow IR partitions are published with the source
+ * manifest. Older generations must rebuild once even when source is unchanged. */
+enum { CBM_SEMANTIC_INDEX_VERSION = 12 };
 
 typedef struct {
     cbm_gbuf_t *gbuf;
@@ -1626,6 +1630,9 @@ typedef struct {
      * proxy buffer has no section text or function tokens to recompute
      * them); a row whose node is gone resolves to nothing when read. */
     bool doc_candidates_in_place;
+    /* Raw invocation witnesses captured before graph CALLS deduplication. */
+    const cbm_flow_resolver_t *flow_resolver;
+    bool flow_resolver_incremental;
 } cbm_pipeline_generation_t;
 
 /* Serialize and fully populate a sibling staging database, then atomically

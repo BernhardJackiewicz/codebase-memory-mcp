@@ -41,6 +41,7 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <zlib.h>
 #ifndef CBM_VERSION
 #define CBM_VERSION "dev"
 #endif
@@ -273,6 +274,30 @@ TEST(httpd_parse_post_with_body_offset) {
     ASSERT_STR_EQ(req.query, "");
     ASSERT_EQ((int)clen, 7);
     ASSERT_STR_EQ(raw + body_off, "{\"a\":1}");
+    PASS();
+}
+
+TEST(httpd_parse_capture_headers_are_bounded_and_unique) {
+    const char *raw = "POST /v1/traces HTTP/1.1\r\nAuthorization: Bearer local-session\r\n"
+                      "Content-Encoding: gzip\r\nContent-Length: 0\r\n\r\n";
+    cbm_http_req_t req;
+    size_t offset = 0, length = 0;
+    ASSERT_EQ(cbm_http_parse_head(raw, strlen(raw), &req, &offset, &length), 0);
+    ASSERT_STR_EQ(req.authorization, "Bearer local-session");
+    ASSERT_STR_EQ(req.content_encoding, "gzip");
+    const char *duplicates[] = {
+        "POST /v1/traces HTTP/1.1\r\nAuthorization: a\r\nauthorization: b\r\n\r\n",
+        "POST /v1/traces HTTP/1.1\r\nContent-Encoding: gzip\r\nContent-Encoding: identity\r\n\r\n",
+    };
+    for (size_t i = 0; i < sizeof(duplicates) / sizeof(duplicates[0]); i++)
+        ASSERT_EQ(cbm_http_parse_head(duplicates[i], strlen(duplicates[i]), &req, &offset, &length),
+                  400);
+    char large[1024];
+    memset(large, 'x', sizeof(large));
+    const char *prefix = "POST /v1/traces HTTP/1.1\r\nAuthorization: ";
+    memcpy(large, prefix, strlen(prefix));
+    memcpy(large + sizeof(large) - 5, "\r\n\r\n", 5);
+    ASSERT_EQ(cbm_http_parse_head(large, strlen(large), &req, &offset, &length), 431);
     PASS();
 }
 
@@ -3881,6 +3906,223 @@ TEST(ui_server_configuration_is_atomic_and_origin_protected) {
     PASS();
 }
 
+TEST(ui_server_source_evidence_requires_current_generation_hash_and_verified_bytes) {
+    ui_delete_fixture_t fixture;
+    ASSERT_EQ(ui_delete_fixture_init(&fixture), 0);
+    char path[1024], source[1024], generation[128];
+    snprintf(source, sizeof(source), "%s/a.js", fixture.root_dir);
+    const char *text = "abc";
+    const char *hash = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    ASSERT_EQ(th_write_file(source, text), 0);
+    ui_delete_db_path(&fixture, "source-demo", path, sizeof(path));
+    cbm_store_t *store = cbm_store_open_path(path);
+    ASSERT_NOT_NULL(store);
+    ASSERT_EQ(cbm_store_upsert_project(store, "source-demo", fixture.root_dir), CBM_STORE_OK);
+    cbm_node_t node = {.project = "source-demo",
+                       .name = "a.js",
+                       .qualified_name = "a.js",
+                       .label = "File",
+                       .file_path = "a.js",
+                       .properties_json = "{}"};
+    ASSERT_GT(cbm_store_upsert_node(store, &node), 0);
+    ASSERT_EQ(cbm_store_upsert_file_hash(store, "source-demo", "a.js", hash, 0, 3), CBM_STORE_OK);
+    ASSERT_EQ(cbm_store_generation(store, generation, sizeof(generation)), CBM_STORE_OK);
+    cbm_store_close(store);
+    th_server_t server;
+    ASSERT_EQ(th_server_start(&server), 0);
+    int port = cbm_http_server_port(server.srv);
+    char request[2048], response[4096];
+    snprintf(request, sizeof(request),
+             "GET /api/source-evidence?project=source-demo&generation=%s&file_path=a.js"
+             "&source_hash=%s&start_line=1&end_line=1 HTTP/1.1\r\n\r\n",
+             generation, hash);
+    ASSERT_GT(th_http(port, request, response, sizeof(response)), 0);
+    ASSERT_EQ(th_status(response), 200);
+    ASSERT_NOT_NULL(strstr(response, "Cache-Control: no-store"));
+    ASSERT_NOT_NULL(strstr(response, "\"content\":\"abc\""));
+    ASSERT_NOT_NULL(strstr(response, hash));
+    ASSERT_EQ(th_write_file(source, "changed source must not be returned"), 0);
+    ASSERT_GT(th_http(port, request, response, sizeof(response)), 0);
+    ASSERT_EQ(th_status(response), 409);
+    ASSERT_NULL(strstr(response, "\"content\""));
+    ASSERT_NULL(strstr(response, "changed source"));
+    snprintf(request, sizeof(request),
+             "GET /api/source-evidence?project=source-demo&generation=%s&file_path=a.js"
+             "&source_hash=%s&start_line=1x HTTP/1.1\r\n\r\n",
+             generation, hash);
+    ASSERT_GT(th_http(port, request, response, sizeof(response)), 0);
+    ASSERT_EQ(th_status(response), 400);
+    th_server_stop(&server);
+    ui_delete_fixture_cleanup(&fixture);
+    PASS();
+}
+
+TEST(ui_server_capture_enforces_generation_token_origin_and_retains_stopped_events) {
+    ui_delete_fixture_t fixture;
+    ASSERT_EQ(ui_delete_fixture_init(&fixture), 0);
+    char path[1024], generation[128];
+    ui_delete_db_path(&fixture, "capture-demo", path, sizeof(path));
+    cbm_store_t *store = cbm_store_open_path(path);
+    ASSERT_NOT_NULL(store);
+    ASSERT_EQ(cbm_store_upsert_project(store, "capture-demo", fixture.root_dir), CBM_STORE_OK);
+    ASSERT_EQ(cbm_store_upsert_file_hash(store, "capture-demo", "src/users.ts", "abc", 0, 10),
+              CBM_STORE_OK);
+    ASSERT_EQ(cbm_store_generation(store, generation, sizeof(generation)), CBM_STORE_OK);
+    cbm_store_close(store);
+    th_server_t server;
+    ASSERT_EQ(th_server_start(&server), 0);
+    int port = cbm_http_server_port(server.srv);
+    char request[8192], response[16384], payload[2048];
+    snprintf(payload, sizeof(payload),
+             "{\"project\":\"capture-demo\",\"generation\":\"wrong\",\"profile\":\"node\"}");
+    snprintf(request, sizeof(request),
+             "POST /api/capture/sessions HTTP/1.1\r\nContent-Type: application/json\r\n"
+             "Content-Length: %zu\r\n\r\n%s",
+             strlen(payload), payload);
+    ASSERT_GT(th_http(port, request, response, sizeof(response)), 0);
+    ASSERT_EQ(th_status(response), 409);
+    snprintf(payload, sizeof(payload),
+             "{\"project\":\"capture-demo\",\"generation\":\"%s\",\"profile\":\"node\","
+             "\"values_enabled\":false,\"allowed_fields\":[],\"allowed_origin\":\"http://"
+             "localhost:3000\"}",
+             generation);
+    snprintf(request, sizeof(request),
+             "POST /api/capture/sessions HTTP/1.1\r\nContent-Type: application/json\r\n"
+             "Content-Length: %zu\r\n\r\n%s",
+             strlen(payload), payload);
+    ASSERT_GT(th_http(port, request, response, sizeof(response)), 0);
+    ASSERT_EQ(th_status(response), 201);
+    ASSERT_NOT_NULL(strstr(response, "Cache-Control: no-store"));
+    char *body = strstr(response, "\r\n\r\n");
+    ASSERT_NOT_NULL(body);
+    yyjson_doc *created = yyjson_read(body + 4, strlen(body + 4), 0);
+    ASSERT_NOT_NULL(created);
+    yyjson_val *root = yyjson_doc_get_root(created);
+    const char *id = yyjson_get_str(yyjson_obj_get(yyjson_obj_get(root, "session"), "id"));
+    const char *token = yyjson_get_str(yyjson_obj_get(root, "token"));
+    ASSERT_NOT_NULL(id);
+    ASSERT_NOT_NULL(token);
+    const char *lineage =
+        "{\"schema_version\":1,\"producer\":{\"id\":\"http-worker\",\"language\":\"typescript\"},"
+        "\"events\":[{\"sequence\":1,\"operation\":\"transform\",\"invocation_id\":\"f\","
+        "\"value_id\":\"v\",\"inputs\":[],\"source\":{\"file_path\":\"src/users.ts\","
+        "\"line\":1,\"source_hash\":\"abc\"},\"preview\":\"must-not-be-returned\"}]}";
+    snprintf(request, sizeof(request),
+             "POST /v1/cbm/lineage?session=%s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
+             "Origin: http://localhost:3000\r\nAuthorization: Bearer wrong\r\n"
+             "Content-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",
+             id, port, strlen(lineage), lineage);
+    ASSERT_GT(th_http_raw(port, request, response, sizeof(response)), 0);
+    ASSERT_EQ(th_status(response), 403);
+    snprintf(request, sizeof(request),
+             "POST /v1/cbm/lineage?session=%s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
+             "Origin: http://localhost:3001\r\nAuthorization: Bearer %s\r\n"
+             "Content-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",
+             id, port, token, strlen(lineage), lineage);
+    ASSERT_GT(th_http_raw(port, request, response, sizeof(response)), 0);
+    ASSERT_EQ(th_status(response), 403);
+    snprintf(request, sizeof(request),
+             "OPTIONS /v1/cbm/lineage?session=%s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
+             "Origin: http://localhost:3000\r\nAccess-Control-Request-Headers: "
+             "authorization,content-type\r\n\r\n",
+             id, port);
+    ASSERT_GT(th_http_raw(port, request, response, sizeof(response)), 0);
+    ASSERT_EQ(th_status(response), 204);
+    ASSERT_NOT_NULL(strstr(response, "Access-Control-Allow-Headers: Content-Type, Authorization"));
+    snprintf(request, sizeof(request),
+             "POST /v1/cbm/lineage?session=%s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
+             "Origin: http://localhost:3000\r\nAuthorization: Bearer %s\r\n"
+             "Content-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",
+             id, port, token, strlen(lineage), lineage);
+    ASSERT_GT(th_http_raw(port, request, response, sizeof(response)), 0);
+    ASSERT_EQ(th_status(response), 200);
+    ASSERT_NOT_NULL(strstr(response, "Access-Control-Allow-Origin: http://localhost:3000"));
+    /* A configured capture origin still cannot read or mutate the UI API. */
+    snprintf(request, sizeof(request),
+             "GET /api/capture/events?id=%s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
+             "Origin: http://localhost:3000\r\n\r\n",
+             id, port);
+    ASSERT_GT(th_http_raw(port, request, response, sizeof(response)), 0);
+    ASSERT_EQ(th_status(response), 403);
+    snprintf(request, sizeof(request), "GET /api/capture/events?id=%s HTTP/1.1\r\n\r\n", id);
+    ASSERT_GT(th_http(port, request, response, sizeof(response)), 0);
+    ASSERT_EQ(th_status(response), 200);
+    ASSERT_NOT_NULL(strstr(response, "\"source_status\":\"matched\""));
+    ASSERT_NULL(strstr(response, "must-not-be-returned"));
+    ASSERT_NULL(strstr(response, token));
+    const char *otlp =
+        "{\"resourceSpans\":[{\"scopeSpans\":[{\"spans\":[{"
+        "\"traceId\":\"0102030405060708090a0b0c0d0e0f10\","
+        "\"spanId\":\"0102030405060708\",\"name\":\"unapproved-span-payload\"}]}]}]}";
+    snprintf(request, sizeof(request),
+             "POST /v1/traces?session=%s HTTP/1.1\r\nAuthorization: Bearer %s\r\n"
+             "Content-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",
+             id, token, strlen(otlp), otlp);
+    ASSERT_GT(th_http(port, request, response, sizeof(response)), 0);
+    ASSERT_EQ(th_status(response), 200);
+    ASSERT_NOT_NULL(strstr(response, "Content-Type: application/json"));
+    ASSERT_STR_EQ(strstr(response, "\r\n\r\n") + 4, "{}");
+    unsigned char compressed[2048];
+    z_stream compressor = {0};
+    ASSERT_EQ(deflateInit2(&compressor, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 16 + MAX_WBITS, 8,
+                           Z_DEFAULT_STRATEGY),
+              Z_OK);
+    compressor.next_in = (unsigned char *)otlp;
+    compressor.avail_in = (uInt)strlen(otlp);
+    compressor.next_out = compressed;
+    compressor.avail_out = sizeof(compressed);
+    ASSERT_EQ(deflate(&compressor, Z_FINISH), Z_STREAM_END);
+    size_t compressed_size = compressor.total_out;
+    deflateEnd(&compressor);
+    snprintf(request, sizeof(request),
+             "POST /v1/traces?session=%s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
+             "Authorization: Bearer %s\r\nContent-Type: application/json\r\n"
+             "Content-Encoding: gzip\r\nContent-Length: %zu\r\n\r\n",
+             id, port, token, compressed_size);
+    th_sock_t socket = th_connect(port);
+    ASSERT_TRUE(socket != TH_SOCK_BAD);
+    ASSERT_EQ(th_send_all(socket, request, strlen(request)), 0);
+    ASSERT_EQ(th_send_all(socket, (const char *)compressed, compressed_size), 0);
+    ASSERT_GT(th_recv_until_close(socket, response, sizeof(response)), 0);
+    th_sock_close(socket);
+    ASSERT_EQ(th_status(response), 200);
+    /* A valid empty protobuf export has a zero-byte protobuf success body. */
+    snprintf(request, sizeof(request),
+             "POST /v1/traces?session=%s HTTP/1.1\r\nAuthorization: Bearer %s\r\n"
+             "Content-Type: application/x-protobuf\r\nContent-Length: 0\r\n\r\n",
+             id, token);
+    ASSERT_GT(th_http(port, request, response, sizeof(response)), 0);
+    ASSERT_EQ(th_status(response), 200);
+    ASSERT_NOT_NULL(strstr(response, "Content-Type: application/x-protobuf"));
+    ASSERT_STR_EQ(strstr(response, "\r\n\r\n") + 4, "");
+    snprintf(request, sizeof(request), "GET /api/capture/events?id=%s HTTP/1.1\r\n\r\n", id);
+    ASSERT_GT(th_http(port, request, response, sizeof(response)), 0);
+    ASSERT_NOT_NULL(strstr(response, "\"accepted_events\":2"));
+    ASSERT_NOT_NULL(strstr(response, "\"operation\":\"span\""));
+    ASSERT_NULL(strstr(response, "unapproved-span-payload"));
+    snprintf(payload, sizeof(payload), "{\"id\":\"%s\"}", id);
+    snprintf(request, sizeof(request),
+             "POST /api/capture/stop HTTP/1.1\r\nContent-Type: application/json\r\n"
+             "Content-Length: %zu\r\n\r\n%s",
+             strlen(payload), payload);
+    ASSERT_GT(th_http(port, request, response, sizeof(response)), 0);
+    ASSERT_EQ(th_status(response), 200);
+    snprintf(request, sizeof(request), "GET /api/capture/events?id=%s HTTP/1.1\r\n\r\n", id);
+    ASSERT_GT(th_http(port, request, response, sizeof(response)), 0);
+    ASSERT_NOT_NULL(strstr(response, "\"status\":\"stopped\""));
+    ASSERT_NOT_NULL(strstr(response, "\"producer_id\":\"http-worker\""));
+    snprintf(request, sizeof(request), "DELETE /api/capture/session?id=%s HTTP/1.1\r\n\r\n", id);
+    ASSERT_GT(th_http(port, request, response, sizeof(response)), 0);
+    ASSERT_EQ(th_status(response), 200);
+    snprintf(request, sizeof(request), "GET /api/capture/events?id=%s HTTP/1.1\r\n\r\n", id);
+    ASSERT_GT(th_http(port, request, response, sizeof(response)), 0);
+    ASSERT_EQ(th_status(response), 404);
+    yyjson_doc_free(created);
+    th_server_stop(&server);
+    ui_delete_fixture_cleanup(&fixture);
+    PASS();
+}
+
 /* Grow path in place to exactly target bytes with 'd' components, none
  * longer than 200 so every component stays under NAME_MAX. */
 static void th_pad_path_to(char *path, size_t cap, int target) {
@@ -4051,6 +4293,9 @@ TEST(ui_server_index_status_long_roots_render_whole) {
 /* ── Suite ────────────────────────────────────────────────────── */
 
 SUITE(httpd) {
+    RUN_TEST(ui_server_source_evidence_requires_current_generation_hash_and_verified_bytes);
+    RUN_TEST(httpd_parse_capture_headers_are_bounded_and_unique);
+    RUN_TEST(ui_server_capture_enforces_generation_token_origin_and_retains_stopped_events);
     RUN_TEST(ui_server_configuration_is_atomic_and_origin_protected);
     RUN_TEST(ui_server_browse_non_ascii_directory);
     RUN_TEST(ui_server_browse_wide_dir_no_overflow);

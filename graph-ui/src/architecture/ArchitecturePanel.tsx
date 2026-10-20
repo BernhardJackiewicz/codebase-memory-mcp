@@ -20,9 +20,12 @@ import SpatialArchitecture from './SpatialArchitecture';
 import RoutesArchitecture from './RoutesArchitecture';
 import type { CoverageIndex } from '../app/tree-model';
 import type { SystemArchitectureLoader } from './system-architecture-source';
+import type { SystemGraphLoader } from './system-graph-source';
+import type { DocumentNavigationTarget } from '../documents/documents-source';
 import type { SelectionEvidenceListener } from '../galaxy/selection-evidence';
 
 const SystemArchitecture = lazy(() => import('./SystemArchitecture'));
+const SystemGraph = lazy(() => import('./system-graph'));
 
 export interface ArchitecturePanelProps extends Pick<RepositoryMapProps, 'graph' | 'selection' | 'selectionPanel' | 'onSelect' | 'graphNote' | 'readSource'> {
     projectName: string;
@@ -38,8 +41,10 @@ export interface ArchitecturePanelProps extends Pick<RepositoryMapProps, 'graph'
     onClearSelection?: () => void;
     onSelectionEvidence?: SelectionEvidenceListener;
     systemArchitectureLoader?: SystemArchitectureLoader;
+    systemGraphLoader?: SystemGraphLoader;
     /** The declaration line is 1-based, as returned by the provider. */
     onNavigate: (filePath: string, line?: number, name?: string) => void;
+    onOpenDocument?: (target: DocumentNavigationTarget) => void;
 }
 
 function browserStorage(): ConfigStorage | undefined {
@@ -154,7 +159,7 @@ function HistoryControls({ history, place, onGo, onJump }: {
     </div>;
 }
 
-function ArchitectureWorkspace({ projectName, overview, loading = false, error, onRefresh, onNavigate, graph, selectionPanel, onSelect, onClearSelection, onSelectionEvidence, graphNote, graphGeneration, active = true, escapeTaken = false, coverage, systemArchitectureLoader }: ArchitecturePanelProps): JSX.Element {
+function ArchitectureWorkspace({ projectName, overview, loading = false, error, onRefresh, onNavigate, onOpenDocument, graph, selectionPanel, onSelect, onClearSelection, onSelectionEvidence, graphNote, graphGeneration, active = true, escapeTaken = false, coverage, systemArchitectureLoader, systemGraphLoader }: ArchitecturePanelProps): JSX.Element {
     const storage = useMemo(browserStorage, []);
     /*
      * The place is the whole history entry (K27): subtab, opened area or file,
@@ -201,7 +206,12 @@ function ArchitectureWorkspace({ projectName, overview, loading = false, error, 
                 <button className="atlas-arch-tab" key={view} aria-pressed={place.view === view || (view === 'overview' && ['dependencies', 'entryPoints'].includes(place.view))} data-view={view}
                     onClick={() => { if (view !== place.view) onSelectionEvidence?.(undefined); setView(view); }}>{text.views[view]}</button>)}</nav>
         </div>
-        {systemView && projectName ? <Suspense fallback={<div role="status"><Empty>Preparing system analysis…</Empty></div>}><SystemArchitecture
+        {systemView === 'structure' && projectName ? <Suspense fallback={<div role="status"><Empty>Preparing system graph…</Empty></div>}><SystemGraph
+            project={projectName} generation={graphGeneration} active={active} graph={graph}
+            onSelect={onSelect} onClearSelection={onClearSelection} onSelectionEvidence={onSelectionEvidence} onNavigate={onNavigate}
+            onOpenDocument={onOpenDocument}
+            loader={systemGraphLoader} place={place.system} onPlace={changeSystem} navigation={historyControls} /></Suspense> : null}
+        {systemView === 'behavior' && projectName ? <Suspense fallback={<div role="status"><Empty>Preparing system analysis…</Empty></div>}><SystemArchitecture
             project={projectName} generation={graphGeneration} view={systemView} filter={filter} active={active}
             graph={graph} onSelect={onSelect} onClearSelection={onClearSelection} onSelectionEvidence={onSelectionEvidence} onNavigate={onNavigate} loader={systemArchitectureLoader}
             place={place.system} onPlace={changeSystem} navigation={historyControls} /></Suspense> : null}

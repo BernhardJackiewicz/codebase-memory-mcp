@@ -20,6 +20,9 @@
 #include "ui/embedded_assets.h"
 #include "ui/layout3d.h"
 #include "ui/atlas.h"
+#include "ui/documents.h"
+#include "ui/flow_source.h"
+#include "traces/capture.h"
 #include "mcp/mcp.h"
 #include "store/store.h"
 #include "pipeline/pass_cross_repo.h"
@@ -58,6 +61,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <zlib.h>
 #ifdef _WIN32
 #include <windows.h>
 #include <process.h>
@@ -93,6 +97,7 @@
 static char g_cors[256];      /* CORS headers only */
 static char g_cors_json[512]; /* CORS + Content-Type: application/json */
 static char g_cors_html[512]; /* CORS + Content-Type: text/html */
+static bool content_type_is_json(const char *content_type);
 
 static bool origin_is_same_server(const char *origin, int port) {
     char expected[128];
@@ -202,8 +207,9 @@ typedef struct {
 
 struct cbm_http_server {
     cbm_httpd_t *listener;
-    cbm_mcp_server_t *mcp;       /* own MCP server instance (read-only) */
-    struct cbm_watcher *watcher; /* external watcher ref (not owned) */
+    cbm_mcp_server_t *mcp;          /* own MCP server instance (read-only) */
+    cbm_capture_manager_t *capture; /* event-loop-owned, never persisted */
+    struct cbm_watcher *watcher;    /* external watcher ref (not owned) */
     cbm_http_index_executor_fn index_executor;
     void *index_executor_context;
     cbm_http_project_mutation_begin_fn mutation_begin;
@@ -1200,8 +1206,8 @@ static void handle_processes(cbm_http_conn_t *c) {
     FILE *fp = popen("LC_ALL=C ps -eo pid,pcpu,rss,etime,comm 2>/dev/null"
                      " | grep '[c]odebase-memory-mcp'",
                      "r");
-    int proc_count = 0;
     if (fp) {
+        int proc_count = 0;
         char line[1024];
         while (fgets(line, sizeof(line), fp)) {
             int pid = 0;
@@ -2423,6 +2429,410 @@ static void handle_atlas_tree(cbm_http_conn_t *c, const cbm_http_req_t *req) {
     atlas_reply_json(c, json, 500, "{\"error\":\"tree computation failed\"}");
 }
 
+/* Read-only indexed documentation. The service also enforces project/path boundaries. */
+static void handle_documents(cbm_http_conn_t *c, const cbm_http_req_t *req, bool detail) {
+    char project[256] = {0};
+    cbm_store_t *store = atlas_open_project(c, req, project, sizeof(project));
+    if (!store)
+        return;
+    int status = 500;
+    char *json = NULL;
+    if (detail) {
+        char id[32] = {0}, path[4096] = {0}, generation[128] = {0};
+        cbm_http_query_param(req->query, "node_id", id, sizeof(id));
+        cbm_http_query_param(req->query, "file_path", path, sizeof(path));
+        cbm_http_query_param(req->query, "generation", generation, sizeof(generation));
+        char *end = NULL;
+        errno = 0;
+        int64_t node_id = id[0] ? strtoll(id, &end, 10) : 0;
+        if ((id[0] && (errno || !end || *end || node_id <= 0)) || (!id[0] && !path[0])) {
+            cbm_store_close(store);
+            cbm_http_replyf(c, 400, g_cors_json, "{\"error\":\"Choose an indexed document.\"}");
+            return;
+        }
+        json = cbm_documents_detail(store, project, node_id, path, generation, &status);
+    } else {
+        char kind[32] = {0}, query[512] = {0}, cursor[192] = {0};
+        cbm_http_query_param(req->query, "kind", kind, sizeof(kind));
+        cbm_http_query_param(req->query, "query", query, sizeof(query));
+        cbm_http_query_param(req->query, "cursor", cursor, sizeof(cursor));
+        json = cbm_documents_list(store, project, kind, query, cursor, &status);
+    }
+    cbm_store_close(store);
+    cbm_http_replyf(c, json ? status : 500, g_cors_json, "%s",
+                    json ? json : "{\"error\":\"Document response unavailable.\"}");
+    cbm_free(CBM_MEM_CLASS_OTHER, json);
+}
+
+static bool source_evidence_line(const cbm_http_req_t *req, const char *name, int *value) {
+    char number[64] = {0};
+    cbm_http_query_param(req->query, name, number, sizeof(number));
+    *value = 0;
+    if (!number[0])
+        return true;
+    for (const char *p = number; *p; p++)
+        if (*p < '0' || *p > '9')
+            return false;
+    char *end = NULL;
+    errno = 0;
+    long parsed = strtol(number, &end, 10);
+    if (errno || !end || *end || parsed <= 0 || parsed > INT_MAX)
+        return false;
+    *value = (int)parsed;
+    return true;
+}
+
+static void handle_source_evidence(cbm_http_conn_t *c, const cbm_http_req_t *req) {
+    char project[256] = {0};
+    cbm_store_t *store = atlas_open_project(c, req, project, sizeof(project));
+    if (!store)
+        return;
+    char generation[128] = {0}, path[4096] = {0}, hash[128] = {0};
+    cbm_http_query_param(req->query, "generation", generation, sizeof(generation));
+    cbm_http_query_param(req->query, "file_path", path, sizeof(path));
+    cbm_http_query_param(req->query, "source_hash", hash, sizeof(hash));
+    cbm_source_evidence_request_t evidence = {
+        .project = project, .generation = generation, .file_path = path, .source_hash = hash};
+    char headers[768];
+    snprintf(headers, sizeof(headers), "%sCache-Control: no-store\r\n", g_cors_json);
+    if (!source_evidence_line(req, "start_line", &evidence.start_line) ||
+        !source_evidence_line(req, "end_line", &evidence.end_line)) {
+        cbm_store_close(store);
+        cbm_http_replyf(c, 400, headers, "{\"error\":\"Source lines must be positive integers.\"}");
+        return;
+    }
+    int status = 500;
+    char *json = cbm_source_evidence(store, &evidence, &status);
+    cbm_store_close(store);
+    cbm_http_replyf(c, json ? status : 500, headers, "%s",
+                    json ? json : "{\"error\":\"Verified source is unavailable.\"}");
+    cbm_free(CBM_MEM_CLASS_OTHER, json);
+}
+
+static void capture_reply(cbm_http_conn_t *c, int status, char *json) {
+    char headers[768];
+    snprintf(headers, sizeof(headers), "%sCache-Control: no-store\r\n", g_cors_json);
+    cbm_http_replyf(c, json ? status : 500, headers, "%s",
+                    json ? json : "{\"error\":\"Capture response unavailable.\"}");
+    if (json) {
+        cbm_secure_zero(json, strlen(json));
+        cbm_free(CBM_MEM_CLASS_OTHER, json);
+    }
+}
+
+/* OTLP/HTTP response encoding follows the request, including error Status
+ * messages and bounded partial success. See https://opentelemetry.io/docs/specs/otlp/ */
+static size_t capture_varint(unsigned char *out, uint64_t value) {
+    size_t n = 0;
+    do {
+        out[n] = (unsigned char)(value & 127);
+        value >>= 7;
+        if (value)
+            out[n] |= 128;
+        n++;
+    } while (value);
+    return n;
+}
+
+static void capture_otlp_reply(cbm_http_conn_t *c, const cbm_http_req_t *req, int status,
+                               size_t rejected, const char *message, const char *cors) {
+    bool protobuf = strcmp(req->content_type, "application/x-protobuf") == 0;
+    char headers[768];
+    snprintf(headers, sizeof(headers), "%sContent-Type: %s\r\nCache-Control: no-store\r\n", cors,
+             protobuf ? "application/x-protobuf" : "application/json");
+    if (protobuf) {
+        unsigned char bytes[512];
+        size_t length = 0;
+        size_t message_length = message ? strlen(message) : 0;
+        if (message_length > 256)
+            message_length = 256;
+        if (status != 200) {
+            bytes[length++] = 0x12; /* google.rpc.Status.message = 2 */
+            length += capture_varint(bytes + length, message_length);
+            memcpy(bytes + length, message, message_length);
+            length += message_length;
+        } else if (rejected) {
+            unsigned char nested[384];
+            size_t inner = 0;
+            nested[inner++] = 0x08; /* ExportTracePartialSuccess.rejected_spans = 1 */
+            inner += capture_varint(nested + inner, rejected);
+            if (message_length) {
+                nested[inner++] = 0x12;
+                inner += capture_varint(nested + inner, message_length);
+                memcpy(nested + inner, message, message_length);
+                inner += message_length;
+            }
+            bytes[length++] = 0x0a; /* ExportTraceServiceResponse.partial_success = 1 */
+            length += capture_varint(bytes + length, inner);
+            memcpy(bytes + length, nested, inner);
+            length += inner;
+        }
+        cbm_http_reply_buf(c, status, headers, bytes, length);
+    } else {
+        yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+        yyjson_mut_val *root = yyjson_mut_obj(doc);
+        yyjson_mut_doc_set_root(doc, root);
+        if (status != 200)
+            yyjson_mut_obj_add_strcpy(doc, root, "message", message ? message : "Capture failed.");
+        else if (rejected) {
+            yyjson_mut_val *partial = yyjson_mut_obj(doc);
+            char count[32];
+            snprintf(count, sizeof(count), "%zu", rejected);
+            yyjson_mut_obj_add_strcpy(doc, partial, "rejectedSpans", count);
+            yyjson_mut_obj_add_strcpy(doc, partial, "errorMessage", message);
+            yyjson_mut_obj_add_val(doc, root, "partialSuccess", partial);
+        }
+        char *json =
+            doc ? yyjson_mut_write_opts(doc, 0, cbm_json_writer_allocator(), NULL, NULL) : NULL;
+        cbm_http_replyf(c, json ? status : 500, headers, "%s",
+                        json ? json : "{\"message\":\"Unable to allocate response.\"}");
+        cbm_free(CBM_MEM_CLASS_OTHER, json);
+        yyjson_mut_doc_free(doc);
+    }
+}
+
+/* Allocation is capped independently of the compressed Content-Length.
+ * No streaming decompressor can grow beyond the receiver's input budget. */
+static int capture_body(const cbm_http_req_t *req, const void **body, size_t *length,
+                        unsigned char **allocated) {
+    *allocated = NULL;
+    *body = req->body;
+    *length = req->body_len;
+    if (!req->content_encoding[0] || strcasecmp(req->content_encoding, "identity") == 0)
+        return 200;
+    if (strcasecmp(req->content_encoding, "gzip") != 0)
+        return 415;
+    unsigned char *output = cbm_alloc(CBM_MEM_CLASS_OTHER, CBM_OTLP_MAX_BODY + 1);
+    if (!output)
+        return 500;
+    z_stream stream = {0};
+    stream.next_in = (unsigned char *)req->body;
+    stream.avail_in = (uInt)req->body_len;
+    stream.next_out = output;
+    stream.avail_out = CBM_OTLP_MAX_BODY + 1;
+    if (inflateInit2(&stream, 16 + MAX_WBITS) != Z_OK) {
+        cbm_free(CBM_MEM_CLASS_OTHER, output);
+        return 500;
+    }
+    int result = inflate(&stream, Z_FINISH);
+    int status = stream.total_out > CBM_OTLP_MAX_BODY             ? 413
+                 : result == Z_STREAM_END && stream.avail_in == 0 ? 200
+                                                                  : 400;
+    size_t actual = stream.total_out;
+    inflateEnd(&stream);
+    if (status != 200) {
+        cbm_secure_zero(output, actual);
+        cbm_free(CBM_MEM_CLASS_OTHER, output);
+        return status;
+    }
+    *body = output;
+    *length = actual;
+    *allocated = output;
+    return 200;
+}
+
+static cbm_store_t *capture_open_store(const char *project) {
+    char path[1024];
+    db_path_for_project(project, path, sizeof(path));
+    return path[0] && cbm_file_exists(path) ? cbm_store_open_path_query(path) : NULL;
+}
+
+static void handle_capture_create(cbm_http_server_t *srv, cbm_http_conn_t *c,
+                                  const cbm_http_req_t *req) {
+    yyjson_doc *doc = req->body ? yyjson_read(req->body, req->body_len, 0) : NULL;
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    const char *project = yyjson_get_str(yyjson_obj_get(root, "project"));
+    const char *expected = yyjson_get_str(yyjson_obj_get(root, "generation"));
+    if (!project || !expected || !cbm_validate_project_name(project)) {
+        yyjson_doc_free(doc);
+        capture_reply(
+            c, 400,
+            cbm_mem_strdup(CBM_MEM_CLASS_OTHER,
+                           "{\"error\":\"A project and index generation are required.\"}"));
+        return;
+    }
+    cbm_store_t *store = capture_open_store(project);
+    cbm_project_t indexed = {0};
+    if (!store || cbm_store_get_project(store, project, &indexed) != CBM_STORE_OK) {
+        cbm_store_close(store);
+        yyjson_doc_free(doc);
+        capture_reply(
+            c, 404,
+            cbm_mem_strdup(CBM_MEM_CLASS_OTHER, "{\"error\":\"Indexed project not found.\"}"));
+        return;
+    }
+    cbm_project_free_fields(&indexed);
+    char generation[128];
+    bool current = cbm_store_generation(store, generation, sizeof(generation)) == CBM_STORE_OK &&
+                   strcmp(generation, expected) == 0;
+    cbm_store_close(store);
+    yyjson_doc_free(doc);
+    if (!current) {
+        capture_reply(
+            c, 409,
+            cbm_mem_strdup(CBM_MEM_CLASS_OTHER,
+                           "{\"error\":\"Index generation changed. Refresh the system graph.\"}"));
+        return;
+    }
+    int status = 500;
+    char *json = cbm_capture_create(srv->capture, req->body, &status);
+    capture_reply(c, status, json);
+}
+
+typedef struct {
+    cbm_store_t *store;
+    const char *project;
+    bool current;
+} capture_source_context_t;
+
+static const char *capture_check_source(void *context, const char *file, const char *source_hash) {
+    capture_source_context_t *ctx = context;
+    if (!ctx->current)
+        return "stale";
+    if (!ctx->store)
+        return "unmatched";
+    cbm_file_hash_t hash = {0};
+    if (cbm_store_get_file_hash(ctx->store, ctx->project, file, &hash) != CBM_STORE_OK)
+        return "unmatched";
+    bool matches = hash.sha256 && strcmp(hash.sha256, source_hash) == 0;
+    cbm_store_clear_file_hash(&hash);
+    return matches ? "matched" : "stale";
+}
+
+static void handle_capture_ingest(cbm_http_server_t *srv, cbm_http_conn_t *c,
+                                  const cbm_http_req_t *req) {
+    char id[64] = {0};
+    cbm_http_query_param(req->query, "session", id, sizeof(id));
+    const char *token =
+        strncmp(req->authorization, "Bearer ", 7) == 0 ? req->authorization + 7 : "";
+    if (!cbm_capture_authorized(srv->capture, id, token)) {
+        capture_reply(c, 403,
+                      cbm_mem_strdup(CBM_MEM_CLASS_OTHER,
+                                     "{\"error\":\"Capture token is not authorized.\"}"));
+        return;
+    }
+    if (!content_type_is_json(req->content_type)) {
+        capture_reply(
+            c, 415,
+            cbm_mem_strdup(CBM_MEM_CLASS_OTHER,
+                           "{\"error\":\"application/json required for lineage events.\"}"));
+        return;
+    }
+    const void *body = NULL;
+    size_t body_length = 0;
+    unsigned char *allocated = NULL;
+    int body_status = capture_body(req, &body, &body_length, &allocated);
+    if (body_status != 200) {
+        capture_reply(
+            c, body_status,
+            cbm_mem_strdup(CBM_MEM_CLASS_OTHER,
+                           "{\"error\":\"Invalid, unsupported or oversized capture encoding.\"}"));
+        return;
+    }
+    const char *project = cbm_capture_project(srv->capture, id);
+    const char *expected = cbm_capture_generation(srv->capture, id);
+    cbm_store_t *store = project ? capture_open_store(project) : NULL;
+    char generation[128];
+    capture_source_context_t ctx = {
+        .store = store,
+        .project = project,
+        .current = store &&
+                   cbm_store_generation(store, generation, sizeof(generation)) == CBM_STORE_OK &&
+                   expected && strcmp(expected, generation) == 0,
+    };
+    int status = 500;
+    char *json = cbm_capture_ingest(srv->capture, id, token, req->origin, body, body_length,
+                                    capture_check_source, &ctx, &status);
+    if (allocated) {
+        cbm_secure_zero(allocated, body_length);
+        cbm_free(CBM_MEM_CLASS_OTHER, allocated);
+    }
+    cbm_store_close(store);
+    capture_reply(c, status, json);
+}
+
+static void handle_capture_otlp(cbm_http_server_t *srv, cbm_http_conn_t *c,
+                                const cbm_http_req_t *req) {
+    char id[64] = {0};
+    cbm_http_query_param(req->query, "session", id, sizeof(id));
+    const char *token =
+        strncmp(req->authorization, "Bearer ", 7) == 0 ? req->authorization + 7 : "";
+    if (!cbm_capture_authorized(srv->capture, id, token)) {
+        capture_otlp_reply(c, req, 403, 0, "Capture token is not authorized.", g_cors);
+        return;
+    }
+    bool protobuf = strcmp(req->content_type, "application/x-protobuf") == 0;
+    if (!protobuf && !content_type_is_json(req->content_type)) {
+        capture_otlp_reply(c, req, 415, 0, "Use application/json or application/x-protobuf.",
+                           g_cors);
+        return;
+    }
+    const void *body = NULL;
+    size_t length = 0;
+    unsigned char *allocated = NULL;
+    int status = capture_body(req, &body, &length, &allocated);
+    if (status != 200) {
+        capture_otlp_reply(c, req, status, 0, "Invalid, unsupported or oversized content encoding.",
+                           g_cors);
+        return;
+    }
+    cbm_otlp_batch_t batch = {0};
+    char error[192];
+    bool decoded = cbm_otlp_decode(body, length, protobuf ? CBM_OTLP_PROTOBUF : CBM_OTLP_JSON,
+                                   &batch, error, sizeof(error));
+    if (allocated) {
+        cbm_secure_zero(allocated, length);
+        cbm_free(CBM_MEM_CLASS_OTHER, allocated);
+    }
+    if (!decoded) {
+        capture_otlp_reply(c, req, 400, 0, error, g_cors);
+        return;
+    }
+    size_t accepted = 0, rejected = 0;
+    status = cbm_capture_ingest_spans(srv->capture, id, token, req->origin, &batch, &accepted,
+                                      &rejected);
+    cbm_otlp_batch_free(&batch);
+    capture_otlp_reply(c, req, status, rejected,
+                       status == 200 ? "Capture limits rejected some spans."
+                                     : "Capture is unavailable or stopped.",
+                       g_cors);
+}
+
+static void handle_capture_session(cbm_http_server_t *srv, cbm_http_conn_t *c,
+                                   const cbm_http_req_t *req) {
+    int status = 500;
+    char id[64] = {0}, project[256] = {0};
+    char *json = NULL;
+    if (strcmp(req->path, "/api/capture/sessions") == 0) {
+        cbm_http_query_param(req->query, "project", project, sizeof(project));
+        json = cbm_capture_list(srv->capture, project, &status);
+    } else if (strcmp(req->path, "/api/capture/stop") == 0) {
+        yyjson_doc *doc = req->body ? yyjson_read(req->body, req->body_len, 0) : NULL;
+        const char *session = yyjson_get_str(yyjson_obj_get(yyjson_doc_get_root(doc), "id"));
+        json = cbm_capture_stop(srv->capture, session, &status);
+        yyjson_doc_free(doc);
+    } else if (strcmp(req->path, "/api/capture/session") == 0) {
+        cbm_http_query_param(req->query, "id", id, sizeof(id));
+        json = cbm_capture_delete(srv->capture, id, &status);
+    } else {
+        char cursor[32] = {0};
+        cbm_http_query_param(req->query, "id", id, sizeof(id));
+        cbm_http_query_param(req->query, "after", cursor, sizeof(cursor));
+        uint64_t after = 0;
+        for (size_t i = 0; cursor[i]; i++) {
+            if (cursor[i] < '0' || cursor[i] > '9' || after > UINT64_C(900719925474099)) {
+                capture_reply(
+                    c, 400,
+                    cbm_mem_strdup(CBM_MEM_CLASS_OTHER, "{\"error\":\"Invalid capture cursor.\"}"));
+                return;
+            }
+            after = after * 10 + (unsigned)(cursor[i] - '0');
+        }
+        json = cbm_capture_events(srv->capture, id, after, &status);
+    }
+    capture_reply(c, status, json);
+}
+
 /* GET /api/symbol?project=X&id=N (or &qn=...) — the symbol bundle. */
 static void handle_atlas_symbol(cbm_http_conn_t *c, const cbm_http_req_t *req) {
     char project[256] = {0};
@@ -2984,6 +3394,7 @@ static const char *const UI_RPC_READ_TOOLS[] = {
     "list_projects", "get_code_snippet", "get_graph_schema",     "search_graph",
     "search_code",   "trace_path",       "trace_call_path",      "get_architecture",
     "query_graph",   "detect_changes",   "check_index_coverage", "index_status",
+    "trace_field",
 };
 
 static bool rpc_tool_is_read_only(const char *name) {
@@ -3183,6 +3594,34 @@ static bool request_passes_http_security(cbm_http_server_t *srv, cbm_http_conn_t
         cbm_http_replyf(c, 403, "", "%s", "{\"error\":\"forbidden host\"}");
         return false;
     }
+    /* Only ingestion can opt into one explicit local application origin.
+     * It never grants that application access to UI/session APIs. */
+    bool capture_ingestion =
+        strcmp(req->path, "/v1/cbm/lineage") == 0 || strcmp(req->path, "/v1/traces") == 0;
+    if (capture_ingestion) {
+        char id[64] = {0};
+        cbm_http_query_param(req->query, "session", id, sizeof(id));
+        if (!cbm_capture_origin_allowed(srv->capture, id, req->origin)) {
+            if (strcmp(req->path, "/v1/traces") == 0)
+                capture_otlp_reply(c, req, 403, 0, "Capture origin is not authorized.", "");
+            else
+                cbm_http_replyf(c, 403, "", "%s",
+                                "{\"error\":\"Capture origin is not authorized.\"}");
+            return false;
+        }
+        if (req->origin[0])
+            snprintf(
+                g_cors, sizeof(g_cors),
+                "Access-Control-Allow-Origin: %s\r\n"
+                "Access-Control-Allow-Methods: POST, OPTIONS\r\n"
+                "Access-Control-Allow-Headers: Content-Type, Authorization, Content-Encoding\r\n",
+                req->origin);
+        else
+            g_cors[0] = '\0';
+        snprintf(g_cors_json, sizeof(g_cors_json), "%sContent-Type: application/json\r\n", g_cors);
+        snprintf(g_cors_html, sizeof(g_cors_html), "%sContent-Type: text/html\r\n", g_cors);
+        return true;
+    }
     if (req->origin[0] != '\0' &&
         (req->host[0] == '\0' || !origin_is_same_server(req->origin, srv->port) ||
          !origin_matches_host(req->origin, req->host, srv->port))) {
@@ -3226,6 +3665,25 @@ static void dispatch_request(cbm_http_server_t *srv, cbm_http_conn_t *c,
     /* OPTIONS preflight for CORS */
     if (strcmp(req->method, "OPTIONS") == 0) {
         cbm_http_replyf(c, 204, g_cors, "%s", "");
+        return;
+    }
+    if (is_post && strcmp(req->path, "/api/capture/sessions") == 0) {
+        handle_capture_create(srv, c, req);
+        return;
+    }
+    if ((is_get && (strcmp(req->path, "/api/capture/sessions") == 0 ||
+                    strcmp(req->path, "/api/capture/events") == 0)) ||
+        (is_post && strcmp(req->path, "/api/capture/stop") == 0) ||
+        (is_delete && strcmp(req->path, "/api/capture/session") == 0)) {
+        handle_capture_session(srv, c, req);
+        return;
+    }
+    if (is_post && strcmp(req->path, "/v1/cbm/lineage") == 0) {
+        handle_capture_ingest(srv, c, req);
+        return;
+    }
+    if (is_post && strcmp(req->path, "/v1/traces") == 0) {
+        handle_capture_otlp(srv, c, req);
         return;
     }
 
@@ -3378,6 +3836,19 @@ static void dispatch_request(cbm_http_server_t *srv, cbm_http_conn_t *c,
         return;
     }
 
+    if (is_get && cbm_http_path_match(req->path, "/api/documents")) {
+        handle_documents(c, req, false);
+        return;
+    }
+    if (is_get && cbm_http_path_match(req->path, "/api/source-evidence")) {
+        handle_source_evidence(c, req);
+        return;
+    }
+    if (is_get && cbm_http_path_match(req->path, "/api/document")) {
+        handle_documents(c, req, true);
+        return;
+    }
+
     /* GET /api/adr → get ADR for project */
     if (is_get && cbm_http_path_match(req->path, "/api/adr*")) {
         handle_adr_get(c, req);
@@ -3461,7 +3932,7 @@ static char *http_read_only_index_rejected(void *context, const char *repo_path,
 }
 
 cbm_http_server_t *cbm_http_server_new(int port) {
-    cbm_http_server_t *srv = calloc(1, sizeof(*srv));
+    cbm_http_server_t *srv = cbm_calloc(CBM_MEM_CLASS_OTHER, sizeof(*srv));
     if (!srv)
         return NULL;
 
@@ -3473,7 +3944,13 @@ cbm_http_server_t *cbm_http_server_new(int port) {
     srv->mcp = cbm_mcp_server_new(NULL);
     if (!srv->mcp) {
         cbm_log_error("ui.http.mcp_fail", "reason", "cannot create MCP instance");
-        free(srv);
+        cbm_free(CBM_MEM_CLASS_OTHER, srv);
+        return NULL;
+    }
+    srv->capture = cbm_capture_new();
+    if (!srv->capture) {
+        cbm_mcp_server_free(srv->mcp);
+        cbm_free(CBM_MEM_CLASS_OTHER, srv);
         return NULL;
     }
     cbm_mcp_server_set_background_tasks(srv->mcp, false);
@@ -3487,7 +3964,8 @@ cbm_http_server_t *cbm_http_server_new(int port) {
         cbm_log_warn("ui.unavailable", "port", port_str, "reason", "in_use", "hint",
                      "use --port=N to override");
         cbm_mcp_server_free(srv->mcp);
-        free(srv);
+        cbm_capture_free(srv->capture);
+        cbm_free(CBM_MEM_CLASS_OTHER, srv);
         return NULL;
     }
 
@@ -3522,9 +4000,10 @@ bool cbm_http_server_free(cbm_http_server_t *srv) {
         return false;
     cbm_atlas_impact_analysis_shutdown();
     cbm_mcp_server_free(srv->mcp);
+    cbm_capture_free(srv->capture);
     cbm_ui_log_close();
     cbm_secure_zero(srv->readiness_secret, sizeof(srv->readiness_secret));
-    free(srv);
+    cbm_free(CBM_MEM_CLASS_OTHER, srv);
     return true;
 }
 

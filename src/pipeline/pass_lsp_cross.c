@@ -2087,6 +2087,8 @@ int cbm_pipeline_pass_lsp_cross(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *
             lang, cache[i], source, source_len, files[i].rel_path, def_modules[i],
             &cross_registries, module_def_index, all_defs, def_count, imp_keys, imp_vals, imp_count,
             NULL, NULL, &php_bindings);
+        cbm_flow_resolver_capture(cbm_pipeline_flow_resolver(ctx->pipeline), files[i].rel_path,
+                                  source, source_len, cache[i]);
         cbm_pipeline_php_vendor_names_free(&php_bindings);
         cbm_index_mark_done(files[i].rel_path);
         if (!had_error && cache[i]->has_error && ctx->pipeline)

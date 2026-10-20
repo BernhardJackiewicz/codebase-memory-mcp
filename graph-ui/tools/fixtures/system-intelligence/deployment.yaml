@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: users
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: users
+  template:
+    metadata:
+      labels:
+        app: users
+    spec:
+      containers:
+        - name: users
+          image: users-demo:local
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DATABASE_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: users-config
+                  key: database-host
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: users-config
+  namespace: demo
+data:
+  database-host: database

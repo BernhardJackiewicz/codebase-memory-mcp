@@ -22,6 +22,7 @@
 #include <mcp/mcp_internal.h>
 #include <pipeline/pipeline.h>
 #include <store/store.h>
+#include <store/flow_ir.h>
 #include <watcher/watcher.h>
 #include <yyjson/yyjson.h>
 #include <ctype.h>
@@ -1371,11 +1372,11 @@ TEST(mcp_metadata_byte_budget) {
     char *json = cbm_mcp_tools_list();
     ASSERT_NOT_NULL(json);
     /* Seed discovery and independent pagination have a reviewed budget:
-     * 21 KiB overall (raised from 20 KiB for the infra filters and the
-     * topology/deploy/run trace modes: one usage hint per mode keeps them
-     * findable); only detect_changes may exceed the 3200-byte per-tool
+     * 22 KiB overall (the additive trace_field tool and system_graph aspect
+     * add typed source selection and bounded context controls to the former
+     * 21 KiB baseline); only detect_changes may exceed the 3200-byte per-tool
      * ceiling, with its own 4096-byte bound. */
-    ASSERT_LT((int)strlen(json), 21 * 1024);
+    ASSERT_LT((int)strlen(json), 22 * 1024);
 
     yyjson_doc *doc = yyjson_read(json, strlen(json), 0);
     ASSERT_NOT_NULL(doc);
@@ -1417,6 +1418,7 @@ TEST(mcp_tools_have_behavior_annotations) {
         {"search_graph", true, false, true, false},
         {"query_graph", true, false, true, false},
         {"trace_path", true, false, true, false},
+        {"trace_field", true, false, true, false},
         {"get_code_snippet", true, false, true, false},
         {"get_file_outline", true, false, true, false},
         {"get_graph_schema", true, false, true, false},
@@ -1699,10 +1701,10 @@ TEST(mcp_get_architecture_aspects_schema_enum_pr560) {
     ASSERT_TRUE(yyjson_is_arr(enum_arr));
 
     /* The enum must be exactly the valid-token set — no more, no less. */
-    static const char *expected[] = {"all",      "overview",   "structure",       "dependencies",
-                                     "routes",   "languages",  "packages",        "entry_points",
-                                     "hotspots", "boundaries", "layers",          "file_tree",
-                                     "clusters", "cycles",     "system_structure"};
+    static const char *expected[] = {"all",      "overview",   "structure",        "dependencies",
+                                     "routes",   "languages",  "packages",         "entry_points",
+                                     "hotspots", "boundaries", "layers",           "file_tree",
+                                     "clusters", "cycles",     "system_structure", "system_graph"};
     size_t expected_count = sizeof(expected) / sizeof(expected[0]);
     ASSERT_EQ(yyjson_arr_size(enum_arr), expected_count);
     for (size_t i = 0; i < expected_count; i++) {
@@ -2126,7 +2128,7 @@ TEST(server_handle_analysis_profile_filters_and_rejects_mutators) {
         "search_graph",     "query_graph",      "trace_path",     "get_code_snippet",
         "get_file_outline", "get_graph_schema", "compare_graphs", "get_architecture",
         "search_code",      "list_projects",    "index_status",   "check_index_coverage",
-        "detect_changes",
+        "detect_changes",   "trace_field",
     };
     ASSERT_EQ(mcp_response_tool_count(resp), sizeof(analysis_tools) / sizeof(analysis_tools[0]));
     for (size_t i = 0U; i < sizeof(analysis_tools) / sizeof(analysis_tools[0]); i++) {
@@ -9013,6 +9015,133 @@ TEST(tool_get_architecture_behavior_evidence_validation) {
     PASS();
 }
 
+TEST(tool_get_architecture_system_graph_validation) {
+    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(srv);
+    cbm_store_t *store = cbm_mcp_server_store(srv);
+    cbm_mcp_server_set_project(srv, "arch-system");
+    ASSERT_EQ(cbm_store_upsert_project(store, "arch-system", "/tmp/arch-system"), CBM_STORE_OK);
+    const char *invalid[] = {
+        ",\"path\":\"src\"",          ",\"entry_node_id\":1",          ",\"target_node_id\":1",
+        ",\"expected_generation\":0", ",\"expected_generation\":\"\"",
+    };
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+        char args[256];
+        snprintf(args, sizeof(args),
+                 "{\"project\":\"arch-system\","
+                 "\"aspects\":[\"system_graph\"]%s}",
+                 invalid[i]);
+        char *response = cbm_mcp_handle_tool(srv, "get_architecture", args);
+        ASSERT_NOT_NULL(response);
+        ASSERT_TRUE(response_contains_json_fragment(response, "\"isError\":true"));
+        /* Reject unsupported selectors, not the new aspect itself. */
+        ASSERT_NOT_NULL(strstr(response, "Request system_graph alone"));
+        free(response);
+    }
+    char *response = cbm_mcp_handle_tool(srv, "get_architecture",
+                                         "{\"project\":\"arch-system\","
+                                         "\"aspects\":[\"system_graph\",\"system_structure\"]}");
+    ASSERT_NOT_NULL(response);
+    ASSERT_NOT_NULL(strstr(response, "Request system_graph alone"));
+    free(response);
+    cbm_mcp_server_free(srv);
+    PASS();
+}
+
+TEST(tool_trace_field_uses_typed_ir_and_rejects_stale_source_identity) {
+    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(srv);
+    cbm_store_t *store = cbm_mcp_server_store(srv);
+    cbm_mcp_server_set_project(srv, "field-wire");
+    ASSERT_EQ(cbm_store_upsert_project(store, "field-wire", "/tmp/field-wire"), CBM_STORE_OK);
+    ASSERT_EQ(cbm_flow_ir_initialize(store), CBM_STORE_OK);
+    cbm_flow_value_t values[] = {{.id = "parameter",
+                                  .symbol = "field.f",
+                                  .binding = "scope:input",
+                                  .access_path = "[]",
+                                  .kind = "parameter",
+                                  .parameter_index = 0,
+                                  .start_byte = 0,
+                                  .end_byte = 5,
+                                  .start_line = 1,
+                                  .end_line = 1},
+                                 {.id = "returned",
+                                  .symbol = "field.f",
+                                  .binding = "scope:return",
+                                  .access_path = "[]",
+                                  .kind = "return",
+                                  .parameter_index = -1,
+                                  .start_byte = 10,
+                                  .end_byte = 15,
+                                  .start_line = 2,
+                                  .end_line = 2}};
+    cbm_flow_operation_t op = {.id = "return_op",
+                               .symbol = "field.f",
+                               .kind = "return",
+                               .operator_name = "",
+                               .start_byte = 10,
+                               .end_byte = 15,
+                               .start_line = 2,
+                               .end_line = 2};
+    cbm_flow_link_t link = {.id = "value_return",
+                            .source = "parameter",
+                            .target = "returned",
+                            .operation_id = "return_op",
+                            .kind = "assign",
+                            .certainty = "proven"};
+    cbm_flow_file_t file = {.source_hash = "fixture",
+                            .adapter = "fixture",
+                            .adapter_version = 1,
+                            .values = values,
+                            .value_count = 2,
+                            .operations = &op,
+                            .operation_count = 1,
+                            .links = &link,
+                            .link_count = 1};
+    ASSERT_EQ(cbm_flow_ir_replace_file(store, "field-wire", "field.ts", &file), CBM_STORE_OK);
+    const char *selectors[] = {
+        "{\"value_id\":\"parameter\"}",
+        "{\"file_path\":\"field.ts\",\"symbol\":\"field.f\",\"access_path\":[],\"start_byte\":0}"};
+    for (size_t i = 0; i < sizeof(selectors) / sizeof(selectors[0]); i++) {
+        char args[512];
+        snprintf(args, sizeof(args),
+                 "{\"project\":\"field-wire\",\"source\":%s,"
+                 "\"direction\":\"forward\"}",
+                 selectors[i]);
+        char *reply = cbm_mcp_handle_tool(srv, "trace_field", args);
+        ASSERT_NOT_NULL(reply);
+        char *text = extract_text_content(reply);
+        yyjson_doc *doc = text ? yyjson_read(text, strlen(text), 0) : NULL;
+        ASSERT_NOT_NULL(doc);
+        yyjson_val *root = yyjson_doc_get_root(doc);
+        ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(root, "analysis_kind")), "static_field_flow");
+        ASSERT_EQ(yyjson_arr_size(yyjson_obj_get(root, "values")), 2);
+        yyjson_val *edge = yyjson_arr_get(yyjson_obj_get(root, "links"), 0);
+        ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(edge, "certainty")), "proven");
+        yyjson_doc_free(doc);
+        free(text);
+        free(reply);
+    }
+    char *reply =
+        cbm_mcp_handle_tool(srv, "trace_field",
+                            "{\"project\":\"field-wire\",\"source\":{\"value_id\":\"parameter\"},"
+                            "\"expected_generation\":\"stale\"}");
+    ASSERT_NOT_NULL(reply);
+    ASSERT_TRUE(response_contains_json_fragment(reply, "\"isError\":true"));
+    ASSERT_NOT_NULL(strstr(reply, "generation"));
+    free(reply);
+    reply =
+        cbm_mcp_handle_tool(srv, "trace_field",
+                            "{\"project\":\"field-wire\",\"source\":{\"value_id\":\"parameter\"},"
+                            "\"direction\":\"sideways\"}");
+    ASSERT_NOT_NULL(reply);
+    ASSERT_TRUE(response_contains_json_fragment(reply, "\"isError\":true"));
+    ASSERT_NOT_NULL(strstr(reply, "direction"));
+    free(reply);
+    cbm_mcp_server_free(srv);
+    PASS();
+}
+
 /* Wait for the stable terminal job state, without asserting a transient pending
  * window or a particular number of worker polls. */
 static char *architecture_wait_for_result(cbm_mcp_server_t *srv, const char *args) {
@@ -15361,8 +15490,8 @@ static int doccand_rows(const char *cache) {
         sqlite3_finalize(st);
         st = NULL;
         n = 0;
-        if (has_table && sqlite3_prepare_v2(db, "SELECT count(*) FROM doc_link_candidates", -1,
-                                            &st, NULL) == SQLITE_OK) {
+        if (has_table && sqlite3_prepare_v2(db, "SELECT count(*) FROM doc_link_candidates", -1, &st,
+                                            NULL) == SQLITE_OK) {
             n = sqlite3_step(st) == SQLITE_ROW ? sqlite3_column_int(st, 0) : -1;
             sqlite3_finalize(st);
         }
@@ -24635,8 +24764,8 @@ static bool scan_fixture_list(const scan_fixture_t *fx, const char *extra) {
 /* Run the scan; returns the records it wrote (caller frees), CRs kept. */
 static char *scan_fixture_run(const scan_fixture_t *fx, const char *pattern, bool use_regex,
                               size_t output_limit, int *cause) {
-    *cause = cbm_mcp_search_scan_for_test(NULL, fx->list, pattern, use_regex, fx->out,
-                                          output_limit, UINT64_MAX);
+    *cause = cbm_mcp_search_scan_for_test(NULL, fx->list, pattern, use_regex, fx->out, output_limit,
+                                          UINT64_MAX);
     FILE *fp = cbm_fopen(fx->out, "rb");
     if (!fp) {
         return NULL;
@@ -25032,6 +25161,8 @@ SUITE(mcp) {
     RUN_TEST(tool_delete_project_not_found);
     RUN_TEST(tool_get_architecture_empty);
     RUN_TEST(tool_get_architecture_behavior_evidence_validation);
+    RUN_TEST(tool_get_architecture_system_graph_validation);
+    RUN_TEST(tool_trace_field_uses_typed_ir_and_rejects_stale_source_identity);
     RUN_TEST(tool_get_architecture_behavior_evidence_cache_isolation);
     RUN_TEST(tool_get_architecture_emits_populated_sections);
     RUN_TEST(tool_get_architecture_overview_compact_subset_pr560);

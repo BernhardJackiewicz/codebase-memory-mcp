@@ -1,6 +1,6 @@
 import { experimentalAgentsEnabled } from './feature-flags';
 
-export type Workspace = 'explore' | 'galaxy' | 'architecture' | 'adr' | 'agents' | 'coverage' | 'system';
+export type Workspace = 'explore' | 'galaxy' | 'architecture' | 'docs' | 'adr' | 'agents' | 'coverage' | 'system';
 export type Guidance = 'brief' | 'explained';
 
 export const workspaceStrings = {
@@ -9,7 +9,7 @@ export const workspaceStrings = {
         { id: 'explore' as const, label: 'Explore' },
         { id: 'galaxy' as const, label: 'Galaxy' },
         { id: 'architecture' as const, label: 'Architecture' },
-        { id: 'adr' as const, label: 'ADR' },
+        { id: 'docs' as const, label: 'Docs' },
         { id: 'agents' as const, label: 'Agents' },
         { id: 'coverage' as const, label: 'Coverage' },
         { id: 'system' as const, label: 'System' },
@@ -40,6 +40,7 @@ export const workspaceStrings = {
         explore: 'Read source with graph context.',
         galaxy: 'Explore the whole graph and its coverage shadow.',
         architecture: 'See modules, dependencies, and entry points.',
+        docs: 'Read documentation and follow its recorded connections to code.',
         adr: 'Read and edit the project’s architecture decisions.',
         agents: 'Inspect recorded activity and touched code.',
         coverage: 'Inspect indexed paths, exclusions, and parser gaps.',
@@ -82,6 +83,7 @@ export function allowedWorkspace(workspace: Workspace, agentsEnabled = experimen
 
 /** An unavailable explicit or saved workspace falls back to the source reader. */
 export function initialWorkspace(requested: string | null, saved: string | null, agentsEnabled = experimentalAgentsEnabled): Workspace {
-    const known = (value: string | null): value is Workspace => workspaceStrings.workspaces.some(workspace => workspace.id === value);
+    // Existing ADR bookmarks and saved preferences still open the retained decisions subtab.
+    const known = (value: string | null): value is Workspace => value === 'adr' || workspaceStrings.workspaces.some(workspace => workspace.id === value);
     return allowedWorkspace(known(requested) ? requested : known(saved) ? saved : 'architecture', agentsEnabled);
 }

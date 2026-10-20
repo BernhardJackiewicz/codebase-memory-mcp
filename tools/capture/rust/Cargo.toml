@@ -1,0 +1,17 @@
+[package]
+name = "cbm-rust-overlay"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "cbm-rust-overlay"
+path = "instrument.rs"
+
+[dependencies]
+syn = { version = "=2.0.15", features = ["full", "visit-mut"] }
+quote = "=1.0.26"
+proc-macro2 = { version = "=1.0.56", features = ["span-locations"] }
+
+[patch.crates-io]
+# The launcher supplies only curated local crate paths in a temporary manifest.

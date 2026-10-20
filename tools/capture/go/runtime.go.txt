@@ -1,0 +1,208 @@
+// Code supplied only through an explicit temporary Go build overlay.
+package PACKAGE
+
+import (
+	"bytes"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"math"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"sync"
+	"time"
+	"unicode/utf8"
+)
+
+type PREFIXSource struct {
+	FilePath string `json:"file_path"`
+	SourceHash string `json:"source_hash"`
+	Symbol string `json:"symbol"`
+	Line int `json:"line"`
+}
+type PREFIXEvent struct {
+	Sequence uint64 `json:"sequence"`
+	Operation string `json:"operation"`
+	InvocationID string `json:"invocation_id"`
+	ValueID string `json:"value_id"`
+	Inputs []string `json:"inputs"`
+	AccessPath string `json:"access_path,omitempty"`
+	Detail string `json:"detail,omitempty"`
+	Source PREFIXSource `json:"source"`
+	Preview any `json:"preview,omitempty"`
+}
+type PREFIXBatch struct {
+	events []PREFIXEvent
+	barrier chan struct{}
+}
+type PREFIXState struct {
+	mutex sync.Mutex
+	sequence, invocation uint64
+	buffer []PREFIXEvent
+	queue chan PREFIXBatch
+	endpoint, token, producer string
+	values bool
+	fields map[string]bool
+	enabled bool
+}
+var PREFIXGlobal = PREFIXInitialize()
+
+func PREFIXInitialize() *PREFIXState {
+	state := &PREFIXState{fields: map[string]bool{}, queue: make(chan PREFIXBatch, 64)}
+	endpoint, err := url.Parse(os.Getenv("CBM_CAPTURE_ENDPOINT"))
+	token := os.Getenv("CBM_CAPTURE_TOKEN")
+	if err != nil || endpoint.Scheme != "http" || endpoint.Path != "/v1/cbm/lineage" ||
+		endpoint.User != nil || endpoint.Fragment != "" || endpoint.Query().Get("session") == "" ||
+		token == "" || len(token) > 4096 || strings.ContainsAny(token, "\r\n") { return state }
+	host := endpoint.Hostname()
+	address := net.ParseIP(host)
+	if host != "localhost" && (address == nil || !address.IsLoopback()) { return state }
+	if host == "localhost" {
+		port := endpoint.Port()
+		if port == "" { port = "80" }
+		endpoint.Host = net.JoinHostPort("127.0.0.1", port)
+	}
+	state.endpoint, state.token = endpoint.String(), token
+	state.values = os.Getenv("CBM_CAPTURE_VALUES") == "1"
+	var fields []string
+	if raw := os.Getenv("CBM_CAPTURE_FIELDS"); raw != "" {
+		if len(raw) > 16384 || json.Unmarshal([]byte(raw), &fields) != nil || len(fields) > 64 { return state }
+	}
+	for _, field := range fields {
+		if field == "" || len(field) > 200 || strings.Contains(field, "*") { return state }
+		for _, r := range field { if r < 32 { return state } }
+		state.fields[field] = true
+	}
+	var identity [16]byte
+	if _, err := rand.Read(identity[:]); err != nil { return state }
+	state.producer = "go-" + hex.EncodeToString(identity[:])
+	state.enabled = true
+	go state.deliver()
+	return state
+}
+func (state *PREFIXState) deliver() {
+	client := &http.Client{Timeout: 300*time.Millisecond, Transport: &http.Transport{Proxy: nil},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return fmt.Errorf("capture redirects disabled") }}
+	for batch := range state.queue {
+		if len(batch.events) > 0 {
+			payload, err := json.Marshal(map[string]any{"schema_version": 1,
+				"producer": map[string]string{"id": state.producer, "language": "go"}, "events": batch.events})
+			if err == nil {
+				request, err := http.NewRequest("POST", state.endpoint, bytes.NewReader(payload))
+				if err == nil {
+					request.Header.Set("Content-Type", "application/json")
+					request.Header.Set("Authorization", "Bearer "+state.token)
+					response, err := client.Do(request)
+					if err == nil { response.Body.Close() }
+					if err != nil || response == nil || response.StatusCode/100 != 2 {
+						state.mutex.Lock(); state.enabled = false; state.mutex.Unlock()
+					}
+				}
+			}
+		}
+		if batch.barrier != nil { close(batch.barrier) }
+	}
+}
+func (state *PREFIXState) enqueue() {
+	if len(state.buffer) == 0 { return }
+	batch := PREFIXBatch{events: state.buffer}
+	state.buffer = nil
+	select {
+	case state.queue <- batch:
+	default: state.enabled = false // Bounded delivery; no application blocking.
+	}
+}
+func PREFIXPreview(value any) any {
+	switch value := value.(type) {
+	case bool: return value
+	case string:
+		if len(value) > 256 { value = value[:256]; for !utf8.ValidString(value) && len(value)>0 { value=value[:len(value)-1] } }
+		if !utf8.ValidString(value) { return nil }
+		return value
+	case int: if value >= -9007199254740991 && value <= 9007199254740991 { return value }
+	case int8, int16, int32, uint8, uint16, uint32: return value
+	case int64: if value >= -9007199254740991 && value <= 9007199254740991 { return value }
+	case uint: if uint64(value) <= 9007199254740991 { return value }
+	case uint64: if value <= 9007199254740991 { return value }
+	case float32: if !math.IsInf(float64(value),0) && !math.IsNaN(float64(value)) { return value }
+	case float64: if !math.IsInf(value,0) && !math.IsNaN(value) { return value }
+	}
+	return nil // No serializers, String methods, getters or object traversal.
+}
+type PREFIXFrameState struct {
+	id string
+	source PREFIXSource
+	bindings, sites map[string]string
+}
+func PREFIXFrame(path, hash, symbol string, line int) *PREFIXFrameState {
+	state := PREFIXGlobal
+	state.mutex.Lock(); state.invocation++; id := fmt.Sprintf("i%d", state.invocation); state.mutex.Unlock()
+	return &PREFIXFrameState{id: id, source: PREFIXSource{path, hash, symbol, line},
+		bindings: map[string]string{}, sites: map[string]string{}}
+}
+func (frame *PREFIXFrameState) emit(operation string, line int, value any, field, detail string, inputs ...string) string {
+	state := PREFIXGlobal
+	state.mutex.Lock(); defer state.mutex.Unlock()
+	if !state.enabled || state.sequence >= 10000 { return "" }
+	state.sequence++
+	event := PREFIXEvent{Sequence: state.sequence, Operation: operation, InvocationID: frame.id,
+		ValueID: fmt.Sprintf("v%d",state.sequence), Inputs: []string{}, Source: frame.source, AccessPath: field, Detail: detail}
+	event.Source.Line = line
+	seen := map[string]bool{}
+	for _, input := range inputs { if input!="" && !seen[input] && len(event.Inputs)<64 { event.Inputs=append(event.Inputs,input);seen[input]=true } }
+	if state.sequence == 10000 {
+		event.Operation, event.Inputs, event.Detail = "gap", []string{}, "Producer event budget reached; further execution is unobserved."
+	} else if state.values && state.fields[field] { event.Preview = PREFIXPreview(value) }
+	state.buffer=append(state.buffer,event)
+	if len(state.buffer)>=128 { state.enqueue() }
+	if event.Operation=="gap" { return "" }
+	return event.ValueID
+}
+func (frame *PREFIXFrameState) Gap(line int, detail string) {
+	frame.bindings, frame.sites = map[string]string{}, map[string]string{}
+	frame.emit("gap",line,nil,"",detail)
+}
+func (frame *PREFIXFrameState) Param(key,name string,line int,value any) {
+	frame.bindings[key]=frame.emit("value",line,value,name,"")
+}
+func (frame *PREFIXFrameState) Assign(key,name string,line int,value any,input string) {
+	frame.bindings[key]=frame.emit("copy",line,value,name,"",frame.sites[input])
+}
+func (frame *PREFIXFrameState) Compound(key,name string,line int,value any,input string) {
+	frame.bindings[key]=frame.emit("transform",line,value,name,"",frame.bindings[key],frame.sites[input])
+}
+func (frame *PREFIXFrameState) Done() {
+	state:=PREFIXGlobal
+	state.mutex.Lock()
+	state.enqueue()
+	main := frame.source.Symbol=="main"
+	var barrier chan struct{}
+	if main && state.enabled {
+		barrier=make(chan struct{})
+		select { case state.queue <- PREFIXBatch{barrier:barrier}: default: barrier=nil }
+	}
+	state.mutex.Unlock()
+	if barrier!=nil { select {case <-barrier: case <-time.After(time.Second):} }
+}
+func PREFIXRead[T any](frame *PREFIXFrameState,site string,line int,key,name string,value T) T {
+	frame.sites[site]=frame.emit("copy",line,value,name,"",frame.bindings[key]);return value
+}
+func PREFIXTransform[T any](frame *PREFIXFrameState,site string,line int,value T,inputs ...string) T {
+	ids:=make([]string,0,len(inputs));for _,input:=range inputs {ids=append(ids,frame.sites[input])}
+	frame.sites[site]=frame.emit("transform",line,value,"","",ids...);return value
+}
+func PREFIXField[T any](frame *PREFIXFrameState,site string,line int,name string,value T) T {
+	frame.Gap(line,"Field read observed once; previous heap transport has no alias summary.")
+	frame.sites[site]=frame.emit("field",line,value,name,"");return value
+}
+func PREFIXOpaque[T any](frame *PREFIXFrameState,site string,line int,value T) T {
+	frame.Gap(line,"Opaque call/expression executes unchanged; caller context and side effects are unproven.")
+	frame.sites[site]=frame.emit("value",line,nil,"","");return value
+}
+func PREFIXReturn[T any](frame *PREFIXFrameState,line int,value T,input string) T {
+	frame.emit("return",line,nil,"","",frame.sites[input]);return value
+}

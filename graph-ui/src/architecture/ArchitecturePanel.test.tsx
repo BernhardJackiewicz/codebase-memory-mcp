@@ -60,12 +60,12 @@ async function click(selector: string): Promise<void> {
 }
 
 describe('architecture workspace', () => {
-    it('loads system structure independently when the legacy summary is unavailable', async () => {
+    it('loads the native system graph independently when the legacy summary is unavailable', async () => {
         const loader = vi.fn().mockResolvedValue({ status: 'failed', generation: 'g1', error: 'System analysis service unavailable.' });
-        await render({ overview: undefined, loading: true, error: 'Legacy summary failed.', systemArchitectureLoader: loader });
+        await render({ overview: undefined, loading: true, error: 'Legacy summary failed.', systemGraphLoader: loader });
         await click('[data-view="structure"]');
         await act(async () => { await vi.dynamicImportSettled(); });
-        expect(loader).toHaveBeenCalledWith({ project: 'sample', entryNodeId: undefined }, expect.any(AbortSignal));
+        expect(loader).toHaveBeenCalledWith({ project: 'sample' }, expect.any(AbortSignal));
         expect(container.textContent).not.toContain('Legacy summary failed.');
         expect(container.textContent).not.toContain(text.loading);
         expect(container.querySelector('[data-testid="atlas-architecture"]')?.getAttribute('aria-busy')).toBe('false');

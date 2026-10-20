@@ -7,6 +7,8 @@ export interface SystemSceneNode {
     group?: SystemOverviewGroup; groupId?: string; componentIds?: string[];
     kind?: 'group' | 'component' | 'remainder'; parentId?: string; expanded?: boolean;
     size?: [number, number, number]; inCorridor?: boolean;
+    /** Optional pixel footprint for labels whose full names need more room. */
+    labelSize?: [number, number];
     visual?: { color: string; label: string; basis?: string };
 }
 export interface SystemSceneEdge {
@@ -15,6 +17,10 @@ export interface SystemSceneEdge {
     pathIndices?: number[]; depth?: number; handoff?: boolean;
     dependencies?: SystemDependency[]; types?: string[]; cycle?: boolean;
     inCorridor?: boolean; behaviorEdges?: SystemPathEdge[];
+    /** Explicit direction from the indexed projection, including unfamiliar edge types. */
+    directed?: boolean;
+    /** Ground-plane bend used to clear unrelated visible nodes. */
+    curveOffset?: number;
 }
 export interface SystemSceneLane {
     id: string; label: string; position: [number, number, number]; width: number; depth: number;

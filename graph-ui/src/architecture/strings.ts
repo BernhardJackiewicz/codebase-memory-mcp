@@ -7,7 +7,7 @@ export const architectureText = {
     inspectEdges: 'Inspect edges',
     retainedEdges: (count: number, reported: number) => `${count} retained edges from a boundary reporting ${reported} calls. Package membership uses the same index rule as the summary. Counts may differ across bounds or index updates.`,
     edgeEvidenceUnavailable: 'No constituent edge is available in the loaded map snapshot. The summary count alone cannot establish a path or source location; refresh or inspect the source area.',
-    views: { overview: 'Overview', dependencies: 'Overview', entryPoints: 'Entry points', routes: 'Routes', hotspots: 'Hotspots', structure: 'System structure', behavior: 'Behavior' },
+    views: { overview: 'Overview', dependencies: 'Overview', entryPoints: 'Entry points', routes: 'Routes', hotspots: 'Hotspots', structure: 'System graph', behavior: 'Behavior' },
     navigation: 'Architecture views',
     refresh: 'Refresh',
     reset: 'Reset view',

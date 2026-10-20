@@ -1,0 +1,12 @@
+{
+  "name": "ASM",
+  "version": "9.9",
+  "upstream": "https://asm.ow2.io/",
+  "license": "BSD-3-Clause",
+  "source": "Local unmodified Gradle 9.4.0 distribution libraries",
+  "artifacts": {
+    "asm-9.9.jar": "03d99a74ad1ee5c71334ef67437f4ef4fe3488caa7c96d8645abc73c8e2017d4",
+    "asm-commons-9.9.jar": "db2f6f26150bbe7c126606b4a1151836bcc22a1e05a423b3585698bece995ff8",
+    "asm-tree-9.9.jar": "42178f3775c9c63f9e5e1446747d29b4eca4d91bd6e75e5c43cfa372a47d38c6"
+  }
+}

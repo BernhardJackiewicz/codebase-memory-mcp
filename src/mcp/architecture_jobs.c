@@ -1,5 +1,6 @@
 #include "mcp/architecture_jobs.h"
 #include "store/architecture_projection.h"
+#include "store/system_graph.h"
 #include "foundation/compat_fs.h"
 #include "foundation/compat_thread.h"
 #include "foundation/platform.h"
@@ -33,6 +34,7 @@ typedef struct {
     int64_t entry_node_id;
     int64_t target_node_id;
     bool include_behavior_evidence;
+    bool system_graph;
     char *result;
     const char *error;
     uint64_t touched_ms;
@@ -129,14 +131,21 @@ static void *run_projection(void *context) {
             strcmp(project.indexed_at ? project.indexed_at : "", job->indexed_at) != 0) {
             error = "The project generation is no longer available.";
         } else {
-            cbm_architecture_projection_options_t options = {0};
-            options.entry_node_id = job->entry_node_id;
-            options.target_node_id = job->target_node_id;
-            options.include_behavior_evidence = job->include_behavior_evidence;
-            options.deadline_ms = deadline;
-            options.cancel = is_cancelled;
-            options.cancel_context = jobs;
-            int rc = cbm_store_architecture_projection(store, job->project, &options, &result);
+            int rc;
+            if (job->system_graph) {
+                cbm_system_graph_options_t options = {
+                    .deadline_ms = deadline, .cancel = is_cancelled, .cancel_context = jobs};
+                rc = cbm_store_system_graph(store, job->project, &options, &result);
+            } else {
+                cbm_architecture_projection_options_t options = {0};
+                options.entry_node_id = job->entry_node_id;
+                options.target_node_id = job->target_node_id;
+                options.include_behavior_evidence = job->include_behavior_evidence;
+                options.deadline_ms = deadline;
+                options.cancel = is_cancelled;
+                options.cancel_context = jobs;
+                rc = cbm_store_architecture_projection(store, job->project, &options, &result);
+            }
             if (rc != CBM_STORE_OK || !result) {
                 error = "Architecture analysis was interrupted or could not read the index.";
             } else if (strlen(result) > ARCH_RESULT_BYTES) {
@@ -223,10 +232,29 @@ char *cbm_architecture_jobs_request(cbm_architecture_jobs_t *jobs, cbm_store_t *
     return cbm_architecture_jobs_request_query(jobs, store, project, entry_node_id, 0, NULL, false);
 }
 
+static char *request_projection(cbm_architecture_jobs_t *jobs, cbm_store_t *store,
+                                const char *project, int64_t entry_node_id, int64_t target_node_id,
+                                const char *expected_generation, bool include_behavior_evidence,
+                                bool system_graph);
+
+char *cbm_architecture_jobs_request_system_graph(cbm_architecture_jobs_t *jobs, cbm_store_t *store,
+                                                 const char *project,
+                                                 const char *expected_generation) {
+    return request_projection(jobs, store, project, 0, 0, expected_generation, false, true);
+}
+
 char *cbm_architecture_jobs_request_query(cbm_architecture_jobs_t *jobs, cbm_store_t *store,
                                           const char *project, int64_t entry_node_id,
                                           int64_t target_node_id, const char *expected_generation,
                                           bool include_behavior_evidence) {
+    return request_projection(jobs, store, project, entry_node_id, target_node_id,
+                              expected_generation, include_behavior_evidence, false);
+}
+
+static char *request_projection(cbm_architecture_jobs_t *jobs, cbm_store_t *store,
+                                const char *project, int64_t entry_node_id, int64_t target_node_id,
+                                const char *expected_generation, bool include_behavior_evidence,
+                                bool system_graph) {
     if (!jobs || !store || !project || entry_node_id < 0 || target_node_id < 0 ||
         (target_node_id && !entry_node_id)) {
         return envelope("failed", "", NULL, "Invalid architecture request.");
@@ -247,8 +275,14 @@ char *cbm_architecture_jobs_request_query(cbm_architecture_jobs_t *jobs, cbm_sto
         cbm_project_free_fields(&metadata);
         return envelope("failed", "", NULL, "Could not identify the index generation.");
     }
-    snprintf(generation, sizeof(generation), "%s:%s:%" PRId64 ":%d", db_generation, stamp, version,
-             sqlite3_total_changes(db));
+    if (system_graph) {
+        /* Shared identity for indexed source references across connections.
+         * File/WAL stamps stay private cache invalidation, not public IDs. */
+        snprintf(generation, sizeof(generation), "%s", db_generation);
+    } else {
+        snprintf(generation, sizeof(generation), "%s:%s:%" PRId64 ":%d", db_generation, stamp,
+                 version, sqlite3_total_changes(db));
+    }
     if (expected_generation && strcmp(expected_generation, generation) != 0) {
         cbm_project_free_fields(&metadata);
         return envelope("failed", generation, NULL,
@@ -274,6 +308,8 @@ char *cbm_architecture_jobs_request_query(cbm_architecture_jobs_t *jobs, cbm_sto
             strcmp(cached->path, path) == 0 && strcmp(cached->generation, generation) == 0 &&
             cached->entry_node_id == entry_node_id && cached->target_node_id == target_node_id &&
             cached->include_behavior_evidence == include_behavior_evidence &&
+            cached->system_graph == system_graph &&
+            (!system_graph || strcmp(cached->stamp, stamp) == 0) &&
             (!cached->error || cbm_now_ms() - cached->touched_ms < ARCH_FAILED_CACHE_MS)) {
             char *reply = envelope(cached->error ? "failed" : "ready", generation, cached->result,
                                    cached->error);
@@ -294,6 +330,7 @@ char *cbm_architecture_jobs_request_query(cbm_architecture_jobs_t *jobs, cbm_sto
         job->entry_node_id = entry_node_id;
         job->target_node_id = target_node_id;
         job->include_behavior_evidence = include_behavior_evidence;
+        job->system_graph = system_graph;
         snprintf(job->generation, sizeof(job->generation), "%s", generation);
         snprintf(job->db_generation, sizeof(job->db_generation), "%s", db_generation);
         snprintf(job->stamp, sizeof(job->stamp), "%s", stamp);

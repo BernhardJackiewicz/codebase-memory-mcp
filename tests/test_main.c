@@ -1718,6 +1718,7 @@ extern void suite_subprocess(void);
 extern void suite_private_file_lock(void);
 extern void suite_lock_registry(void);
 extern void suite_extraction(void);
+extern void suite_flow_extract(void);
 extern void suite_callable_sig(void);
 extern void suite_test_conventions(void);
 extern void suite_extraction_inheritance(void);
@@ -1780,6 +1781,8 @@ extern void suite_discover(void);
 extern void suite_graph_buffer(void);
 extern void suite_registry(void);
 extern void suite_pipeline(void);
+extern void suite_flow_publication(void);
+extern void suite_flow_dependencies(void);
 extern void suite_pipeline_objectscript_timeout(void);
 extern void suite_pipeline_conventions(void);
 extern void suite_pipeline_frozen(void);
@@ -1815,10 +1818,14 @@ extern void suite_kotlin_lsp(void);
 extern void suite_rust_lsp(void);
 extern void suite_store_arch(void);
 extern void suite_architecture_projection(void);
+extern void suite_system_graph(void);
+extern void suite_flow_ir(void);
 extern void suite_store_bulk(void);
 extern void suite_store_pragmas(void);
 extern void suite_store_checkpoint(void);
 extern void suite_traces(void);
+extern void suite_capture(void);
+extern void suite_otlp(void);
 extern void suite_configlink(void);
 extern void suite_doclinks(void);
 extern void suite_doc_mentions(void);
@@ -1869,6 +1876,8 @@ extern void suite_call_reference_contract(void);
 extern void suite_mem(void);
 extern void suite_mem_events(void);
 extern void suite_ui(void);
+extern void suite_documents(void);
+extern void suite_source_evidence(void);
 extern void suite_httpd(void);
 extern void suite_security(void);
 extern void suite_yaml(void);
@@ -2180,6 +2189,7 @@ int main(int argc, char **argv) {
     /* Existing C code regression tests */
     RUN_SELECTED_SUITE(ac);
     RUN_SELECTED_SUITE(extraction);
+    RUN_SELECTED_SUITE(flow_extract);
     RUN_SELECTED_SUITE(callable_sig);
     RUN_SELECTED_SUITE(test_conventions);
     RUN_SELECTED_SUITE(extraction_inheritance);
@@ -2256,6 +2266,8 @@ int main(int argc, char **argv) {
     /* Pipeline (M8) */
     RUN_SELECTED_SUITE(registry);
     RUN_SELECTED_SUITE(pipeline);
+    RUN_SELECTED_SUITE(flow_publication);
+    RUN_SELECTED_SUITE(flow_dependencies);
     RUN_SELECTED_SUITE(pipeline_objectscript_timeout);
     RUN_SELECTED_SUITE(pipeline_conventions);
     RUN_SELECTED_SUITE(pipeline_frozen);
@@ -2316,11 +2328,15 @@ int main(int argc, char **argv) {
     /* Architecture + ADR + Louvain */
     RUN_SELECTED_SUITE(store_arch);
     RUN_SELECTED_SUITE(architecture_projection);
+    RUN_SELECTED_SUITE(system_graph);
+    RUN_SELECTED_SUITE(flow_ir);
 
     /* HTTP link */
 
     /* Traces helpers */
     RUN_SELECTED_SUITE(traces);
+    RUN_SELECTED_SUITE(capture);
+    RUN_SELECTED_SUITE(otlp);
 
     /* Config link */
     RUN_SELECTED_SUITE(configlink);
@@ -2377,6 +2393,8 @@ int main(int argc, char **argv) {
 
     /* UI (config, external asset pack, layout) */
     RUN_SELECTED_SUITE(ui);
+    RUN_SELECTED_SUITE(documents);
+    RUN_SELECTED_SUITE(source_evidence);
 
     /* UI HTTP server (transport + routing) */
     RUN_SELECTED_SUITE(httpd);

@@ -29,7 +29,7 @@ it('offers the Galaxy workspace and reports the selected task', async () => {
         workspace: 'explore', onWorkspaceChange,
     }} />));
     const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-workspace-tab]')];
-    expect(tabs.map(tab => tab.textContent?.trim())).toEqual(['Explore', 'Galaxy', 'Architecture', 'ADR', 'Coverage', 'System']);
+    expect(tabs.map(tab => tab.textContent?.trim())).toEqual(['Explore', 'Galaxy', 'Architecture', 'Docs', 'Coverage', 'System']);
     expect(tabs[0].getAttribute('aria-selected')).toBe('true');
     await act(async () => tabs[1].click());
     expect(onWorkspaceChange).toHaveBeenCalledWith('galaxy');
@@ -40,19 +40,19 @@ it.each([false, true])('navigates across only available workspaces with experime
     await act(async () => root.render(<AtlasChrome {...makeProps()} workspace="architecture"
         experimentalAgents={experimentalAgents} onWorkspaceChange={onWorkspaceChange} />));
     expect(host.querySelector('[data-workspace-tab="agents"]') !== null).toBe(experimentalAgents);
-    const adr = host.querySelector('[data-workspace-tab="adr"]')!;
+    const adr = host.querySelector('[data-workspace-tab="docs"]')!;
     await act(async () => adr.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })));
     expect(onWorkspaceChange).toHaveBeenCalledWith(experimentalAgents ? 'agents' : 'coverage');
     expect(document.activeElement?.getAttribute('data-workspace-tab')).toBe(experimentalAgents ? 'agents' : 'coverage');
 });
 
-it('opens the project ADR from the main navigation', async () => {
+it('selects Docs for a legacy ADR workspace link', async () => {
     const onWorkspaceChange = vi.fn();
     await act(async () => root.render(<AtlasChrome {...makeProps()} workspace="adr" onWorkspaceChange={onWorkspaceChange} />));
-    const adr = host.querySelector<HTMLButtonElement>('[data-workspace-tab="adr"]')!;
+    const adr = host.querySelector<HTMLButtonElement>('[data-workspace-tab="docs"]')!;
     expect(adr.getAttribute('aria-selected')).toBe('true');
     await act(async () => adr.click());
-    expect(onWorkspaceChange).toHaveBeenCalledWith('adr');
+    expect(onWorkspaceChange).toHaveBeenCalledWith('docs');
 });
 
 it('keeps one galaxy mounted and visible alongside chat in its own workspace', async () => {

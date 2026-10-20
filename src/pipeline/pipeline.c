@@ -20,6 +20,7 @@ enum { CBM_DIR_PERMS = 0755, PL_RING = 4, PL_RING_MASK = 3, PL_SEQ_PASSES = 7 };
 #include "pipeline/artifact.h"
 #include "pipeline/pipeline_internal.h"
 #include "pipeline/doc_links.h"
+#include "pipeline/flow_publication.h"
 #include "pipeline/lsp_surface.h"
 #include "pipeline/pass_lsp_cross.h"
 #include "pipeline/pass_ensemble_routing.h"
@@ -191,6 +192,7 @@ typedef enum {
 
 struct cbm_pipeline {
     cbm_pipeline_frozen_t *frozen; /* NULL for every ordinary caller */
+    cbm_flow_resolver_t *flow_resolver;
     char *repo_path;
     char *db_path;
     char *project_name;
@@ -669,6 +671,7 @@ static cbm_pipeline_frozen_status_t frozen_allocate_pipeline(
     p->resource_policy = in->resource_policy;
     atomic_init(&p->cancelled_storage, 0);
     p->cancelled = &p->cancelled_storage;
+    p->flow_resolver = cbm_flow_resolver_new();
     if (!p->repo_path || !p->db_path || !p->project_name ||
         !frozen_copy_git(&p->git_ctx, in->pinned_git))
         return CBM_PIPELINE_FROZEN_OOM;
@@ -966,6 +969,10 @@ void cbm_pipeline_set_lsp_surfaces(cbm_pipeline_t *p, cbm_lsp_surface_row_t *row
     p->surface_row_count = count;
 }
 
+cbm_flow_resolver_t *cbm_pipeline_flow_resolver(cbm_pipeline_t *p) {
+    return p ? p->flow_resolver : NULL;
+}
+
 void cbm_pipeline_set_doc_candidates(cbm_pipeline_t *p, cbm_doc_candidate_t *rows, int count) {
     if (!p) {
         cbm_store_doc_candidates_free(rows, count);
@@ -1036,6 +1043,7 @@ void cbm_pipeline_free(cbm_pipeline_t *p) {
     if (!p) {
         return;
     }
+    cbm_flow_resolver_free(p->flow_resolver);
     free(p->repo_path);
     free(p->db_path);
     free(p->project_name);
@@ -3430,6 +3438,18 @@ static int publish_staged_impl(char *stage_path, const cbm_pipeline_generation_t
                                       generation->coverage_count, &meta) != CBM_STORE_OK) {
         ok = false;
     }
+    /* Flow IR belongs to these exact source hashes and this graph snapshot.
+     * Full and delta publication share this atomic staging tail. Rebuild
+     * the bounded local partitions before the generation stamp, including
+     * body-only changes and deletions that preserve exported signatures. */
+    if (ok && cbm_flow_publish_snapshot(store, generation->project, project_info.root_path,
+                                        generation->manifest, generation->manifest_count,
+                                        generation->cancelled) != CBM_STORE_OK)
+        ok = false;
+    if (ok && cbm_flow_resolver_publish(store, generation->project, generation->flow_resolver,
+                                        generation->flow_resolver_incremental,
+                                        generation->cancelled) != CBM_STORE_OK)
+        ok = false;
     if (have_project_info) {
         cbm_project_free_fields(&project_info);
     }
@@ -3671,6 +3691,7 @@ static int dump_and_persist_hashes(cbm_pipeline_t *p, const cbm_file_hash_t *bas
     }
     cbm_pipeline_generation_t generation = {
         .gbuf = p->gbuf,
+        .flow_resolver = p->flow_resolver,
         .final_db_path = db_path,
         .project = p->project_name,
         .cancelled = p->cancelled,
@@ -3904,6 +3925,8 @@ static int cbm_pipeline_run_staged(cbm_pipeline_t *p) {
     bool restore_requested_discovery = false;
 
     p->mode = p->requested_mode;
+    cbm_flow_resolver_free(p->flow_resolver);
+    p->flow_resolver = cbm_flow_resolver_new();
     pipeline_reset_doc_links(p);
     cbm_log_debug("pipeline.setup", "step", "coverage");
     bool mode_promoted = p->frozen ? false : promote_mode_to_existing_coverage(p);

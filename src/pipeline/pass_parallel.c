@@ -4297,6 +4297,8 @@ static void resolve_worker(int worker_id, void *ctx_ptr) {
                     lang, result, lsp_source, lsp_source_len, rel, def_module, rc->cross_registries,
                     rc->module_def_index, rc->all_defs, rc->def_count, imp_keys, imp_vals,
                     imp_count, pp_rust_shared_registry_get, rc, &php_vendor);
+                cbm_flow_resolver_capture(cbm_pipeline_flow_resolver(rc->pctx->pipeline), rel,
+                                          lsp_source, lsp_source_len, result);
                 cbm_index_mark_done(rel);
                 if (!had_error && result->has_error && result->error_msg &&
                     (strcmp(result->error_msg, CBM_C_LSP_MEMO_ERROR) == 0 ||

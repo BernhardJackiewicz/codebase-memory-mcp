@@ -59,6 +59,8 @@ typedef struct {
     char origin[CBM_SZ_256];
     char host[CBM_SZ_256];
     char content_type[CBM_SZ_128];
+    char authorization[CBM_SZ_256];
+    char content_encoding[CBM_SZ_128];
     char accept_language[CBM_SZ_256];
     char *body;
     size_t body_len;

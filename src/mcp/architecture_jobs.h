@@ -23,4 +23,10 @@ char *cbm_architecture_jobs_request_query(cbm_architecture_jobs_t *jobs, cbm_sto
                                           int64_t target_node_id, const char *expected_generation,
                                           bool include_behavior_evidence);
 
+/* Additive system-graph projection. Public generation is cbm_store_generation,
+ * shared with document/source references; cache identity remains private. */
+char *cbm_architecture_jobs_request_system_graph(cbm_architecture_jobs_t *jobs, cbm_store_t *store,
+                                                 const char *project,
+                                                 const char *expected_generation);
+
 #endif

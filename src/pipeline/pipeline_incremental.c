@@ -16,6 +16,7 @@ enum { INCR_RING_BUF = 4, INCR_RING_MASK = 3, INCR_TS_BUF = 24 };
 #include <stdio.h>
 #include <time.h>
 #include "pipeline/lsp_surface.h"
+#include "pipeline/flow_dependencies.h"
 #include "foundation/mem_core.h"
 #include "pipeline/pass_lsp_cross.h"
 #include "sqlite3.h"
@@ -515,6 +516,13 @@ int cbm_pipeline_build_semantic_manifest(const char *project, const char *repo_p
         rc = semantic_manifest_add_digest(&builder, project, CBM_SEMANTIC_INPUT_PROJECT_CONFIG,
                                           project_config_digest, 0, 0);
     }
+    if (rc == 0) {
+        char dependency_digest[65];
+        rc = cbm_flow_dependencies_digest(repo_path, dependency_digest);
+        if (rc == 0)
+            rc = semantic_manifest_add_digest(&builder, project, CBM_FLOW_DEPENDENCIES_MANIFEST,
+                                              dependency_digest, 0, 0);
+    }
     struct timespec t_hash;
     cbm_clock_gettime(CLOCK_MONOTONIC, &t_hash);
     int hash_workers = cbm_default_worker_count(true);
@@ -614,6 +622,15 @@ int cbm_pipeline_build_semantic_manifest(const char *project, const char *repo_p
             cbm_path_alias_collection_free(aliases);
         }
     }
+    if (rc == 0) {
+        char scope_digest[65];
+        bool limited = false;
+        rc = cbm_flow_dependencies_scope_digest(repo_path, builder.items, builder.count,
+                                                scope_digest, &limited);
+        if (rc == 0)
+            rc = semantic_manifest_add_digest(&builder, project, CBM_FLOW_DEPENDENCIES_SCOPES,
+                                              scope_digest, 0, 0);
+    }
     if (rc != 0) {
         cbm_ht_free(builder.seen_paths);
         cbm_pipeline_free_semantic_manifest(builder.items, builder.count);
@@ -677,6 +694,13 @@ static int frozen_manifest_seed(semantic_manifest_builder_t *builder, cbm_pipeli
     if (rc == 0)
         rc = semantic_manifest_add_digest(builder, project, CBM_SEMANTIC_INPUT_PROJECT_CONFIG,
                                           config->project_source_sha256, 0, 0);
+    if (rc == 0) {
+        char dependency_digest[65];
+        rc = cbm_flow_dependencies_digest(cbm_pipeline_repo_path(p), dependency_digest);
+        if (rc == 0)
+            rc = semantic_manifest_add_digest(builder, project, CBM_FLOW_DEPENDENCIES_MANIFEST,
+                                              dependency_digest, 0, 0);
+    }
     return rc;
 }
 
@@ -768,6 +792,15 @@ int cbm_pipeline_build_frozen_manifest(cbm_pipeline_t *p, const cbm_file_info_t 
                                              excluded_count);
     if (rc == 0)
         rc = frozen_manifest_aliases(&builder, p, excluded, excluded_count);
+    if (rc == 0) {
+        char scope_digest[65];
+        bool limited = false;
+        rc = cbm_flow_dependencies_scope_digest(cbm_pipeline_repo_path(p), builder.items,
+                                                builder.count, scope_digest, &limited);
+        if (rc == 0)
+            rc = semantic_manifest_add_digest(&builder, cbm_pipeline_project_name(p),
+                                              CBM_FLOW_DEPENDENCIES_SCOPES, scope_digest, 0, 0);
+    }
     if (rc == 0)
         rc = frozen_manifest_sort(p, builder.items, builder.count);
     cbm_ht_free(builder.seen_paths);
@@ -2781,6 +2814,58 @@ static const char *closure_python_namespace_decline(const char *stored_json,
     return change > 0 ? "python_namespace_changed" : NULL;
 }
 
+/* Flow's semantic body dependencies are stronger than exported surfaces.
+ * Re-resolve raw callsite witnesses after any target-body change, including
+ * inferred-return changes. This prevents carrying old resolver facts into a
+ * new Flow generation merely because the public signature stayed equal. */
+static const char *closure_add_flow_dependents(cbm_store_t *store, const char *project,
+                                               char **changed, int changed_count,
+                                               CBMHashTable *files, CBMHashTable *closure) {
+    sqlite3 *db = cbm_store_get_db(store);
+    sqlite3_stmt *s = NULL;
+    if (sqlite3_prepare_v2(db,
+                           "SELECT 1 FROM sqlite_master WHERE type='table' "
+                           "AND name='cbm_flow_dependencies'",
+                           -1, &s, NULL) != SQLITE_OK)
+        return "flow_dependency_query";
+    bool exists = sqlite3_step(s) == SQLITE_ROW;
+    sqlite3_finalize(s);
+    if (!exists)
+        return NULL;
+    const char *sql =
+        "WITH RECURSIVE impacted(path) AS("
+        "SELECT file_path FROM cbm_flow_dependencies WHERE project=?1 AND dependency_path=?2 "
+        "UNION SELECT d.file_path FROM cbm_flow_dependencies d JOIN impacted i "
+        "ON d.dependency_path=i.path WHERE d.project=?1) SELECT path FROM impacted LIMIT 10001";
+    if (sqlite3_prepare_v2(db, sql, -1, &s, NULL) != SQLITE_OK)
+        return "flow_dependency_query";
+    const char *decline = NULL;
+    for (int i = 0; !decline && i < changed_count; i++) {
+        sqlite3_bind_text(s, 1, project, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(s, 2, changed[i], -1, SQLITE_TRANSIENT);
+        int count = 0, step;
+        while ((step = sqlite3_step(s)) == SQLITE_ROW) {
+            if (++count > 10000) {
+                decline = "flow_dependency_budget";
+                break;
+            }
+            const char *path = (const char *)sqlite3_column_text(s, 0);
+            const cbm_file_info_t *info = path ? cbm_ht_get(files, path) : NULL;
+            if (!info) {
+                decline = "flow_dependency_not_discovered";
+                break;
+            }
+            if (!cbm_ht_get(closure, info->rel_path))
+                cbm_ht_set(closure, info->rel_path, (void *)info->rel_path);
+        }
+        if (!decline && step != SQLITE_DONE)
+            decline = "flow_dependency_query";
+        sqlite3_reset(s);
+    }
+    sqlite3_finalize(s);
+    return decline;
+}
+
 /* Decide whether this manifest delta is closure-repairable, and if so build
  * the plan. Returns 1 with *plan filled, or 0 (decline → FULL) with the
  * reason logged. Every early exit declines; nothing here mutates state. */
@@ -3105,6 +3190,10 @@ static int closure_try_plan(cbm_pipeline_t *p, cbm_store_t *store, const char *p
             cbm_ht_set(closure_set, dependents[i], dependents[i]);
         }
     }
+    decline = closure_add_flow_dependents(store, project, changed_paths, n_changed + n_deleted,
+                                          files_by_path, closure_set);
+    if (decline)
+        goto done;
     decline =
         closure_add_variant_partners(store, project, closure_set, files_by_path, changed_paths,
                                      n_changed + n_deleted, n_changed, dependents, dependent_count);
@@ -3666,6 +3755,8 @@ static int run_closure_delta(cbm_pipeline_t *p, const char *db_path, const char 
         int index_mode = cbm_pipeline_get_mode(p);
         cbm_pipeline_generation_t generation = {
             .gbuf = NULL,
+            .flow_resolver = cbm_pipeline_flow_resolver(p),
+            .flow_resolver_incremental = true,
             .final_db_path = db_path,
             .project = project,
             .cancelled = cbm_pipeline_cancelled_ptr(p),

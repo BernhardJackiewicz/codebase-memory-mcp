@@ -52,6 +52,11 @@ export interface SystemPlace {
     /** Plan or 3D. System structure and Behavior each keep their own camera, as they did before K27. */
     structurePlanar?: boolean;
     behaviorPlanar?: boolean;
+    /** System graph context; identities refer to the projection's own generation. */
+    graphQuery?: string;
+    graphLayers?: readonly string[];
+    graphSelection?: { type: 'entity' | 'relation' | 'group'; id: string };
+    graphFocusKind?: string;
 }
 
 /** What BehaviorJourney reads and reports: where it stands, and Plan or 3D. */

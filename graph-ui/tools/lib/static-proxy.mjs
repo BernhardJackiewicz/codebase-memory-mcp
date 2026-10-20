@@ -14,10 +14,14 @@
  *
  *  - **Host** wird auf `127.0.0.1:<Serverport>` gesetzt. Ohne das schlaegt der
  *    Rebinding-Schutz zu.
- *  - **Origin** wird ENTFERNT. Der Server laesst eine Anfrage ohne Origin
+ *  - **Origin** wird für /api und /rpc ENTFERNT. Der Server laesst eine Anfrage ohne Origin
  *    durch (http_server.c: geprueft wird nur ein *gesetzter* Origin), und einen
  *    fremden Origin lehnt er ab. Ihn auf die Serveradresse umzuschreiben waere
  *    dasselbe Ergebnis mit einer Luege mehr im Kopf.
+ *
+ * Die beiden Capture-Ingest-Routen /v1/traces und /v1/cbm/lineage behalten
+ * dagegen Origin unverändert, damit der native Receiver seine explizite
+ * Session-Allowlist tatsächlich prüft. Andere /v1-Pfade werden nicht proxied.
  *
  * Im Betrieb gibt es diesen Proxy nicht: dort liefert der C-Server die Assets
  * selbst aus und alles ist same-origin. Der Proxy ist
@@ -47,6 +51,7 @@ const MIME = {
     '.map': 'application/json; charset=utf-8',
     '.ico': 'image/x-icon',
 };
+const captureRoute = route => route === '/v1/traces' || route === '/v1/cbm/lineage';
 
 /** Ein Pfad, der dist/ nicht verlassen kann. */
 function safeJoin(root, urlPath) {
@@ -92,7 +97,7 @@ export async function startStaticProxy({ distDir, upstreamPort, port }) {
         const headers = { ...req.headers };
         // Die beiden Koepfe, um die es geht. Alles andere geht unveraendert durch.
         headers.host = `127.0.0.1:${upstreamPort}`;
-        delete headers.origin;
+        if (!captureRoute(route)) delete headers.origin;
         delete headers.referer;
         delete headers['accept-encoding'];
 
@@ -122,7 +127,7 @@ export async function startStaticProxy({ distDir, upstreamPort, port }) {
 
     const server = http.createServer((req, res) => {
         const route = (req.url ?? '/').split('?')[0];
-        if (route === '/rpc' || route.startsWith('/api')) {
+        if (route === '/rpc' || route.startsWith('/api') || captureRoute(route)) {
             readBody(req)
                 .then((body) => forward(req, res, body))
                 .catch((error) => {
@@ -163,7 +168,7 @@ export async function startStaticProxy({ distDir, upstreamPort, port }) {
     });
 
     return {
-        port,
+        port: server.address().port,
         log,
         close: () =>
             new Promise((done) => {
